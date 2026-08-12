@@ -1,0 +1,732 @@
+package server
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"regexp"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/luisgsluis/claude-code-session-manager/internal/agent"
+	"github.com/luisgsluis/claude-code-session-manager/internal/audit"
+	"github.com/luisgsluis/claude-code-session-manager/internal/auth"
+	"github.com/luisgsluis/claude-code-session-manager/internal/config"
+	"github.com/luisgsluis/claude-code-session-manager/internal/direct"
+	"github.com/luisgsluis/claude-code-session-manager/internal/handlers"
+	"github.com/luisgsluis/claude-code-session-manager/internal/host"
+	"golang.org/x/crypto/bcrypt"
+	"gopkg.in/yaml.v3"
+)
+
+// Server is the CCSM HTTP server.
+type Server struct {
+	cfg        *config.Config
+	configPath string
+	http       *http.Server
+	mux        *http.ServeMux
+	uptime     time.Time
+	sessions   *auth.Store
+	agentCli   *agent.Client
+	staticPath string
+	exec       handlers.Agent
+	audit      *audit.Logger
+	auditPath  string
+	events     *eventHub
+
+	// Handlers
+	sessionHdlr      *handlers.SessionHandler
+	profileHdlr      *handlers.ProfileHandler
+	conversationHdlr *handlers.ConversationHandler
+}
+
+// New creates a new Server. staticPath is the path to the static/ directory;
+// configPath is the path to config.yaml (used for write-back on PATCH /api/config).
+// The executor is chosen from the config: an empty agent_socket selects direct
+// mode (package deployment, commands run in-process), a socket path selects
+// agent mode (container deployment, commands go to ccsm-agent over the socket).
+func New(cfg *config.Config, staticPath, configPath string) *Server {
+	s := &Server{
+		cfg:        cfg,
+		configPath: configPath,
+		uptime:     time.Now(),
+		events:     newEventHub(),
+		sessions:   auth.NewStore(cfg.SessionSecret),
+		staticPath: staticPath,
+	}
+
+	auditPath := cfg.AuditPath
+	if auditPath == "" || auditPath == "auto" {
+		auditPath = os.Getenv("HOME") + "/.ccsm/audit.jsonl"
+	}
+	s.auditPath = auditPath
+	if l, err := audit.Open(auditPath); err == nil {
+		s.audit = l
+	} else {
+		log.Printf("audit log disabled: %v", err)
+	}
+	auditLog := s.auditLog
+
+	var executor handlers.Agent
+	if cfg.AgentSocket == "" {
+		s.agentCli = nil
+		h := host.New(host.Options{
+			ProfilesPath:  cfg.ProfilesPath,
+			SettingsPath:  cfg.SettingsPath,
+			ConvPath:      cfg.ConversationsPath,
+			ClaudeBinary:  cfg.ClaudeBinary,
+			TmuxBinary:    cfg.TmuxBinary,
+			BashBinary:    cfg.BashBinary,
+			RcBootstrap:   cfg.Rc.BootstrapProfile,
+			RcWaitSeconds: cfg.Rc.WaitSeconds,
+			RcPollSeconds: cfg.Rc.PollSeconds,
+		})
+		executor = direct.New(h)
+	} else {
+		s.agentCli = agent.NewClient(cfg.AgentSocket, cfg.AgentSecret)
+		executor = s.agentCli
+	}
+	// Always keep the executor: the turn watcher (turn_complete / approval /
+	// choice events) uses it in both deployment modes.
+	s.exec = executor
+
+	s.sessionHdlr = &handlers.SessionHandler{
+		Agent:      executor,
+		AttachAddr: cfg.HostAttachAddr,
+		Audit:      auditLog,
+	}
+	s.profileHdlr = &handlers.ProfileHandler{
+		Agent:        executor,
+		ProfilesPath: cfg.ProfilesPath,
+		SettingsPath: cfg.SettingsPath,
+		Audit:        auditLog,
+	}
+	s.conversationHdlr = &handlers.ConversationHandler{
+		Agent: executor,
+	}
+
+	s.mux = http.NewServeMux()
+	s.registerRoutes()
+	s.http = &http.Server{
+		Addr:         fmt.Sprintf(":%d", cfg.Port),
+		Handler:      withLogging(withSecurityHeaders(s.mux)),
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 35 * time.Second, // RC bootstrap can take up to 25s
+		IdleTimeout:  120 * time.Second,
+	}
+	return s
+}
+
+func (s *Server) registerRoutes() {
+	// Health (no auth)
+	s.mux.HandleFunc("GET /api/health", s.handleHealth)
+
+	// Auth
+	s.mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	s.mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
+	s.mux.HandleFunc("GET /api/auth/status", s.handleAuthStatus)
+
+	// Static files and SPA (Phase 5)
+	s.mux.HandleFunc("GET /", s.handleSPA)
+	if s.staticPath != "" {
+		fs := http.FileServer(http.Dir(s.staticPath))
+		// Revalidate on every load (304 via Last-Modified) so the browser never
+		// keeps a stale app.js after a deploy.
+		s.mux.Handle("GET /static/", http.StripPrefix("/static/", noCache(fs)))
+	}
+
+	// Sessions (protected)
+	s.mux.HandleFunc("GET /api/sessions", s.auth(s.sessionHdlr.ListSessions))
+	s.mux.HandleFunc("DELETE /api/sessions/{name}", s.auth(s.sessionHdlr.KillSession))
+	s.mux.HandleFunc("POST /api/sessions/new", s.auth(s.sessionHdlr.NewSession))
+	s.mux.HandleFunc("POST /api/sessions/resume", s.auth(s.sessionHdlr.ResumeSession))
+	s.mux.HandleFunc("POST /api/sessions/{name}/rename", s.auth(s.sessionHdlr.RenameSession))
+	s.mux.HandleFunc("POST /api/sessions/{name}/claude-name", s.auth(s.sessionHdlr.SetClaudeName))
+	s.mux.HandleFunc("GET /api/sessions/{name}/stream", s.auth(s.sessionHdlr.LiveStream))
+	s.mux.HandleFunc("GET /api/sessions/{name}/chat", s.auth(s.sessionHdlr.Chat))
+	s.mux.HandleFunc("GET /api/sessions/{name}/chat/stream", s.auth(s.sessionHdlr.ChatStream))
+	s.mux.HandleFunc("POST /api/sessions/{name}/send", s.auth(s.sessionHdlr.Send))
+	s.mux.HandleFunc("POST /api/sessions/{name}/rc", s.auth(s.sessionHdlr.ReconnectRC))
+
+	// Profiles (protected)
+	s.mux.HandleFunc("GET /api/profiles", s.auth(s.profileHdlr.ListProfiles))
+	s.mux.HandleFunc("POST /api/profiles/apply", s.auth(s.profileHdlr.ApplyProfile))
+	s.mux.HandleFunc("GET /api/profiles/{name}", s.auth(s.profileHdlr.GetProfileContent))
+
+	// Conversations (protected)
+	s.mux.HandleFunc("GET /api/conversations", s.auth(s.conversationHdlr.ListConversations))
+	s.mux.HandleFunc("GET /api/conversations/{id}", s.auth(s.conversationHdlr.GetConversation))
+	s.mux.HandleFunc("GET /api/conversations/{id}/export", s.auth(s.conversationHdlr.ExportConversation))
+	s.mux.HandleFunc("GET /api/conversations/{id}/meta", s.auth(s.conversationHdlr.GetConversationMeta))
+	s.mux.HandleFunc("PUT /api/conversations/{id}/meta", s.auth(s.conversationHdlr.SetConversationMeta))
+
+	// Audit log (protected)
+	s.mux.HandleFunc("GET /api/audit", s.auth(s.handleAudit))
+	s.mux.HandleFunc("GET /api/metrics", s.auth(s.handleMetrics))
+	s.mux.HandleFunc("GET /api/events", s.auth(s.handleEvents))
+
+	// Config (protected): non-secret deployment info for the settings panel.
+	// Secret material (session_secret, agent_secret, password_hash) is never
+	// exposed. PATCH allows editing hot-reload fields; user management is
+	// handled by separate endpoints.
+	s.mux.HandleFunc("GET /api/config", s.auth(s.handleConfig))
+	s.mux.HandleFunc("PATCH /api/config", s.auth(s.handlePatchConfig))
+	s.mux.HandleFunc("GET /api/config/users", s.auth(s.handleListUsers))
+	s.mux.HandleFunc("POST /api/config/users", s.auth(s.handleAddUser))
+	s.mux.HandleFunc("DELETE /api/config/users/{username}", s.auth(s.handleDeleteUser))
+	s.mux.HandleFunc("POST /api/config/users/{username}/password", s.auth(s.handleChangePassword))
+
+	// Settings content (protected): raw settings.json for profile viewer
+	s.mux.HandleFunc("GET /api/settings", s.auth(s.handleGetSettings))
+}
+
+func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
+	// API 404
+	if len(r.URL.Path) >= 4 && r.URL.Path[:4] == "/api" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+
+	// Serve index.html for SPA routes
+	w.Header().Set("Cache-Control", "no-cache")
+	if s.staticPath != "" {
+		http.ServeFile(w, r, s.staticPath+"/index.html")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(minimalHTML))
+}
+
+// --- Auth handlers ---
+
+type loginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+		return
+	}
+
+	if auth.IsLAN(auth.ClientIP(r, s.cfg.TrustedProxies), s.cfg.LANSubnets) {
+		token, _ := s.sessions.CreateSession("[lan]", true)
+		auth.SetCookie(w, token)
+		s.auditLog("login", "[lan]", "lan bypass")
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "lan_bypass": true})
+		return
+	}
+
+	var req loginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+
+	if !auth.CheckPassword(s.cfg.Users, req.Username, req.Password) {
+		s.auditLog("login_failed", req.Username, "invalid credentials")
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		return
+	}
+
+	token, _ := s.sessions.CreateSession(req.Username, false)
+	auth.SetCookie(w, token)
+	s.auditLog("login", req.Username, "")
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+func (s *Server) auditLog(action, user, detail string) {
+	if s.audit != nil {
+		s.audit.Log(action, user, detail)
+	}
+	s.events.broadcast(action, user, detail)
+}
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	user := ""
+	if token := auth.GetToken(r); token != "" {
+		if sess := s.sessions.GetSession(token); sess != nil {
+			user = sess.Username
+		}
+		s.sessions.DeleteSession(token)
+	}
+	auth.ClearCookie(w)
+	s.auditLog("logout", user, "")
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	token := auth.GetToken(r)
+	if token == "" {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"authenticated": false})
+		return
+	}
+
+	sess := s.sessions.GetSession(token)
+	if sess == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"authenticated": false})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"authenticated": true,
+		"username":      sess.Username,
+		"lan_bypass":    sess.LANBypass,
+	})
+}
+
+// --- Auth middleware ---
+
+func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if auth.IsLAN(auth.ClientIP(r, s.cfg.TrustedProxies), s.cfg.LANSubnets) {
+			next(w, handlers.WithUser(r, "[lan]"))
+			return
+		}
+
+		token := auth.GetToken(r)
+		if token == "" {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+			return
+		}
+
+		sess := s.sessions.GetSession(token)
+		if sess == nil {
+			auth.ClearCookie(w)
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "session expired"})
+			return
+		}
+
+		next(w, handlers.WithUser(r, sess.Username))
+	}
+}
+
+// --- Health ---
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":  "ok",
+		"uptime":  time.Since(s.uptime).String(),
+		"version": "0.1.5",
+	})
+}
+
+// configInfo is the non-secret subset of the deployment config exposed to the
+// UI settings panel. Secrets (session_secret, agent_secret, password hashes)
+// are deliberately excluded.
+type configInfo struct {
+	Port           int               `json:"port"`
+	Mode           string            `json:"mode"` // "direct" or "agent"
+	AgentSocket    string            `json:"agent_socket"`
+	HostAttachAddr string            `json:"host_attach_addr"`
+	LANSubnets     []string          `json:"lan_subnets"`
+	Users          []string          `json:"users"`
+	Paths          map[string]string `json:"paths"`
+	RC             map[string]any    `json:"rc"`
+}
+
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	mode := "agent"
+	if s.cfg.AgentSocket == "" {
+		mode = "direct"
+	}
+	users := make([]string, 0, len(s.cfg.Users))
+	for _, u := range s.cfg.Users {
+		users = append(users, u.Username)
+	}
+	writeJSON(w, http.StatusOK, configInfo{
+		Port:           s.cfg.Port,
+		Mode:           mode,
+		AgentSocket:    s.cfg.AgentSocket,
+		HostAttachAddr: s.cfg.HostAttachAddr,
+		LANSubnets:     s.cfg.LANSubnets,
+		Users:          users,
+		Paths: map[string]string{
+			"conversations": s.cfg.ConversationsPath,
+			"profiles":      s.cfg.ProfilesPath,
+			"settings":      s.cfg.SettingsPath,
+			"claude_binary": s.cfg.ClaudeBinary,
+			"tmux_binary":   s.cfg.TmuxBinary,
+			"bash_binary":   s.cfg.BashBinary,
+		},
+		RC: map[string]any{
+			"bootstrap_profile": s.cfg.Rc.BootstrapProfile,
+			"wait_seconds":      s.cfg.Rc.WaitSeconds,
+			"poll_seconds":      s.cfg.Rc.PollSeconds,
+		},
+	})
+}
+
+// --- Config write-back ---
+
+// writeConfig serializes cfg to YAML and writes it atomically to path.
+func writeConfig(path string, cfg *config.Config) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err == nil {
+		return nil
+	} else if !errors.Is(err, syscall.EBUSY) {
+		os.Remove(tmp)
+		return err
+	}
+	// EBUSY: config.yaml is bind-mounted into the container, so the rename
+	// cannot replace the mounted inode. Write through the mount in place
+	// (keeps the inode, updates the host file).
+	f, ferr := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0600)
+	if ferr != nil {
+		os.Remove(tmp)
+		return ferr
+	}
+	_, werr := f.Write(data)
+	cerr := f.Close()
+	os.Remove(tmp)
+	if werr != nil {
+		return werr
+	}
+	return cerr
+}
+
+// patchConfigRequest is a partial update: every field is optional.
+type patchConfigRequest struct {
+	LANSubnets     []string       `json:"lan_subnets"`
+	HostAttachAddr *string        `json:"host_attach_addr"`
+	Rc             *patchRcConfig `json:"rc"`
+}
+
+type patchRcConfig struct {
+	BootstrapProfile *string `json:"bootstrap_profile"`
+	WaitSeconds      *int    `json:"wait_seconds"`
+	PollSeconds      *int    `json:"poll_seconds"`
+}
+
+var attachPattern = regexp.MustCompile(`^[a-zA-Z0-9@._-]{1,120}$`)
+var bootstrapPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+
+func (s *Server) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
+	var req patchConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+
+	var updated []string
+	needsRestart := false
+
+	// LAN subnets: hot-reload
+	if req.LANSubnets != nil {
+		for _, cidr := range req.LANSubnets {
+			if _, _, err := net.ParseCIDR(cidr); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid CIDR: " + cidr})
+				return
+			}
+		}
+		s.cfg.LANSubnets = req.LANSubnets
+		updated = append(updated, "lan_subnets")
+	}
+
+	// Host attach addr: hot-reload
+	if req.HostAttachAddr != nil {
+		if !attachPattern.MatchString(*req.HostAttachAddr) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid host_attach_addr"})
+			return
+		}
+		s.cfg.HostAttachAddr = *req.HostAttachAddr
+		s.sessionHdlr.AttachAddr = *req.HostAttachAddr
+		updated = append(updated, "host_attach_addr")
+	}
+
+	// RC settings: write to cfg + host struct
+	if req.Rc != nil {
+		if req.Rc.BootstrapProfile != nil {
+			if !bootstrapPattern.MatchString(*req.Rc.BootstrapProfile) {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid bootstrap_profile"})
+				return
+			}
+			s.cfg.Rc.BootstrapProfile = *req.Rc.BootstrapProfile
+			updated = append(updated, "rc.bootstrap_profile")
+		}
+		if req.Rc.WaitSeconds != nil {
+			if *req.Rc.WaitSeconds < 5 || *req.Rc.WaitSeconds > 120 {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "rc.wait_seconds must be 5-120"})
+				return
+			}
+			s.cfg.Rc.WaitSeconds = *req.Rc.WaitSeconds
+			updated = append(updated, "rc.wait_seconds")
+		}
+		if req.Rc.PollSeconds != nil {
+			if *req.Rc.PollSeconds < 1 || *req.Rc.PollSeconds > 10 {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "rc.poll_seconds must be 1-10"})
+				return
+			}
+			s.cfg.Rc.PollSeconds = *req.Rc.PollSeconds
+			updated = append(updated, "rc.poll_seconds")
+		}
+	}
+
+	if len(updated) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no valid fields to update"})
+		return
+	}
+
+	if err := writeConfig(s.configPath, s.cfg); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write config: " + err.Error()})
+		return
+	}
+
+	s.auditLog("config_update", handlers.UserFrom(r), "fields="+strings.Join(updated, ","))
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"ok":             true,
+		"updated":        updated,
+		"restart_needed": needsRestart,
+	})
+}
+
+// --- User management ---
+
+type addUserRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type changePasswordRequest struct {
+	Password string `json:"password"`
+}
+
+var usernamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+
+func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
+	names := make([]string, 0, len(s.cfg.Users))
+	for _, u := range s.cfg.Users {
+		names = append(names, u.Username)
+	}
+	writeJSON(w, http.StatusOK, names)
+}
+
+func (s *Server) handleAddUser(w http.ResponseWriter, r *http.Request) {
+	var req addUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	if !usernamePattern.MatchString(req.Username) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid username (a-z, 0-9, _-, 1-32 chars)"})
+		return
+	}
+	if len(req.Password) < 8 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password must be at least 8 characters"})
+		return
+	}
+	// Check for duplicate
+	for _, u := range s.cfg.Users {
+		if u.Username == req.Username {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "user already exists: " + req.Username})
+			return
+		}
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "bcrypt: " + err.Error()})
+		return
+	}
+	s.cfg.Users = append(s.cfg.Users, config.User{Username: req.Username, PasswordHash: string(hash)})
+	if err := writeConfig(s.configPath, s.cfg); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write config: " + err.Error()})
+		return
+	}
+	s.auditLog("user_add", handlers.UserFrom(r), "user="+req.Username)
+	writeJSON(w, http.StatusCreated, map[string]string{"ok": "user " + req.Username + " created"})
+}
+
+func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
+	username := r.PathValue("username")
+	if username == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing username"})
+		return
+	}
+	found := -1
+	for i, u := range s.cfg.Users {
+		if u.Username == username {
+			found = i
+			break
+		}
+	}
+	if found < 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found: " + username})
+		return
+	}
+	if len(s.cfg.Users) <= 1 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "cannot delete the last user"})
+		return
+	}
+	s.cfg.Users = append(s.cfg.Users[:found], s.cfg.Users[found+1:]...)
+	if err := writeConfig(s.configPath, s.cfg); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write config: " + err.Error()})
+		return
+	}
+	s.auditLog("user_delete", handlers.UserFrom(r), "user="+username)
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "user " + username + " deleted"})
+}
+
+func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	username := r.PathValue("username")
+	if username == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing username"})
+		return
+	}
+	var req changePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	if len(req.Password) < 8 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password must be at least 8 characters"})
+		return
+	}
+	found := -1
+	for i, u := range s.cfg.Users {
+		if u.Username == username {
+			found = i
+			break
+		}
+	}
+	if found < 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found: " + username})
+		return
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "bcrypt: " + err.Error()})
+		return
+	}
+	s.cfg.Users[found].PasswordHash = string(hash)
+	if err := writeConfig(s.configPath, s.cfg); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write config: " + err.Error()})
+		return
+	}
+	s.auditLog("user_password", handlers.UserFrom(r), "user="+username)
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "password changed for " + username})
+}
+
+// handleAudit returns the most recent audit entries, most recent first.
+func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
+	n := 100
+	if v := r.URL.Query().Get("n"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 && parsed <= 1000 {
+			n = parsed
+		}
+	}
+	entries, err := s.audit.Read(n)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "read audit: " + err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"entries": entries})
+}
+
+// handleMetrics merges the host-computed usage stats with server process stats
+// (uptime + resident RAM) that only the server process knows.
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	args := map[string]string{"audit_path": s.auditPath}
+	if model := r.URL.Query().Get("model"); model != "" {
+		args["model"] = model
+	}
+	resp, err := s.exec.Exec("metrics", args)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "backend: " + err.Error()})
+		return
+	}
+	var m map[string]any
+	if err := json.Unmarshal(resp.Data, &m); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "parse metrics"})
+		return
+	}
+	m["uptime_s"] = int(time.Since(s.uptime).Seconds())
+	m["ram_mb"] = processRAMMB()
+	writeJSON(w, http.StatusOK, m)
+}
+
+// processRAMMB returns the server's resident set size in MB from /proc/self/status.
+func processRAMMB() int {
+	data, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "VmRSS:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				if kb, err := strconv.Atoi(fields[1]); err == nil {
+					return kb / 1024
+				}
+			}
+		}
+	}
+	return 0
+}
+
+func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	resp, err := s.exec.Exec("settings-content", nil)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "backend: " + err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(resp.Data)
+}
+
+// ListenAndServe starts the HTTP server.
+func (s *Server) ListenAndServe() error {
+	log.Printf("CCSM listening on %s", s.http.Addr)
+	s.startTurnWatcher()
+	return s.http.ListenAndServe()
+}
+
+// noCache makes the browser revalidate static assets on every load (via
+// Last-Modified/304) instead of keeping a stale copy after a deploy.
+func noCache(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		h.ServeHTTP(w, r)
+	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
+}
+
+const minimalHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Sessions</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 4rem auto; padding: 0 1rem; background: #1a1a2e; color: #e0e0e0; }
+  h1 { font-size: 1.5rem; }
+  code { background: #16213e; padding: 0.2em 0.4em; border-radius: 4px; }
+</style>
+</head>
+<body>
+<h1>🤖 Claude Code Session Manager</h1>
+<p>CCSM v0.1.5 — API server running.</p>
+<p>Sirve la UI desde <code>/static/</code> cuando se compila con ella embebida; sin ella,
+esta página es la respuesta de <code>/</code>.</p>
+<p>Endpoints: <code>GET /api/health</code> · <code>POST /api/auth/login</code> · <code>GET /api/auth/status</code></p>
+</body>
+</html>`

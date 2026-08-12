@@ -1,0 +1,75 @@
+# CCSM (Claude Code Session Manager) — example configuration
+# Copy this to config.yaml and adjust for your environment.
+# All values can be overridden by environment variables (see README).
+#
+# Two deployment modes (chosen by `agent_socket`):
+#   agent_socket: "/run/ccsm/agent.sock"  → CONTAINER MODE. The web server talks
+#       to ccsm-agent (a binary on the host) over a Unix socket + shared secret.
+#       The paths below (conversations/profiles/settings) are mere hints;
+#       the agent uses its own flags.
+#   agent_socket: ""                       → PACKAGE MODE. The ccsm binary runs
+#       directly on the host, with no agent or socket; it executes tmux/claude
+#       in-process. In this mode the paths below ARE used ("auto" resolves
+#       against $HOME).
+#
+# Most runtime settings (lan_subnets, host_attach_addr, rc.*) can be edited from
+# the app's ☰ settings menu and are hot-applied (PATCH /api/config).
+# Users can be added / deleted / have their password changed from the UI;
+# passwords must be at least 8 characters.
+
+# HTTP listen port
+port: 8080
+
+# Session encryption secret — generate with: ccsm --generate-secret
+session_secret: ""
+
+# Subnets that bypass login (LAN + VPN typically). Note: the docker network the
+# container lives on must NOT be here — traffic proxied by caddy arrives from
+# its gateway, so only the real client IP (from X-Forwarded-For, see below)
+# decides the bypass.
+lan_subnets:
+  - "192.168.1.0/24"
+  - "10.0.0.0/8"
+  # - "::1/128"               # add if you reach the panel via IPv6 loopback
+
+# Reverse proxies whose X-Forwarded-For we trust for the LAN check. The ccsm
+# container sits behind caddy, so all proxied traffic arrives from the same
+# peer (the docker gateway, 172.24.0.1 for the default bridge network); caddy
+# overwrites X-Forwarded-For with the real client IP. Direct :8080 access keeps
+# the real peer IP and ignores the header, so a client cannot forge it. If the
+# network changes, update the gateway here (docker network inspect ccsm).
+trusted_proxies:
+  - "172.24.0.1/32"
+
+# User accounts (password hash generated with: ccsm --hash-password)
+users:
+  - username: "admin"
+    password_hash: ""
+
+# Agent connection (Unix socket on the host). Empty = package mode (no agent).
+agent_socket: "/run/ccsm/agent.sock"
+agent_secret: ""                          # shared secret for agent auth
+
+# Shown in the UI as "attach" command for each session
+host_attach_addr: "admin@192.168.1.175"
+
+# --- Package mode (agent_socket: "") ---
+# Paths for conversations, profiles and settings.json. "auto" resolves:
+#   conversations → $HOME/.claude/projects/-home-admin
+#   profiles      → $HOME/claude-shared/claude-perfiles
+#   settings      → $HOME/.claude/settings.json
+conversations_path: "auto"
+profiles_path: "auto"
+settings_path: "auto"
+
+# Host binaries used in package mode. Empty → claude in $HOME/.local/bin/claude,
+# tmux in /usr/bin/tmux and bash in /usr/bin/bash. Ignored in container mode.
+claude_binary: ""
+tmux_binary: ""
+bash_binary: ""
+
+# Remote Control bootstrap for non-Anthropic profiles
+rc:
+  bootstrap_profile: "estandar"
+  wait_seconds: 25
+  poll_seconds: 2

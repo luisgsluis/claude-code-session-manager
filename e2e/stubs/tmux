@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Stub de tmux para e2e. El estado vive en ficheros bajo $CCSM_TMUX_STATE,
+# uno por sesión; el contenido es "name\tcreated\ttitle".
+set -u
+STATE="${CCSM_TMUX_STATE:?CCSM_TMUX_STATE must be set}"
+mkdir -p "$STATE"
+
+cmd="$1"
+shift
+
+# Devuelve el valor que sigue al flag dado dentro de los args de la llamada.
+# El primer arg de la función es el flag a buscar; los demás son los args.
+flagval() {
+  local flag="$1" prev=""
+  for a in "${@:2}"; do
+    if [ "$prev" = "$flag" ]; then printf '%s' "${a#=}"; return 0; fi
+    prev="$a"
+  done
+  return 1
+}
+
+case "$cmd" in
+  list-sessions)
+    for f in "$STATE"/*; do
+      [ -f "$f" ] || continue
+      cat "$f"
+      echo
+    done
+    exit 0
+    ;;
+  has-session)
+    name="$(flagval -t "$@")"
+    [ -f "$STATE/$name" ] && exit 0 || exit 1
+    ;;
+  capture-pane)
+    name="$(flagval -t "$@")"
+    if [ -f "$STATE/$name" ]; then
+      # Marca rc_connected: rcStatus detecta la subcadena "/rc" en la última línea.
+      echo "pane-of-$name /rc"
+      exit 0
+    fi
+    exit 1
+    ;;
+  new-session)
+    name="$(flagval -s "$@")"
+    if [ -z "$name" ]; then
+      name=0
+      while [ -e "$STATE/$name" ]; do name=$((name + 1)); done
+    fi
+    printf '%s\t%s\tclaude\n' "$name" "$(date '+%Y-%m-%d %H:%M:%S')" > "$STATE/$name"
+    printf '%s\n' "$name"
+    exit 0
+    ;;
+  kill-session)
+    name="$(flagval -t "$@")"
+    rm -f "$STATE/$name"
+    exit 0
+    ;;
+  rename-session)
+    name="$(flagval -t "$@")"
+    new="${@: -1}"
+    [ -f "$STATE/$name" ] || { echo "no session $name" >&2; exit 1; }
+    # El nombre vive en el primer campo del fichero: lo reescribo al mover.
+    content="$(cat "$STATE/$name")"
+    printf '%s\t%s\n' "$new" "${content#*$'\t'}" > "$STATE/$new"
+    rm -f "$STATE/$name"
+    exit 0
+    ;;
+  send-keys)
+    exit 0
+    ;;
+  *)
+    echo "tmux stub: comando desconocido: $cmd" >&2
+    exit 1
+    ;;
+esac

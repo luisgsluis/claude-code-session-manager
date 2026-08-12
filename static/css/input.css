@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* CSS Custom Properties for future skins */
+:root {
+  --nav-position: 'top';
+  --touch-target: 44px;
+  --transition-speed: 150ms;
+}
+
+/* Line clamp utility (Tailwind v3 built-in, but ensure) */
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Focus visible */
+*:focus-visible {
+  outline: 2px solid #6c5ce7;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Los navegadores móviles hacen auto-zoom al enfocar un campo de texto con
+   fuente < 16px (el textarea de chat es text-sm = 14px). Forzamos 16px solo
+   en táctil (pointer: coarse) para que no haga zoom al pinchar; en escritorio
+   no cambia nada. Checkbox/radio no provocan zoom y no se tocan. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
+/* JSON syntax highlighting */
+.json-key   { color: #6cd4ff; }  /* cyan */
+.json-string { color: #a7e070; } /* green */
+.json-number { color: #f0c060; } /* yellow */
+.json-word  { color: #e090e0; }  /* magenta */
+.json-brack { color: #808080; }  /* dimmed */
+.json-comma { color: #c0c0c0; }  /* light gray */
+
+/* Transitions */
+[x-cloak] { display: none !important; }

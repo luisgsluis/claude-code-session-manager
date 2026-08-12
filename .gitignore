@@ -1,0 +1,38 @@
+# Build
+/bin/
+/tmp/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config (contains secrets)
+config.yaml
+!config.example.yaml
+docker-compose.yml
+!docker-compose.example.yml
+
+# Go
+# go.sum is committed for reproducible builds (Dockerfile needs it)
+
+# e2e (Playwright)
+e2e/state/
+e2e/ccsm-e2e
+e2e/node_modules/
+e2e/test-results/
+e2e/playwright-report/
+e2e/.playwright/
+e2e/config.yaml
+
+# Claude Code (solo para el agente, no se versiona)
+CLAUDE.md
+
+# Binaries (build artifacts)
+/ccsm
+/ccsm-agent

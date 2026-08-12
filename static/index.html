@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="es" class="dark" :lang="lang">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Claude Sessions</title>
+<link rel="stylesheet" href="/static/css/app.css">
+<script defer src="/static/js/alpine.min.js"></script>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
+</head>
+<body class="bg-bg text-fg min-h-screen" x-data="ccsmApp()" x-init="init()" x-cloak>
+
+<!-- Header -->
+<header class="bg-bg-card border-b border-gray-800 sticky top-0 z-50">
+  <div class="px-4 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <span class="text-2xl">🤖</span>
+      <h1 class="text-lg font-semibold">Claude Sessions</h1>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="text-sm text-fg-muted hidden sm:inline mr-1" x-text="userLabel"></span>
+
+      <!-- Language selector -->
+      <div class="relative" x-data="{ open: false }">
+        <button @click="open = !open"
+          class="text-sm text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors"
+          x-text="'🌐 ' + (lang === 'es' ? 'ES' : 'EN')"></button>
+        <div x-show="open" @click.outside="open = false"
+          class="absolute right-0 top-full mt-1 bg-bg-card border border-gray-700 rounded-xl shadow-xl py-1 min-w-[110px] z-50">
+          <button @click="setLang('es'); open = false"
+            class="block w-full text-left px-4 py-2 text-sm hover:bg-bg-hover transition-colors"
+            :class="lang === 'es' ? 'text-accent font-medium' : 'text-fg'">Español</button>
+          <button @click="setLang('en'); open = false"
+            class="block w-full text-left px-4 py-2 text-sm hover:bg-bg-hover transition-colors"
+            :class="lang === 'en' ? 'text-accent font-medium' : 'text-fg'">English</button>
+        </div>
+      </div>
+
+      <!-- Refresh (junto al idioma) -->
+      <button @click="reloadAll()"
+        class="text-sm text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors"
+        :title="t('refresh')">🔄 <span x-text="t('refresh')"></span></button>
+
+      <!-- Settings menu -->
+      <button x-show="notify.supported" @click="toggleNotify()"
+        class="text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors text-lg leading-none"
+        :title="notify.permission === 'granted' ? (notify.muted ? t('notify_muted') : t('notify_unmuted')) : (notify.permission === 'denied' ? t('notify_denied') : t('notify_grant'))"
+        x-text="notify.permission === 'granted' ? (notify.muted ? '🔕' : '🔔') : (notify.permission === 'denied' ? '🚫' : '🔔')"></button>
+      <button x-show="notify.supported" @click="testNotify()"
+        class="text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors text-lg leading-none"
+        :title="notify.permission === 'granted' ? t('notify_test') : t('notify_grant')" x-text="'🧪'"></button>
+      <div class="relative" x-data="{ open: false }">
+        <button @click="open = !open"
+          class="text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors text-lg leading-none"
+          title="Settings" x-text="'☰'"></button>
+        <div x-show="open" @click.outside="open = false"
+          class="absolute right-0 top-full mt-1 bg-bg-card border border-gray-700 rounded-xl shadow-xl py-1 min-w-[220px] z-50">
+          <button @click="openSettings(); open = false"
+            class="block w-full text-left px-4 py-2 text-sm hover:bg-bg-hover transition-colors">⚙️ <span x-text="t('cfg_title')"></span></button>
+          <button @click="viewCurrentSettings(); open = false"
+            class="block w-full text-left px-4 py-2 text-sm hover:bg-bg-hover transition-colors">📄 <span x-text="t('cfg_view_settings')"></span></button>
+          <button @click="openAudit(); open = false"
+            class="block w-full text-left px-4 py-2 text-sm hover:bg-bg-hover transition-colors">🕘 <span x-text="t('audit_title')"></span></button>
+          <button @click="openMetrics(); open = false"
+            class="block w-full text-left px-4 py-2 text-sm hover:bg-bg-hover transition-colors">📊 <span x-text="t('metrics_title')"></span></button>
+        </div>
+      </div>
+
+      <button @click="logout" class="text-sm text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors" x-text="t('logout')"></button>
+    </div>
+  </div>
+
+  <!-- Top action bar (before the session list) -->
+  <div class="px-4 pb-3 flex flex-wrap items-center gap-2 border-t border-gray-800 pt-3">
+    <!-- Quick session: everything default, opens the session right away -->
+    <button @click="newSessionQuick()" :disabled="actionLoading"
+      class="px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-xl text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-wait">
+      ⚡ <span x-text="t('new_quick')"></span>
+    </button>
+
+    <!-- New session with options (tmux name, Claude name, profile) -->
+    <div class="relative" x-data="{ open: false }">
+      <button @click="open = !open" :disabled="actionLoading"
+        class="px-4 py-2 bg-bg-card border border-accent/50 text-accent hover:border-accent rounded-xl text-sm font-medium transition-colors disabled:opacity-50">
+        🎛️ <span x-text="t('new_advanced')"></span> ▾
+      </button>
+      <div x-show="open" @click.outside="open = false"
+        class="absolute top-full mt-1 left-0 bg-bg-card border border-gray-700 rounded-xl shadow-xl p-4 min-w-[260px] z-50 space-y-3">
+        <div>
+          <label for="adv-tmux" class="block text-xs text-fg-muted mb-1" x-text="t('adv_tmux')"></label>
+          <input id="adv-tmux" type="text" x-model="adv.tmux" :placeholder="t('adv_tmux_ph')"
+            class="w-full bg-bg border border-gray-700 rounded-lg px-3 py-2 text-sm text-fg placeholder:text-fg-muted/60 focus:outline-none focus:border-accent transition-colors">
+        </div>
+        <div>
+          <label for="adv-claude" class="block text-xs text-fg-muted mb-1" x-text="t('adv_claude')"></label>
+          <input id="adv-claude" type="text" x-model="adv.claude" :placeholder="adv.tmux || t('adv_claude_ph')"
+            class="w-full bg-bg border border-gray-700 rounded-lg px-3 py-2 text-sm text-fg placeholder:text-fg-muted/60 focus:outline-none focus:border-accent transition-colors">
+        </div>
+        <div>
+          <label class="block text-xs text-fg-muted mb-1" x-text="t('adv_profile')"></label>
+          <select x-model="adv.profile"
+            class="w-full bg-bg border border-gray-700 rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent transition-colors">
+            <option value="" x-text="t('adv_profile_default')"></option>
+            <template x-for="p in profiles" :key="p.name">
+              <option :value="p.name" x-text="p.label || p.name"></option>
+            </template>
+          </select>
+        </div>
+        <button @click="newSessionAdvanced(); open = false" :disabled="actionLoading"
+          class="w-full px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-xl text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-wait">
+          <span x-text="t('adv_create')"></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Change profile -->
+    <div class="relative" x-data="{ open: false }">
+      <button @click="open = !open" :disabled="actionLoading"
+        class="px-4 py-2 bg-bg-card border border-gray-700 hover:border-gray-600 rounded-xl text-sm font-medium transition-colors disabled:opacity-50">
+        ⚙️ <span x-text="t('change_profile')"></span> ▾
+      </button>
+      <div x-show="open" @click.outside="open = false"
+        class="absolute top-full mt-1 left-0 bg-bg-card border border-gray-700 rounded-xl shadow-xl py-1 min-w-[200px] z-50">
+        <div class="px-4 pt-2 pb-1 text-xs text-fg-muted" x-text="t('pick_profile_apply')"></div>
+        <template x-for="p in profiles" :key="p.name">
+          <div class="flex items-center hover:bg-bg-hover transition-colors">
+            <button @click="open = false; applyProfile(p.name)"
+              class="flex-1 text-left px-4 py-2 text-sm">
+              <span x-text="p.label || p.name"></span>
+              <span x-show="p.is_active" class="text-success text-xs ml-2">✓</span>
+            </button>
+            <button @click="viewProfile(p.name)" class="px-2 py-2 text-sm text-fg-muted hover:text-fg shrink-0" :title="'ver perfil ' + (p.label||p.name)">👁️</button>
+          </div>
+        </template>
+        <div x-show="profiles.length === 0" class="px-4 py-2 text-sm text-fg-muted" x-text="t('no_profiles')"></div>
+      </div>
+    </div>
+
+    <span x-show="actionLoading" class="text-sm text-fg-muted self-center animate-pulse" x-text="t('working')"></span>
+  </div>
+</header>
+
+<!-- Main content -->
+<main class="max-w-4xl mx-auto px-4 py-6 space-y-6">
+
+  <!-- Active sessions -->
+  <section>
+    <h2 class="text-sm font-semibold uppercase tracking-wider text-fg-muted mb-3" x-text="t('active_sessions')"></h2>
+    <div x-show="sessions.loading" class="text-center py-4 text-fg-muted animate-pulse" x-text="t('loading')"></div>
+    <div x-show="sessions.error" class="text-center py-4 text-danger" x-text="sessions.error"></div>
+    <div x-show="!sessions.loading && sessions.items.length === 0" class="bg-bg-card rounded-xl border border-gray-800 p-6 text-center text-fg-muted">
+      <p class="text-lg mb-1" x-text="t('no_sessions')"></p>
+      <p class="text-sm" x-text="t('no_sessions_sub')"></p>
+    </div>
+    <div x-show="sessions.items.length > 0" class="space-y-2">
+      <template x-for="s in sessions.items" :key="s.name">
+        <div class="bg-bg-card rounded-xl border border-gray-800 p-4 flex items-center justify-between gap-3 group hover:border-gray-700 transition-colors">
+          <div class="flex-1 min-w-0 cursor-pointer" @click="openLive(s)">
+            <div class="flex items-center gap-2 text-sm">
+              <span class="text-accent font-mono" x-text="t('session_label', [s.name])"></span>
+              <span class="w-2 h-2 rounded-full" :class="s.status === 'rc_connected' ? 'bg-success' : 'bg-warn'" :title="s.status"></span>
+            </div>
+            <p class="text-sm text-fg-muted truncate mt-0.5" x-text="s.task || t('no_task')"></p>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <button @click="openLive(s)" class="text-xs text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors" :title="t('live_view')">👁️</button>
+            <button @click="copyAttach(s)" class="text-xs text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors" :title="t('copy_attach')">🔗</button>
+            <button @click="openRename(s)" class="text-xs text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors" :title="t('rename')">✏️</button>
+            <button @click="killSession(s)" class="text-xs text-fg-muted hover:text-danger px-2 py-1 rounded hover:bg-bg-hover transition-colors" :title="t('close_session')">❌</button>
+          </div>
+        </div>
+      </template>
+    </div>
+  </section>
+
+  <!-- Conversations -->
+  <section>
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-sm font-semibold uppercase tracking-wider text-fg-muted" x-text="t('conversations')"></h2>
+      <div class="flex items-center gap-2">
+        <button @click="viewMode = (viewMode === 'list' ? 'cards' : 'list')"
+          class="text-sm text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors"
+          x-text="viewMode === 'list' ? t('switch_cards') : t('switch_list')"></button>
+      </div>
+    </div>
+
+    <!-- Search -->
+    <div class="mb-3">
+      <input type="search" x-model="convSearch" @input.debounce.300ms="loadConversations()"
+        :placeholder="'🔍 ' + t('search_conv')"
+        class="w-full bg-bg-card border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors">
+    </div>
+
+    <!-- Advanced filters -->
+    <div class="mb-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <select x-model="convFilters.origin" @change="applyConvFilters()"
+        class="bg-bg-card border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-accent">
+        <option value="" x-text="t('conv_origin_all')"></option>
+        <option value="pi">pi</option>
+        <option value="pc">pc</option>
+        <option value="?">?</option>
+      </select>
+      <input type="date" x-model="convFilters.from" @change="applyConvFilters()"
+        :title="t('conv_from')"
+        class="bg-bg-card border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-accent">
+      <input type="date" x-model="convFilters.to" @change="applyConvFilters()"
+        :title="t('conv_to')"
+        class="bg-bg-card border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-accent">
+      <label class="flex items-center justify-center gap-2 text-xs text-fg-muted cursor-pointer">
+        <input type="checkbox" x-model="convFilters.alive" @change="applyConvFilters()" class="accent-accent">
+        <span x-text="t('conv_alive')"></span>
+      </label>
+    </div>
+
+    <!-- List view -->
+    <div x-show="viewMode === 'list'" class="space-y-2">
+      <div x-show="conversations.loading" class="text-center py-4 text-fg-muted animate-pulse" x-text="t('searching')"></div>
+      <div x-show="!conversations.loading && conversations.items.length === 0" class="text-center py-8 text-fg-muted">
+        <p class="text-lg mb-1" x-text="t('no_conv')"></p>
+        <p class="text-sm" x-text="convSearch ? t('no_conv_search') : t('no_conv_empty')"></p>
+      </div>
+      <template x-for="c in conversations.items" :key="c.id">
+        <div class="bg-bg-card rounded-xl border border-gray-800 p-4 hover:border-gray-700 transition-colors">
+          <div class="flex items-center gap-2 text-xs text-fg-muted mb-1">
+            <span x-text="c.date"></span>
+            <span>·</span>
+            <span class="px-1.5 py-0.5 rounded-full text-xs" :class="c.origin === 'pi' ? 'bg-accent/20 text-accent' : 'bg-gray-700 text-gray-400'" x-text="'[' + (c.origin || '?') + ']'"></span>
+            <span x-show="c.is_alive" class="w-2 h-2 rounded-full bg-success" :title="t('alive')"></span>
+          </div>
+          <p class="text-sm font-medium truncate" x-text="c.title ? c.title : (c.preview || t('empty_conv'))"></p>
+          <p class="text-xs text-fg-muted truncate" x-show="c.title" x-text="c.preview"></p>
+          <div class="flex flex-wrap gap-1 mt-1" x-show="(c.tags || []).length">
+            <span x-for="tag in (c.tags || [])" :key="tag" class="px-1.5 py-0.5 rounded-full text-xs bg-accent/20 text-accent" x-text="tag"></span>
+          </div>
+          <div class="flex items-center gap-2 mt-2">
+            <button @click="resumeSession(c.id)" :disabled="actionLoading" class="text-xs text-accent hover:text-accent-hover font-medium disabled:opacity-50 disabled:cursor-wait" x-text="'▶ ' + t('resume')"></button>
+            <button @click="previewConversation(c)" class="text-xs text-fg-muted hover:text-fg" x-text="'👁 ' + t('preview')"></button>
+            <button @click="togglePinned(c)" class="text-xs" :class="c.pinned ? 'text-warn' : 'text-fg-muted hover:text-fg'" :title="c.pinned ? t('unpin') : t('pin')" x-text="c.pinned ? '📌' : '📍'"></button>
+            <button @click="toggleArchived(c)" x-show="!c.is_alive" class="text-xs text-fg-muted hover:text-fg" :title="t('archive')">🗄</button>
+            <a :href="'/api/conversations/' + c.id + '/export?format=txt'" :title="t('export_conv')" class="text-xs text-fg-muted hover:text-fg ml-auto">⬇</a>
+          </div>
+        </div>
+      </template>
+      <div x-show="conversations.hasMore" class="text-center">
+        <button @click="loadMoreConversations()" class="text-sm text-accent hover:text-accent-hover py-2" x-text="t('load_more')"></button>
+      </div>
+    </div>
+
+    <!-- Card view -->
+    <div x-show="viewMode === 'cards'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      <div x-show="conversations.loading" class="col-span-full text-center py-4 text-fg-muted animate-pulse" x-text="t('searching')"></div>
+      <div x-show="!conversations.loading && conversations.items.length === 0" class="col-span-full text-center py-8 text-fg-muted">
+        <p class="text-lg mb-1" x-text="t('no_conv')"></p>
+        <p class="text-sm" x-text="convSearch ? t('no_conv_search') : t('no_conv_empty')"></p>
+      </div>
+      <template x-for="c in conversations.items" :key="c.id">
+        <div class="bg-bg-card rounded-xl border border-gray-800 p-4 hover:border-gray-700 transition-colors flex flex-col">
+          <div class="flex items-center gap-2 text-xs text-fg-muted mb-2">
+            <span x-text="c.date"></span>
+            <span class="px-1.5 py-0.5 rounded-full text-xs" :class="c.origin === 'pi' ? 'bg-accent/20 text-accent' : 'bg-gray-700 text-gray-400'" x-text="'[' + (c.origin || '?') + ']'"></span>
+            <span x-show="c.is_alive" class="w-2 h-2 rounded-full bg-success ml-auto" :title="t('alive')"></span>
+          </div>
+          <p class="text-sm font-medium truncate" x-show="c.title" x-text="c.title"></p>
+          <p class="text-sm flex-1 line-clamp-3" x-text="c.preview || t('empty_conv')"></p>
+          <div class="flex flex-wrap gap-1 mt-1" x-show="(c.tags || []).length">
+            <span x-for="tag in (c.tags || [])" :key="tag" class="px-1.5 py-0.5 rounded-full text-xs bg-accent/20 text-accent" x-text="tag"></span>
+          </div>
+          <div class="flex items-center gap-2 mt-3 pt-3 border-t border-gray-800">
+            <button @click="resumeSession(c.id)" :disabled="actionLoading" class="text-xs text-accent hover:text-accent-hover font-medium disabled:opacity-50 disabled:cursor-wait" x-text="'▶ ' + t('resume')"></button>
+            <button @click="previewConversation(c)" class="text-xs text-fg-muted hover:text-fg" x-text="'👁 ' + t('preview')"></button>
+            <button @click="togglePinned(c)" class="text-xs" :class="c.pinned ? 'text-warn' : 'text-fg-muted hover:text-fg'" :title="c.pinned ? t('unpin') : t('pin')" x-text="c.pinned ? '📌' : '📍'"></button>
+            <button @click="toggleArchived(c)" x-show="!c.is_alive" class="text-xs text-fg-muted hover:text-fg" :title="t('archive')">🗄</button>
+            <a :href="'/api/conversations/' + c.id + '/export?format=txt'" :title="t('export_conv')" class="text-xs text-fg-muted hover:text-fg ml-auto">⬇</a>
+          </div>
+        </div>
+      </template>
+    </div>
+  </section>
+</main>
+
+<!-- Settings modal -->
+<div x-show="settings.open" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-[90] p-4" @click.self="settings.open = false">
+  <div class="flex flex-col w-full max-w-2xl max-h-[90vh] bg-bg-card border border-gray-700 rounded-2xl">
+    <div class="flex items-center justify-between p-4 border-b border-gray-800 shrink-0">
+      <h3 class="font-semibold" x-text="t('cfg_title')"></h3>
+      <button @click="settings.open = false" class="text-fg-muted hover:text-fg text-xl leading-none">&times;</button>
+    </div>
+    <div class="overflow-y-auto p-6" style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
+
+    <div x-show="settings.loading" class="text-center py-6 text-fg-muted animate-pulse" x-text="t('loading')"></div>
+
+    <template x-for="group in settings.groups" :key="group.title">
+      <div class="mb-5">
+        <h4 class="text-xs font-semibold uppercase tracking-wider text-accent mb-2" x-text="group.title"></h4>
+        <div class="bg-bg rounded-xl border border-gray-800 divide-y divide-gray-800">
+          <template x-for="row in group.rows" :key="row.k">
+            <div class="flex items-center justify-between gap-3 px-4 py-2.5">
+              <span class="text-xs text-fg-muted w-32 shrink-0" x-text="row.k"></span>
+              <template x-if="settings.editing !== row.field">
+                <div class="flex items-center gap-2 flex-1 justify-end min-w-0">
+                  <code class="text-sm text-fg truncate break-all" x-text="row.v"></code>
+                  <button x-show="row.editable" @click="startEdit(row)" class="text-xs text-fg-muted hover:text-fg shrink-0" :title="t('cfg_edit')">✏️</button>
+                  <button @click="copyText(row.v)" class="text-xs text-fg-muted hover:text-fg shrink-0" title="copy">📋</button>
+                </div>
+              </template>
+              <template x-if="settings.editing === row.field">
+                <div class="flex items-center gap-2 flex-1 justify-end min-w-0">
+                  <input type="text" x-model="settings.editValue"
+                    class="bg-bg border border-accent rounded-lg px-2 py-1 text-sm text-fg w-full max-w-[300px] focus:outline-none">
+                  <button @click="saveEdit(row)" class="text-xs text-success hover:text-fg shrink-0" :title="t('cfg_save')">💾</button>
+                  <button @click="cancelEdit()" class="text-xs text-fg-muted hover:text-fg shrink-0" :title="t('cfg_cancel')">❌</button>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+
+    <!-- Users section -->
+    <div class="mb-5">
+      <h4 class="text-xs font-semibold uppercase tracking-wider text-accent mb-2" x-text="t('cfg_users')"></h4>
+      <div class="bg-bg rounded-xl border border-gray-800 divide-y divide-gray-800">
+        <template x-for="u in settings.users" :key="u">
+          <div class="flex items-center justify-between gap-3 px-4 py-2.5">
+            <span class="text-sm text-fg" x-text="u"></span>
+            <div class="flex items-center gap-1">
+              <button @click="openChangePassword(u)" class="text-xs text-fg-muted hover:text-fg px-2 py-1" :title="t('cfg_chg_pass')">🔑</button>
+              <button x-show="settings.users.length > 1" @click="deleteUser(u)" class="text-xs text-fg-muted hover:text-danger px-2 py-1" :title="t('cfg_del_user')">🗑️</button>
+            </div>
+          </div>
+        </template>
+        <div class="px-4 py-2.5">
+          <button @click="openAddUser()" class="text-sm text-accent hover:text-accent-hover font-medium">+ <span x-text="t('cfg_add_user')"></span></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="text-xs text-fg-muted border-t border-gray-800 pt-4 space-y-1">
+      <p x-text="t('cfg_restart_note')"></p>
+      <p x-text="t('cfg_secrets_note')"></p>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- Audit modal -->
+<div x-show="audit.open" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-[95] p-4" @click.self="audit.open = false">
+  <div class="flex flex-col w-full max-w-2xl h-[80vh] bg-bg-card border border-gray-700 rounded-2xl">
+    <div class="flex items-center justify-between p-4 border-b border-gray-800 shrink-0">
+      <h3 class="font-semibold" x-text="t('audit_title')"></h3>
+      <button @click="audit.open = false" class="text-fg-muted hover:text-fg text-xl leading-none">&times;</button>
+    </div>
+    <div class="p-3 border-b border-gray-800 flex items-center gap-2 shrink-0">
+      <input @keyup.enter="loadAudit()" x-model="audit.q" type="text" :placeholder="t('audit_filter')"
+        class="flex-1 bg-bg-hover border border-gray-700 rounded-xl px-3 py-2 text-sm outline-none focus:border-accent">
+      <button @click="loadAudit()" class="px-3 py-2 bg-accent hover:bg-accent-hover text-white rounded-xl text-sm" x-text="t('refresh')"></button>
+    </div>
+    <div class="overflow-y-auto flex-1 p-4 space-y-2" style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
+      <div x-show="audit.loading" class="text-center py-6 text-fg-muted animate-pulse" x-text="t('loading')"></div>
+      <div x-show="!audit.loading && audit.entries.length === 0" class="text-center py-8 text-fg-muted" x-text="t('audit_empty')"></div>
+      <template x-for="e in filteredAudit()" :key="e.time + e.action">
+        <div class="flex items-start gap-3 bg-bg-hover/50 border border-gray-800 rounded-xl px-3 py-2">
+          <span class="text-xs text-fg-muted shrink-0 font-mono" x-text="auditTime(e.time)"></span>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-xs px-2 py-0.5 rounded-full font-medium"
+                :class="auditBadge(e.action)"
+                x-text="e.action"></span>
+              <span class="text-xs text-accent" x-text="e.user ? e.user : ''"></span>
+            </div>
+            <p x-show="e.detail" class="text-sm text-fg mt-1 break-words" x-text="e.detail"></p>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
+
+<!-- Metrics modal -->
+<div x-show="metrics.open" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-[95] p-4" @click.self="metrics.open = false">
+  <div class="flex flex-col w-full max-w-2xl h-[80vh] bg-bg-card border border-gray-700 rounded-2xl">
+    <div class="flex items-center justify-between p-4 border-b border-gray-800 shrink-0">
+      <h3 class="font-semibold" x-text="t('metrics_title')"></h3>
+      <button @click="metrics.open = false" class="text-fg-muted hover:text-fg text-xl leading-none">&times;</button>
+    </div>
+    <div class="overflow-y-auto flex-1 p-4 space-y-5" style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
+      <div x-show="metrics.loading" class="text-center py-6 text-fg-muted animate-pulse" x-text="t('loading')"></div>
+      <template x-if="!metrics.loading && metrics.data">
+        <div class="space-y-5">
+          <div class="flex gap-3 flex-wrap">
+            <div class="bg-bg-hover/50 border border-gray-800 rounded-xl px-4 py-3">
+              <div class="text-xs text-fg-muted" x-text="t('metrics_uptime')"></div>
+              <div class="text-lg font-semibold" x-text="fmtUptime(metrics.data.uptime_s)"></div>
+            </div>
+            <div class="bg-bg-hover/50 border border-gray-800 rounded-xl px-4 py-3">
+              <div class="text-xs text-fg-muted" x-text="t('metrics_ram')"></div>
+              <div class="text-lg font-semibold" x-text="(metrics.data.ram_mb || 0) + ' MB'"></div>
+            </div>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <select x-model="metrics.model" @change="metrics.load()" class="bg-bg-hover/50 border border-gray-800 rounded-lg px-3 py-2 text-sm max-w-full">
+              <option value="">Todos los modelos</option>
+              <template x-for="bm in (metrics.data.token_usage_by_model || [])" :key="bm.model">
+                <option :value="bm.model" x-text="bm.model"></option>
+              </template>
+            </select>
+            <span class="flex-1"></span>
+            <button @click="downloadMetrics('json')" class="text-xs px-3 py-2 bg-bg-hover/50 border border-gray-800 rounded-lg hover:bg-bg-hover" x-text="t('metrics_download_json')"></button>
+            <button @click="downloadMetrics('csv')" class="text-xs px-3 py-2 bg-bg-hover/50 border border-gray-800 rounded-lg hover:bg-bg-hover" x-text="t('metrics_download_csv')"></button>
+          </div>
+
+          <div>
+            <div class="text-sm font-semibold mb-2" x-text="t('metrics_sessions_day')"></div>
+            <div x-show="maxBar(metrics.data.sessions_per_day, 'count') === 0" class="text-sm text-fg-muted" x-text="t('metrics_none')"></div>
+            <div class="space-y-1">
+              <template x-for="d in metrics.data.sessions_per_day" :key="d.date">
+                <div class="flex items-center gap-2 text-xs">
+                  <span class="w-20 shrink-0 text-fg-muted" x-text="d.date"></span>
+                  <div class="flex-1 bg-bg-hover/50 rounded h-3 overflow-hidden">
+                    <div class="h-full bg-accent/70 rounded" :style="'width:' + (maxBar(metrics.data.sessions_per_day, 'count') ? Math.round(d.count / maxBar(metrics.data.sessions_per_day, 'count') * 100) : 0) + '%'"></div>
+                  </div>
+                  <span class="w-6 text-right" x-text="d.count"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div>
+            <div class="text-sm font-semibold mb-2" x-text="t('metrics_profiles')"></div>
+            <div x-show="!metrics.data.top_profiles.length" class="text-sm text-fg-muted" x-text="t('metrics_none')"></div>
+            <div class="space-y-1">
+              <template x-for="p in metrics.data.top_profiles" :key="p.name">
+                <div class="flex items-center justify-between text-sm px-3 py-1.5 bg-bg-hover/50 border border-gray-800 rounded-lg">
+                  <span x-text="p.name"></span>
+                  <span class="text-fg-muted text-xs" x-text="p.count"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div>
+            <div class="text-sm font-semibold mb-2" x-text="t('metrics_tokens')"></div>
+            <div x-show="maxBar(metrics.data.token_usage_per_day, 'input') === 0 && maxBar(metrics.data.token_usage_per_day, 'output') === 0 && maxBar(metrics.data.token_usage_per_day, 'cache') === 0" class="text-sm text-fg-muted" x-text="t('metrics_none')"></div>
+            <div class="space-y-1">
+              <template x-for="d in metrics.data.token_usage_per_day" :key="d.date">
+                <div class="flex items-center gap-2 text-xs" x-show="d.input || d.output || d.cache">
+                  <span class="w-20 shrink-0 text-fg-muted" x-text="d.date"></span>
+                  <div class="flex-1 flex h-3 rounded overflow-hidden bg-bg-hover/50">
+                    <div class="bg-accent/70" :style="'width:' + Math.round(d.input / Math.max(maxBar(metrics.data.token_usage_per_day, 'input'), maxBar(metrics.data.token_usage_per_day, 'output'), maxBar(metrics.data.token_usage_per_day, 'cache')) * 100) + '%'" :title="t('metrics_input') + ' ' + d.input"></div>
+                    <div class="bg-success/70" :style="'width:' + Math.round(d.output / Math.max(maxBar(metrics.data.token_usage_per_day, 'input'), maxBar(metrics.data.token_usage_per_day, 'output'), maxBar(metrics.data.token_usage_per_day, 'cache')) * 100) + '%'" :title="t('metrics_output') + ' ' + d.output"></div>
+                    <div class="bg-warn/70" :style="'width:' + Math.round(d.cache / Math.max(maxBar(metrics.data.token_usage_per_day, 'input'), maxBar(metrics.data.token_usage_per_day, 'output'), maxBar(metrics.data.token_usage_per_day, 'cache')) * 100) + '%'" :title="t('metrics_cache') + ' ' + d.cache"></div>
+                  </div>
+                  <span class="text-fg-muted w-28 text-right shrink-0" x-text="d.input + ' / ' + d.output + ' / ' + d.cache"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div>
+            <div class="text-sm font-semibold mb-2" x-text="t('metrics_by_model')"></div>
+            <div x-show="!(metrics.data.token_usage_by_model || []).length" class="text-sm text-fg-muted" x-text="t('metrics_none')"></div>
+            <div class="space-y-1">
+              <template x-for="bm in (metrics.data.token_usage_by_model || [])" :key="bm.model">
+                <div class="flex items-center justify-between text-sm px-3 py-1.5 bg-bg-hover/50 border border-gray-800 rounded-lg">
+                  <span x-text="bm.model"></span>
+                  <span class="text-fg-muted text-xs" x-text="bm.messages + ' msg · ' + fmtTokens(bm.input + bm.output + bm.cache) + ' tok'"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
+
+<!-- Live view modal: Terminal + Chat -->
+<div x-show="live.open" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-[95] p-4" @click.self="closeLive()">
+  <div class="flex flex-col w-full max-w-3xl h-[80vh] bg-bg-card border border-gray-700 rounded-2xl overflow-hidden" :style="'height:min(80vh,80dvh,' + (live.maxH || 10000) + 'px)'">
+    <div class="flex items-center justify-between p-4 border-b border-gray-800 shrink-0">
+      <div class="flex items-center gap-3">
+        <h3 class="font-semibold" x-text="t('live_title', [live.name])"></h3>
+        <div class="flex rounded-lg bg-bg p-0.5 text-xs">
+          <button @click="setLiveView('chat')" :class="live.view==='chat' ? 'bg-accent text-white' : 'text-fg-muted hover:text-fg'" class="px-3 py-1 rounded-md transition-colors" x-text="t('live_tab_chat')"></button>
+          <button @click="setLiveView('term')" :class="live.view==='term' ? 'bg-accent text-white' : 'text-fg-muted hover:text-fg'" class="px-3 py-1 rounded-md transition-colors" x-text="t('live_tab_term')"></button>
+        </div>
+      </div>
+      <button @click="closeLive()" class="text-fg-muted hover:text-fg text-xl leading-none">&times;</button>
+    </div>
+
+    <!-- Controls: scroll / mode / model / interrupt (works on both tabs) -->
+    <div class="flex items-center gap-1 px-3 py-2 border-b border-gray-800 shrink-0 flex-wrap">
+      <button @click="scrollLive(-1)" :title="t('live_scroll_up')" class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg transition-colors">⏶</button>
+      <button @click="scrollLive(1)" :title="t('live_scroll_end')" class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg transition-colors">⏬</button>
+      <select @change="setMode($event.target.value); $event.target.value=''" :title="t('mode_label')" class="px-2 py-1 rounded border border-gray-700 bg-bg-card text-fg text-xs focus:outline-none focus:border-accent transition-colors">
+        <option value="" selected disabled x-text="t('mode_label')"></option>
+        <option value="auto">auto</option>
+        <option value="plan">plan</option>
+        <option value="accept-edits">accept-edits</option>
+        <option value="manual">manual</option>
+      </select>
+      <select @change="setModel($event.target.value); $event.target.value=''" :title="t('model_label')" class="px-2 py-1 rounded border border-gray-700 bg-bg-card text-fg text-xs focus:outline-none focus:border-accent transition-colors max-w-[160px]">
+        <option value="" selected disabled x-text="t('model_label')"></option>
+        <template x-for="mo in live.models" :key="mo">
+          <option :value="mo" x-text="mo"></option>
+        </template>
+      </select>
+      <span class="flex-1"></span>
+    </div>
+
+    <!-- Terminal tab -->
+    <template x-if="live.view==='term'">
+      <div class="flex-1 overflow-y-auto min-h-0 bg-black/40" x-ref="livePane" style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
+        <div x-show="live.status" class="px-3 py-2 text-xs text-danger" x-text="live.status"></div>
+        <pre class="p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words" x-text="termText"></pre>
+      </div>
+    </template>
+
+    <!-- Chat tab -->
+    <template x-if="live.view==='chat'">
+      <div class="flex flex-col flex-1 min-h-0">
+        <div class="flex-1 overflow-y-auto p-4 space-y-3" x-ref="liveChat" style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
+          <div x-show="live.chatStatus" class="text-xs text-danger px-1" x-text="live.chatStatus"></div>
+          <div x-show="!live.meta || !live.meta.ready" class="text-sm text-fg-muted text-center py-10" x-text="t('chat_no_conv')"></div>
+          <template x-for="m in live.msgs" :key="m.index">
+            <div :class="m.role==='user' ? 'flex justify-end' : 'flex justify-start'">
+              <div :class="m.role==='user' ? 'max-w-[80%] bg-accent text-white rounded-2xl rounded-br-md px-3 py-2 text-sm whitespace-pre-wrap break-words' : 'max-w-[85%] bg-bg border border-gray-800 rounded-2xl rounded-bl-md px-3 py-2 text-sm whitespace-pre-wrap break-words text-fg'"><span x-text="m.content"></span></div>
+            </div>
+          </template>
+        </div>
+
+        <!-- AskUserQuestion choice dialog: question + selectable options.
+             x-if (not x-show) so the subtree is not evaluated while hidden:
+             when live.meta.choice is null the inner bindings would throw. -->
+        <template x-if="live.meta && live.meta.waiting === 'choice' && live.meta.choice">
+          <div class="px-4 py-3 border-t border-gray-800 bg-bg/60 shrink-0 space-y-2">
+            <div class="text-sm text-fg" x-text="live.meta.choice.question"></div>
+            <div class="flex flex-col gap-1">
+              <template x-for="(opt, i) in live.meta.choice.options" :key="i">
+                <button @click="sendKey('enter')" :class="i === live.meta.choice.selected ? 'bg-warn/15 border-warn/40 text-fg' : 'border-gray-700 text-fg-muted hover:bg-bg-hover'"
+                  class="text-left px-3 py-1.5 rounded border text-xs transition-colors flex items-center gap-2"
+                  :title="t('chat_choice_title')">
+                  <span x-text="(i === live.meta.choice.selected ? '❯ ' : '  ') + (i + 1) + '.'"></span>
+                  <span x-text="opt"></span>
+                </button>
+              </template>
+            </div>
+            <div class="flex items-center gap-1 text-xs text-fg-muted">
+              <button @click="sendKey('up')" class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg transition-colors" :title="t('chat_choice_up')">↑</button>
+              <button @click="sendKey('down')" class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg transition-colors" :title="t('chat_choice_down')">↓</button>
+              <span class="text-xs" x-text="t('chat_choice_hint')"></span>
+            </div>
+          </div>
+        </template>
+
+        <!-- Status chrome (modo / tiempo / vivo), never as text -->
+        <div class="px-4 py-2 border-t border-gray-800 flex items-center gap-3 text-xs text-fg-muted shrink-0">
+          <span x-show="live.meta && live.meta.is_alive" class="text-success">● <span x-text="t('chat_status_alive')"></span></span>
+          <span x-show="live.meta && !live.meta.is_alive" class="text-danger">● <span x-text="t('chat_status_off')"></span></span>
+          <span x-show="live.meta && live.meta.waiting === 'approval'" class="text-warn font-medium">⚠ <span x-text="t('chat_status_waiting')"></span></span>
+          <span x-show="live.meta && live.meta.waiting === 'choice'" class="text-warn font-medium">⚠ <span x-text="t('chat_status_choice')"></span></span>
+          <span x-show="live.meta && live.meta.mode" x-text="live.meta && live.meta.mode ? t('chat_status_mode', [live.meta.mode]) : ''"></span>
+          <span x-show="live.meta && live.meta.model" x-text="live.meta && live.meta.model ? t('chat_status_model', [live.meta.model]) : ''"></span>
+          <span x-show="live.meta && live.meta.created" x-text="t('chat_status_elapsed', [live.elapsed])"></span>
+          <span class="ml-auto"></span>
+          <button x-show="live.meta && live.meta.is_alive" @click="reconnectRC()"
+            class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg transition-colors"
+            :title="t('rc_reconnect_title')"
+            x-text="live.meta && live.meta.status === 'rc_connected' ? t('rc_reconnect_on') : t('rc_reconnect_off')"></button>
+          <!-- Choice dialog (AskUserQuestion): navigate with ↑/↓, pick with Enter. -->
+          <template x-if="live.meta && live.meta.is_alive && live.meta.waiting === 'choice'">
+            <span class="flex items-center gap-1">
+              <button @click="sendKey('up')" class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg transition-colors" :title="t('chat_choice_up')">↑</button>
+              <button @click="sendKey('down')" class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg transition-colors" :title="t('chat_choice_down')">↓</button>
+              <button @click="sendKey('enter')" class="shrink-0 px-2 py-1 rounded border border-gray-700 bg-warn/15 text-warn hover:bg-bg-hover transition-colors" :title="t('chat_choice_title')">✓ <span x-text="t('chat_approve')"></span></button>
+            </span>
+          </template>
+          <!-- Approve the permission dialog (option 1 / Enter) when the pane is
+               blocked waiting for approval. -->
+          <button x-show="live.meta && live.meta.is_alive && live.meta.waiting === 'approval'" @click="sendKey('enter')"
+            class="shrink-0 px-2 py-1 rounded border border-gray-700 bg-warn/15 text-warn hover:bg-bg-hover transition-colors"
+            :title="t('chat_approve_title')">✓ <span x-text="t('chat_approve')"></span></button>
+          <!-- Stop: sends Escape, which always works (interrupts generation and
+               cancels dialogs/permissions). Bottom bar, right of re-register. -->
+          <button x-show="live.meta && live.meta.is_alive" @click="sendKey('escape')"
+            class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg transition-colors"
+            :title="t('chat_stop_title')">⏹</button>
+        </div>
+
+        <!-- Input bar -->
+        <div class="p-3 border-t border-gray-800 flex items-end gap-2 shrink-0">
+          <textarea x-model="live.input" rows="1" @keydown.enter="onChatKeydown($event)" :placeholder="t('chat_placeholder')"
+            class="flex-1 bg-bg border border-gray-700 rounded-xl px-3 py-2 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors resize-none max-h-32"></textarea>
+          <button @click="sendChat()" :disabled="live.sending" class="shrink-0 bg-accent text-white rounded-xl px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity" x-text="t('chat_send')"></button>
+        </div>
+      </div>
+    </template>
+  </div>
+</div>
+
+<!-- Rename modal -->
+<div x-show="rename.open" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-[85] p-4" @click.self="rename.open = false">
+  <div class="flex flex-col w-full max-w-md bg-bg-card border border-gray-700 rounded-2xl">
+    <div class="flex items-center justify-between p-4 border-b border-gray-800 shrink-0">
+      <h3 class="font-semibold" x-text="t('rename_title', [rename.session])"></h3>
+      <button @click="rename.open = false" class="text-fg-muted hover:text-fg text-xl leading-none">&times;</button>
+    </div>
+    <div class="overflow-y-auto p-6 space-y-4" style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
+      <div>
+        <label class="block text-xs text-fg-muted mb-1" x-text="t('rename_tmux')"></label>
+        <input type="text" x-model="rename.tmuxName" @keydown.enter="renameTmux()"
+          class="w-full bg-bg border border-gray-700 rounded-xl px-3 py-2 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors">
+        <button @click="renameTmux()"
+          class="mt-2 px-4 py-1.5 bg-accent hover:bg-accent-hover text-white rounded-xl text-xs font-medium transition-colors" x-text="t('rename_tmux_apply')"></button>
+      </div>
+      <div class="border-t border-gray-800 pt-4">
+        <label class="block text-xs text-fg-muted mb-1" x-text="t('rename_claude')"></label>
+        <input type="text" x-model="rename.claudeName" @keydown.enter="renameClaude()"
+          class="w-full bg-bg border border-gray-700 rounded-xl px-3 py-2 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors">
+        <button @click="renameClaude()"
+          class="mt-2 px-4 py-1.5 bg-accent hover:bg-accent-hover text-white rounded-xl text-xs font-medium transition-colors" x-text="t('rename_claude_apply')"></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- User modal (add / change password) -->
+<div x-show="userModal.open" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-[100] p-4" @click.self="userModal.open = false">
+  <div class="flex flex-col w-full max-w-sm bg-bg-card border border-gray-700 rounded-2xl">
+    <div class="flex items-center justify-between p-4 border-b border-gray-800 shrink-0">
+      <h3 class="font-semibold" x-text="userModal.mode === 'add' ? t('cfg_add_user_title') : t('cfg_chg_pass_title', [userModal.username])"></h3>
+      <button @click="userModal.open = false" class="text-fg-muted hover:text-fg text-xl leading-none">&times;</button>
+    </div>
+    <div class="overflow-y-auto p-6 space-y-4" style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
+      <div x-show="userModal.mode === 'add'">
+        <label class="block text-xs text-fg-muted mb-1" x-text="t('username')"></label>
+        <input type="text" x-model="userModal.username" placeholder="a-z, 0-9, _-"
+          class="w-full bg-bg border border-gray-700 rounded-xl px-3 py-2 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors">
+      </div>
+      <div>
+        <label class="block text-xs text-fg-muted mb-1" x-text="t('cfg_password_label')"></label>
+        <input type="password" x-model="userModal.password" minlength="8"
+          class="w-full bg-bg border border-gray-700 rounded-xl px-3 py-2 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors">
+      </div>
+      <p x-show="userModal.error" class="text-sm text-danger" x-text="userModal.error"></p>
+      <button @click="userModal.mode === 'add' ? doAddUser() : doChangePassword()"
+        class="w-full py-2.5 bg-accent hover:bg-accent-hover text-white rounded-xl text-sm font-medium transition-colors"
+        x-text="userModal.mode === 'add' ? t('cfg_add_user_title') : t('cfg_save')"></button>
+    </div>
+  </div>
+</div>
+
+
+<!-- Preview modal -->
+<div x-show="preview.open" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-[80] p-4" @click.self="preview.open = false">
+  <div class="flex flex-col w-full max-w-2xl max-h-[90vh] bg-bg-card border border-gray-700 rounded-2xl">
+    <div class="flex items-center justify-between p-4 border-b border-gray-800 shrink-0">
+      <h3 class="font-semibold" x-text="t('preview_title')"></h3>
+      <button @click="preview.open = false" class="text-fg-muted hover:text-fg text-xl leading-none">&times;</button>
+    </div>
+    <div class="overflow-y-auto p-6" style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
+    <div class="flex items-center gap-2 mb-1">
+      <h3 class="text-base font-semibold break-words" x-text="preview.title"></h3>
+      <span x-show="preview.is_alive" class="shrink-0 w-2 h-2 rounded-full bg-success" :title="t('alive')"></span>
+    </div>
+    <div class="text-xs text-fg-muted mb-3" x-text="preview.date + ' · [' + preview.origin + ']'"></div>
+    <div class="space-y-3 text-sm">
+      <template x-for="msg in preview.messages" :key="msg.index">
+        <div :class="msg.role === 'user' ? 'text-fg' : 'text-fg-muted italic'">
+          <span class="text-xs text-fg-muted block mb-0.5" x-text="msg.role === 'user' ? t('you') : t('claude')"></span>
+          <p x-text="msg.content"></p>
+        </div>
+      </template>
+    </div>
+    <div class="mt-5 pt-4 border-t border-gray-800">
+      <div class="text-xs font-semibold text-fg-muted uppercase mb-2">Tags / Notas</div>
+      <input x-model="preview.tags" :placeholder="t('tags_placeholder')"
+        class="w-full bg-bg border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent mb-2">
+      <textarea x-model="preview.notes" rows="2" :placeholder="t('notes_placeholder')"
+        class="w-full bg-bg border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent"></textarea>
+      <button @click="savePreviewMeta()" :disabled="preview.saving"
+        class="mt-2 text-sm bg-accent text-bg px-3 py-1.5 rounded-lg font-medium hover:opacity-90 disabled:opacity-50" x-text="t('meta_save')"></button>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- Profile viewer modal -->
+<div x-show="profViewer.open" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-[90] p-4" @click.self="profViewer.open = false">
+  <div class="flex flex-col w-full max-w-2xl max-h-[90vh] bg-bg-card border border-gray-700 rounded-2xl">
+    <div class="flex items-center justify-between p-4 border-b border-gray-800 shrink-0">
+      <h3 class="font-semibold" x-text="'Perfil: ' + profViewer.name"></h3>
+      <button @click="profViewer.open = false" class="text-fg-muted hover:text-fg text-xl leading-none">&times;</button>
+    </div>
+    <div class="overflow-y-auto p-0" style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
+      <pre class="text-sm p-4 leading-relaxed overflow-x-auto" style="tab-size:2;-moz-tab-size:2;white-space:pre-wrap;word-break:break-word"><code x-html="profViewer.html"></code></pre>
+    </div>
+  </div>
+</div>
+
+<!-- Toast notifications -->
+<div x-show="toast.show" x-transition
+  class="fixed bottom-6 right-6 px-4 py-3 rounded-xl shadow-lg text-sm z-[95] max-w-sm"
+  :class="toast.type === 'success' ? 'bg-success/20 text-success border border-success/30' : 'bg-danger/20 text-danger border border-danger/30'"
+  x-text="toast.message"></div>
+
+<!-- Login overlay (shown when not authenticated) -->
+<div x-show="showLogin" class="fixed inset-0 bg-bg flex items-center justify-center z-[100]">
+  <div class="bg-bg-card border border-gray-700 rounded-2xl p-8 w-full max-w-sm mx-4">
+    <div class="text-center mb-6">
+      <span class="text-4xl">🤖</span>
+      <h1 class="text-xl font-semibold mt-3">Claude Sessions</h1>
+      <p class="text-sm text-fg-muted mt-1" x-text="t('login_subtitle')"></p>
+    </div>
+    <form @submit.prevent="doLogin" class="space-y-4">
+      <div>
+        <label class="block text-sm text-fg-muted mb-1" x-text="t('username')"></label>
+        <input type="text" x-model="loginUser" required
+          class="w-full bg-bg border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-fg focus:outline-none focus:border-accent transition-colors">
+      </div>
+      <div>
+        <label class="block text-sm text-fg-muted mb-1" x-text="t('password')"></label>
+        <input type="password" x-model="loginPass" required
+          class="w-full bg-bg border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-fg focus:outline-none focus:border-accent transition-colors">
+      </div>
+      <p x-show="loginError" class="text-sm text-danger" x-text="loginError"></p>
+      <button type="submit" class="w-full py-2.5 bg-accent hover:bg-accent-hover text-white rounded-xl text-sm font-medium transition-colors" x-text="t('login_button')"></button>
+    </form>
+  </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+# Example container deployment (agent mode).
+# Follows the homelab stack convention: explicit container_name, restart and TZ.
+# The healthcheck (wget against /api/health) is defined in the Dockerfile and
+# inherited by this compose file.
+#
+# Host requirements:
+#   - ccsm-agent running and listening on /run/ccsm/agent.sock (mounted by this
+#     service). Without the agent, the UI responds but actions return 502.
+#   - config.yaml with agent_socket: /run/ccsm/agent.sock and the agent's
+#     agent_secret. See config.example.yaml.
+services:
+  ccsm:
+    image: ghcr.io/luisgsluis/claude-code-session-manager:latest
+    container_name: claude-sessions
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.yaml:/config/config.yaml:rw
+      # Host agent socket (not a file: the agent creates and removes it).
+      - /run/ccsm/agent.sock:/run/ccsm/agent.sock
+    environment:
+      - TZ=Europe/Madrid
+    # Optional overrides (uncomment as needed):
+    # - CCSM_PORT=9090
+    # - CCSM_AGENT_SOCKET=/run/ccsm/agent.sock
+    # - CCSM_HOST_ATTACH_ADDR=admin@myhost.local

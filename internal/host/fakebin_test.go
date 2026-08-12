@@ -1,0 +1,602 @@
+package host
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// fakeTmux is an env-driven stub of the tmux commands the Host runs. It lets
+// tests exercise tmuxList, rcStatus, sessionAlive, tmuxKill and newSession
+// without a real tmux.
+const fakeTmux = `#!/bin/sh
+case "$1" in
+  list-sessions)
+    [ -n "$FAKE_TMUX_NO_SESSIONS" ] && exit 1
+    printf '%s' "$FAKE_TMUX_LIST"
+    exit 0 ;;
+  capture-pane)
+    [ -n "$FAKE_TMUX_CAPTURE_FAIL" ] && exit 1
+    for a in "$@"; do
+      [ "$a" = "-S" ] && { printf '%s' "$FAKE_TMUX_HIST"; exit 0; }
+    done
+    printf '%s' "$FAKE_TMUX_LINE"
+    exit 0 ;;
+  has-session)
+    [ "$3" = "=$FAKE_TMUX_DEAD" ] && exit 1
+    exit 0 ;;
+  kill-session)
+    [ -n "$FAKE_TMUX_KILL_FAIL" ] && { echo "no such session" >&2; exit 1; }
+    echo "$3" >> "$FAKE_TMUX_KILLS"
+    exit 0 ;;
+  new-session)
+    [ -n "$FAKE_TMUX_NEW_FAIL" ] && { echo "create failed" >&2; exit 1; }
+    printf '%s\n' "${FAKE_TMUX_NEW_NAME:-3}"
+    exit 0 ;;
+  list-panes)
+    [ -n "$FAKE_TMUX_LIST_PANES_FAIL" ] && exit 1
+    printf '%s\t%s\t%s\n' "${FAKE_TMUX_PANE_SESSION:-x}" "${FAKE_TMUX_PANE_ID:-%0}" "$FAKE_TMUX_PANE_PID"
+    exit 0 ;;
+  display-message)
+    [ -n "$FAKE_TMUX_CREATED" ] || exit 1
+    printf '%s' "$FAKE_TMUX_CREATED"
+    exit 0 ;;
+  send-keys)
+    [ -n "$FAKE_TMUX_SENDKEYS" ] && printf '%s\n' "$*" >> "$FAKE_TMUX_SENDKEYS"
+    exit 0 ;;
+esac
+exit 1
+`
+
+// fakePs is a stub of `ps -eo comm,args` driven by FAKE_PS_OUT / FAKE_PS_FAIL.
+const fakePs = `#!/bin/sh
+[ -n "$FAKE_PS_FAIL" ] && exit 1
+printf '%s' "$FAKE_PS_OUT"
+exit 0
+`
+
+// fakeHost builds a Host whose binaries are stub scripts in a temp dir, plus a
+// profiles dir and settings path. env maps environment variables for the stubs.
+func fakeHost(t *testing.T, env map[string]string) *Host {
+	t.Helper()
+	base := t.TempDir()
+	binDir := filepath.Join(base, "bin")
+	os.MkdirAll(binDir, 0700)
+
+	writeExe := func(name, script string) string {
+		p := filepath.Join(binDir, name)
+		if err := os.WriteFile(p, []byte(script), 0700); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	tmux := writeExe("tmux", fakeTmux)
+	_ = writeExe("claude", "#!/bin/sh\nexit 0")
+	_ = writeExe("bash", "#!/bin/sh\nexit 0")
+
+	for k, v := range env {
+		t.Setenv(k, v)
+	}
+
+	profiles := filepath.Join(base, "perfiles")
+	os.MkdirAll(profiles, 0700)
+	settings := filepath.Join(base, "settings.json")
+	conv := filepath.Join(base, "conv")
+	os.MkdirAll(conv, 0700)
+
+	h := New(Options{
+		ProfilesPath:  profiles,
+		SettingsPath:  settings,
+		ConvPath:      conv,
+		ClaudeBinary:  filepath.Join(binDir, "claude"),
+		TmuxBinary:    tmux,
+		BashBinary:    filepath.Join(binDir, "bash"),
+		RcBootstrap:   "estandar",
+		RcWaitSeconds: 2,
+		RcPollSeconds: 0,
+		Home:          base,
+	})
+	return h
+}
+
+func (h *Host) writeProfile(t *testing.T, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(h.profilesPath+"/"+name+".json", []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (h *Host) readSettings(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(h.settingsPath)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	return string(b)
+}
+
+func TestTmuxListSortNoiseAndStatus(t *testing.T) {
+	h := fakeHost(t, map[string]string{
+		"FAKE_TMUX_LIST": "10\t2024-01-02 11:00:00\tclaude\n3\t2024-01-01 10:00:00\t✳ analizando logs\n",
+		"FAKE_TMUX_LINE": "/rc connected",
+	})
+	t.Setenv("HOSTNAME", "rb")
+
+	data, err := h.Exec("tmux-ls", nil)
+	if err != nil {
+		t.Fatalf("tmux-ls: %v", err)
+	}
+	sessions := data.([]map[string]any)
+	if len(sessions) != 2 {
+		t.Fatalf("want 2 sessions, got %d", len(sessions))
+	}
+	// Numerically sorted: 3 before 10.
+	if sessions[0]["name"] != "3" || sessions[1]["name"] != "10" {
+		t.Errorf("order: %v, %v", sessions[0]["name"], sessions[1]["name"])
+	}
+	if sessions[0]["task"] != "analizando logs" {
+		t.Errorf("noise not stripped: %q", sessions[0]["task"])
+	}
+	if sessions[0]["status"] != "rc_connected" {
+		t.Errorf("status: %v", sessions[0]["status"])
+	}
+}
+
+func TestTmuxListHostnameTask(t *testing.T) {
+	h := fakeHost(t, map[string]string{
+		"FAKE_TMUX_LIST": "3\t2024-01-01 10:00:00\trb\n",
+	})
+	t.Setenv("HOSTNAME", "rb")
+	data, err := h.Exec("tmux-ls", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := data.([]map[string]any)
+	if sessions[0]["task"] != "(sin tarea)" {
+		t.Errorf("task: %q", sessions[0]["task"])
+	}
+}
+
+func TestTmuxListNoSessions(t *testing.T) {
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_NO_SESSIONS": "1"})
+	data, err := h.Exec("tmux-ls", nil)
+	if err != nil {
+		t.Fatalf("tmux-ls: %v", err)
+	}
+	if len(data.([]map[string]any)) != 0 {
+		t.Errorf("expected empty, got %v", data)
+	}
+}
+
+func TestRCStatusBranches(t *testing.T) {
+	cases := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"connected", map[string]string{"FAKE_TMUX_LINE": "/rc connected"}, "rc_connected"},
+		{"failed", map[string]string{"FAKE_TMUX_LINE": "/rc failed"}, "rc_failed"},
+		{"history", map[string]string{"FAKE_TMUX_LINE": "hello", "FAKE_TMUX_HIST": "… /remote-control is active"}, "rc_connected"},
+		{"pending", map[string]string{"FAKE_TMUX_LINE": "hello"}, "rc_pending"},
+		{"capture error", map[string]string{"FAKE_TMUX_CAPTURE_FAIL": "1"}, "rc_pending"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := fakeHost(t, c.env)
+			if got := h.rcStatus("3"); got != c.want {
+				t.Errorf("rcStatus = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestClaudeNewRCCleanProfile(t *testing.T) {
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_LINE": "/rc connected"})
+	h.writeProfile(t, "estandar", `{"model":"sonnet","remoteControlAtStartup":true}`)
+
+	data, err := h.Exec("claude-nueva", map[string]string{"profile": "estandar"})
+	if err != nil {
+		t.Fatalf("claude-nueva: %v", err)
+	}
+	out := data.(map[string]string)
+	if out["session"] != "3" || out["status"] != "rc_connected" {
+		t.Errorf("out: %+v", out)
+	}
+	// RC-clean profile is applied per-session, settings.json stays untouched.
+	if _, err := os.Stat(h.settingsPath); !os.IsNotExist(err) {
+		t.Errorf("settings.json should not be written for RC-clean profiles")
+	}
+}
+
+func TestClaudeNewSinRCStaging(t *testing.T) {
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_LINE": "/rc connected"})
+	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)
+	h.writeProfile(t, "deepseek", `{"apiKeyHelper":"/x/claude-apikey"}`)
+
+	data, err := h.Exec("claude-nueva", map[string]string{"profile": "deepseek"})
+	if err != nil {
+		t.Fatalf("claude-nueva: %v", err)
+	}
+	out := data.(map[string]string)
+	if out["session"] != "3" || out["status"] != "rc_connected" {
+		t.Errorf("out: %+v", out)
+	}
+	// Staging restores the target profile to settings.json.
+	if got := h.readSettings(t); !strings.Contains(got, "apiKeyHelper") {
+		t.Errorf("settings not restored to target: %s", got)
+	}
+}
+
+func TestClaudeNewNoProfileUsesActive(t *testing.T) {
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_LINE": "/rc connected"})
+	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)
+	h.writeProfile(t, "deepseek", `{"apiKeyHelper":"/x"}`)
+	// Make deepseek the active profile → claude-nueva without profile stages it.
+	if err := h.applyProfile("deepseek"); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := h.Exec("claude-nueva", nil)
+	if err != nil {
+		t.Fatalf("claude-nueva: %v", err)
+	}
+	if out := data.(map[string]string); out["status"] != "rc_connected" {
+		t.Errorf("out: %+v", out)
+	}
+}
+
+func TestClaudeNewStagingDead(t *testing.T) {
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_LINE": "/rc connected", "FAKE_TMUX_DEAD": "3"})
+	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)
+	h.writeProfile(t, "deepseek", `{"apiKeyHelper":"/x"}`)
+
+	data, err := h.Exec("claude-nueva", map[string]string{"profile": "deepseek"})
+	if err != nil {
+		t.Fatalf("claude-nueva: %v", err)
+	}
+	if out := data.(map[string]string); out["status"] != "rc_pending" {
+		t.Errorf("dead session maps to rc_pending, got %+v", out)
+	}
+}
+
+func TestClaudeNewStagingFailed(t *testing.T) {
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_LINE": "/rc failed"})
+	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)
+	h.writeProfile(t, "deepseek", `{"apiKeyHelper":"/x"}`)
+
+	data, err := h.Exec("claude-nueva", map[string]string{"profile": "deepseek"})
+	if err != nil {
+		t.Fatalf("claude-nueva: %v", err)
+	}
+	if out := data.(map[string]string); out["status"] != "rc_failed" {
+		t.Errorf("out: %+v", out)
+	}
+}
+
+func TestClaudeNewStagingTimeout(t *testing.T) {
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_LINE": "idle"})
+	h.rcWaitSeconds = 0 // deadline already past → timeout
+	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)
+	h.writeProfile(t, "deepseek", `{"apiKeyHelper":"/x"}`)
+
+	data, err := h.Exec("claude-nueva", map[string]string{"profile": "deepseek"})
+	if err != nil {
+		t.Fatalf("claude-nueva: %v", err)
+	}
+	if out := data.(map[string]string); out["status"] != "rc_pending" {
+		t.Errorf("timeout maps to rc_pending, got %+v", out)
+	}
+}
+
+func TestClaudeNewStagingMissingBootstrap(t *testing.T) {
+	h := fakeHost(t, nil)
+	h.rcBootstrap = "nope"
+	h.writeProfile(t, "deepseek", `{"apiKeyHelper":"/x"}`)
+
+	_, err := h.Exec("claude-nueva", map[string]string{"profile": "deepseek"})
+	if status := errStatus(err); status != 500 {
+		t.Errorf("status=%d want 500 (err=%v)", status, err)
+	}
+}
+
+func TestClaudeNewNewSessionFailure(t *testing.T) {
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_NEW_FAIL": "1"})
+	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)
+
+	_, err := h.Exec("claude-nueva", map[string]string{"profile": "estandar"})
+	if status := errStatus(err); status != 500 {
+		t.Errorf("status=%d want 500 (err=%v)", status, err)
+	}
+}
+
+func TestClaudeResumeNoActiveProfile(t *testing.T) {
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_LINE": "/rc connected"})
+	id := "00000000-0000-0000-0000-0000000000aa"
+	os.WriteFile(h.convPath+"/"+id+".jsonl", []byte(`{"type":"user","cwd":"/home/luis/x","message":{"content":"hola"}}`+"\n"), 0600)
+
+	data, err := h.Exec("claude-resume", map[string]string{"id": id})
+	if err != nil {
+		t.Fatalf("claude-resume: %v", err)
+	}
+	out := data.(map[string]string)
+	if out["session"] != "3" || out["status"] != "rc_connected" {
+		t.Errorf("out: %+v", out)
+	}
+}
+
+func TestClaudeResumeSinRCStaging(t *testing.T) {
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_LINE": "/rc connected"})
+	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)
+	h.writeProfile(t, "deepseek", `{"apiKeyHelper":"/x"}`)
+	if err := h.applyProfile("deepseek"); err != nil {
+		t.Fatal(err)
+	}
+	id := "00000000-0000-0000-0000-0000000000bb"
+	os.WriteFile(h.convPath+"/"+id+".jsonl", []byte(`{"type":"user","message":{"content":"hola"}}`+"\n"), 0600)
+
+	data, err := h.Exec("claude-resume", map[string]string{"id": id})
+	if err != nil {
+		t.Fatalf("claude-resume: %v", err)
+	}
+	if out := data.(map[string]string); out["status"] != "rc_connected" {
+		t.Errorf("out: %+v", out)
+	}
+}
+
+func TestTmuxKillSuccessAndFailure(t *testing.T) {
+	kills := filepath.Join(t.TempDir(), "kills.txt")
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_KILLS": kills})
+
+	if _, err := h.Exec("tmux-kill", map[string]string{"name": "3"}); err != nil {
+		t.Fatalf("tmux-kill: %v", err)
+	}
+	got, _ := os.ReadFile(kills)
+	if !strings.Contains(string(got), "=3") {
+		t.Errorf("kills marker: %q", got)
+	}
+
+	h2 := fakeHost(t, map[string]string{"FAKE_TMUX_KILL_FAIL": "1"})
+	_, err := h2.Exec("tmux-kill", map[string]string{"name": "3"})
+	if status := errStatus(err); status != 500 {
+		t.Errorf("status=%d want 500 (err=%v)", status, err)
+	}
+}
+
+func TestSessionAlive(t *testing.T) {
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_DEAD": "3"})
+	if h.sessionAlive("3") {
+		t.Error("session 3 should be dead")
+	}
+	if !h.sessionAlive("4") {
+		t.Error("session 4 should be alive")
+	}
+}
+
+func TestProfilesListSkipsJunkAndFlagsActive(t *testing.T) {
+	h := fakeHost(t, nil)
+	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)
+	h.writeProfile(t, "deepseek", `{"apiKeyHelper":"/x"}`)
+	// Junk that must be skipped.
+	os.WriteFile(h.profilesPath+"/notjson.txt", []byte("x"), 0600)
+	os.MkdirAll(h.profilesPath+"/subdir", 0700)
+	os.WriteFile(h.profilesPath+"/BAd name.json", []byte(`{}`), 0600)
+	// Make deepseek the active profile.
+	if err := h.applyProfile("deepseek"); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := h.Exec("profiles-ls", nil)
+	if err != nil {
+		t.Fatalf("profiles-ls: %v", err)
+	}
+	profiles := data.([]map[string]any)
+	if len(profiles) != 2 {
+		t.Fatalf("want 2 profiles, got %d: %v", len(profiles), profiles)
+	}
+	for _, p := range profiles {
+		if p["name"] == "deepseek" && p["is_active"] != true {
+			t.Errorf("deepseek should be active: %v", p)
+		}
+		if p["name"] == "estandar" && p["is_active"] != false {
+			t.Errorf("estandar should be inactive: %v", p)
+		}
+	}
+}
+
+func TestProfilesListNoSettings(t *testing.T) {
+	h := fakeHost(t, nil)
+	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)
+	data, err := h.Exec("profiles-ls", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := data.([]map[string]any); len(p) != 1 || p[0]["is_active"] != false {
+		t.Errorf("profiles: %v", p)
+	}
+}
+
+func TestActiveProfileNameNoMatch(t *testing.T) {
+	h := fakeHost(t, nil)
+	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)
+	os.WriteFile(h.settingsPath, []byte(`{"env":{"ANTHROPIC_BASE_URL":"https://x.com"}}`), 0600)
+	if got := h.activeProfileName(); got != "" {
+		t.Errorf("no match expected, got %q", got)
+	}
+
+	// profiles dir gone → "".
+	os.RemoveAll(h.profilesPath)
+	if got := h.activeProfileName(); got != "" {
+		t.Errorf("missing profiles dir: got %q", got)
+	}
+}
+
+func TestAliveConversations(t *testing.T) {
+	binDir := filepath.Join(t.TempDir(), "bin")
+	os.MkdirAll(binDir, 0700)
+	psPath := filepath.Join(binDir, "ps")
+	if err := os.WriteFile(psPath, []byte(fakePs), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+
+	uuid := "00000000-0000-0000-0000-0000000000cc"
+
+	t.Run("resume uuid in argv", func(t *testing.T) {
+		h := fakeHost(t, map[string]string{
+			"FAKE_PS_OUT": "claude /home/x/claude --resume " + uuid + "\n",
+		})
+		alive := h.aliveConversations()
+		if !alive[uuid] {
+			t.Errorf("resume uuid not marked alive: %v", alive)
+		}
+	})
+
+	t.Run("ps failure", func(t *testing.T) {
+		h := fakeHost(t, map[string]string{"FAKE_PS_FAIL": "1"})
+		if len(h.aliveConversations()) != 0 {
+			t.Error("expected empty on ps failure")
+		}
+	})
+
+	t.Run("fresh session marks recent file", func(t *testing.T) {
+		h := fakeHost(t, map[string]string{"FAKE_PS_OUT": "claude /home/x/claude\n"})
+		os.WriteFile(h.convPath+"/"+uuid+".jsonl", []byte("x\n"), 0600)
+		alive := h.aliveConversations()
+		if !alive[uuid] {
+			t.Errorf("recent file not marked alive: %v", alive)
+		}
+	})
+
+	t.Run("old file not alive", func(t *testing.T) {
+		h := fakeHost(t, map[string]string{"FAKE_PS_OUT": "claude /home/x/claude\n"})
+		old := time.Now().Add(-2 * time.Hour)
+		os.Chtimes(h.convPath+"/"+uuid+".jsonl", old, old)
+		alive := h.aliveConversations()
+		if alive[uuid] {
+			t.Error("old file marked alive")
+		}
+	})
+
+	t.Run("non-uuid file ignored", func(t *testing.T) {
+		h := fakeHost(t, map[string]string{"FAKE_PS_OUT": "claude /home/x/claude\n"})
+		os.WriteFile(h.convPath+"/report.jsonl", []byte("x\n"), 0600)
+		if len(h.aliveConversations()) != 0 {
+			t.Error("non-uuid file leaked into alive set")
+		}
+	})
+}
+
+func TestConversationsListSkipsConflictsAndPages(t *testing.T) {
+	h := fakeHost(t, nil)
+	id1 := "00000000-0000-0000-0000-0000000000dd"
+	id2 := "00000000-0000-0000-0000-0000000000ee"
+	id3 := "00000000-0000-0000-0000-0000000000ff"
+	content := func(txt string) string {
+		return `{"type":"user","cwd":"/home/admin/x","message":{"content":"` + txt + `"}}` + "\n"
+	}
+	os.WriteFile(h.convPath+"/"+id1+".jsonl", []byte(content("primer proyecto")), 0600)
+	os.WriteFile(h.convPath+"/"+id2+".jsonl", []byte(content("SEGUNDO Proyecto")), 0600)
+	os.WriteFile(h.convPath+"/"+id3+".jsonl", []byte(content("tercero")), 0600)
+	// Syncthing-style conflict files and non-uuid files must be ignored.
+	os.WriteFile(h.convPath+"/"+id1+".sync-conflict-20240101-000000.jsonl", []byte(content("conflicto")), 0600)
+	os.WriteFile(h.convPath+"/nota.txt", []byte("x"), 0600)
+
+	// Case-insensitive search.
+	data, err := h.Exec("conversations-ls", map[string]string{"q": "proyecto"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := data.([]map[string]any)
+	if len(list) != 2 {
+		t.Errorf("want 2 matching, got %d", len(list))
+	}
+
+	// Page beyond range → empty.
+	data, err = h.Exec("conversations-ls", map[string]string{"page": "9", "per_page": "2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list := data.([]map[string]any); len(list) != 0 {
+		t.Errorf("page 9 should be empty, got %d", len(list))
+	}
+}
+
+func TestExtractTextBranches(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		want    string
+		ok      bool
+	}{
+		{"empty", "", "", false},
+		{"plain string", `"hola"`, "hola", true},
+		{"text blocks", `[{"type":"text","text":"uno"},{"type":"text","text":"dos"}]`, "uno dos", true},
+		{"only tool blocks", `[{"type":"tool_use","name":"Bash"}]`, "", false},
+		{"not json", `[{`, "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := extractText([]byte(c.content))
+			if ok != c.ok || got != c.want {
+				t.Errorf("extractText(%s) = %q,%v want %q,%v", c.name, got, ok, c.want, c.ok)
+			}
+		})
+	}
+}
+
+func TestConversationSummaryBranches(t *testing.T) {
+	h := fakeHost(t, nil)
+	path := h.convPath + "/sum.jsonl"
+	lines := []string{
+		`not json`,
+		`{"type":"assistant","message":{"content":"soy la IA"}}`,
+		`{"type":"user","isMeta":true,"message":{"content":"meta"}}`,
+		`{"type":"user","message":{"content":"<system>prompt</system>"}}`,
+		`{"type":"user","message":{"content":"real message"}}`,
+	}
+	os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0600)
+
+	text, _, ok := conversationSummary(path)
+	if !ok || text != "real message" {
+		t.Errorf("summary: %q, %v", text, ok)
+	}
+
+	// Missing file.
+	if _, _, ok := conversationSummary(path + ".nope"); ok {
+		t.Error("missing file should not be ok")
+	}
+
+	// Too many non-matching lines (>200) → not ok.
+	longPath := h.convPath + "/long.jsonl"
+	var buf strings.Builder
+	for i := 0; i < 250; i++ {
+		buf.WriteString(`{"type":"user","isMeta":true,"message":{"content":"x"}}` + "\n")
+	}
+	os.WriteFile(longPath, []byte(buf.String()), 0600)
+	if _, _, ok := conversationSummary(longPath); ok {
+		t.Error("250 meta lines should yield no summary")
+	}
+}
+
+func TestTruncateRunes(t *testing.T) {
+	if got := truncateRunes("corto", 10); got != "corto" {
+		t.Errorf("short: %q", got)
+	}
+	if got := truncateRunes("hola mundo largo", 6); !strings.HasSuffix(got, "…") {
+		t.Errorf("long: %q", got)
+	}
+}
+
+func TestOriginFor(t *testing.T) {
+	if originFor("/home/admin/x") != "pi" {
+		t.Error("admin → pi")
+	}
+	if originFor("/home/luis/x") != "pc" {
+		t.Error("luis → pc")
+	}
+	if originFor("/tmp/x") != "?" {
+		t.Error("unknown → ?")
+	}
+}

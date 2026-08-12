@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Stub de claude para e2e: sale limpiamente simulando un proceso que arranca RC.
+printf 'stub-claude-ok\n'
+exit 0
