@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -50,6 +51,12 @@ type Host struct {
 	rcPollSeconds   int
 	rcSettleSeconds int
 	home            string
+
+	// modeWheelCache holds the discovered Shift+Tab wheel order per profile
+	// (the wheel is account-dependent: auto/bypassPermissions only appear when
+	// enabled, so a hardcoded order can silently land on the wrong mode).
+	modeWheelCache map[string][]string
+	modeMu         sync.Mutex
 }
 
 // Error carries an HTTP-like status so the web server can return the right
@@ -104,6 +111,7 @@ func New(o Options) *Host {
 		rcPollSeconds:   o.RcPollSeconds,
 		rcSettleSeconds: o.RcSettleSeconds,
 		home:            o.Home,
+		modeWheelCache:  map[string][]string{},
 	}
 }
 
@@ -2148,6 +2156,7 @@ func (h *Host) sessionChat(name string) (map[string]any, error) {
 			"model":    model,
 			"waiting":  waiting,
 			"choice":   choice,
+			"modes":    h.cachedModeWheel(),
 			"messages": []map[string]any{},
 		}, nil
 	}
@@ -2163,6 +2172,7 @@ func (h *Host) sessionChat(name string) (map[string]any, error) {
 			"model":    model,
 			"waiting":  waiting,
 			"choice":   choice,
+			"modes":    h.cachedModeWheel(),
 			"messages": []map[string]any{},
 		}, nil
 	}
@@ -2231,6 +2241,7 @@ func (h *Host) sessionChat(name string) (map[string]any, error) {
 		"model":    model,
 		"waiting":  waiting,
 		"choice":   choice,
+		"modes":    h.cachedModeWheel(),
 		"messages": msgs,
 	}, nil
 }
@@ -2398,7 +2409,7 @@ func (h *Host) paneWaitingWithChoice(name string) (string, map[string]any) {
 // renders "accept edits" with a space (⏵⏵ accept edits on), not the config
 // key acceptEdits — map it back here so callers compare against one spelling.
 func modeFromBadge(line string) string {
-	for _, m := range []string{"insert", "accept edits", "edit", "manual", "plan", "auto", "budget", "normal"} {
+	for _, m := range []string{"insert", "accept edits", "edit", "manual", "plan", "auto", "bypassPermissions", "budget", "normal"} {
 		if strings.Contains(line, m) {
 			if m == "accept edits" {
 				return "accept-edits"
@@ -2536,8 +2547,9 @@ var choiceOptionRe = regexp.MustCompile(`^\s*(❯)?\s*\d+\.\s+([^\n┌─│┐�
 // the order is a single knob to adjust per account.
 var modeWheel = []string{"manual", "accept-edits", "plan", "auto"}
 
-func modePos(m string) int {
-	for i, x := range modeWheel {
+// modePosIn returns the position of m on an arbitrary wheel, or -1.
+func modePosIn(wheel []string, m string) int {
+	for i, x := range wheel {
 		if x == m {
 			return i
 		}
@@ -2545,19 +2557,30 @@ func modePos(m string) int {
 	return -1
 }
 
+// distanceIn returns how many Shift+Tab presses take wheel from mode from to
+// mode to (both must be on it). ok=false when either is not on it.
+func distanceIn(wheel []string, from, to string) (n int, ok bool) {
+	fi, ti := modePosIn(wheel, from), modePosIn(wheel, to)
+	if fi < 0 || ti < 0 {
+		return 0, false
+	}
+	return (ti - fi + len(wheel)) % len(wheel), true
+}
+
+// modeDistance is distanceIn over the standard wheel (kept for tests that
+// reason about the default account layout).
+func modeDistance(from, to string) (n int, ok bool) {
+	return distanceIn(modeWheel, from, to)
+}
+
 // modePressDelay pauses between raw shift+tab presses so Claude registers each
 // cycle before the next key.
 const modePressDelay = 500 * time.Millisecond
 
-// modeDistance returns how many Shift+Tab presses take the wheel from mode from
-// to mode to (both must be on the wheel). ok=false when either is not on it.
-func modeDistance(from, to string) (n int, ok bool) {
-	fi, ti := modePos(from), modePos(to)
-	if fi < 0 || ti < 0 {
-		return 0, false
-	}
-	return (ti - fi + len(modeWheel)) % len(modeWheel), true
-}
+// maxModeCycle bounds any wheel walk: real wheels are 3-5 modes, and the
+// probe/restore loops must always terminate even when the badge never becomes
+// readable again.
+const maxModeCycle = 12
 
 // rawShiftTab sends one Shift+Tab as raw bytes (\e[Z). tmux's S-Tab key name
 // does not reach Claude's mode wheel (verified): only the literal escape
@@ -2570,17 +2593,99 @@ func (h *Host) rawShiftTab(name string) error {
 	return nil
 }
 
+// cachedModeWheel returns the discovered wheel for the active profile without
+// probing (nil when it hasn't been calibrated yet). sessionChat uses it so the
+// UI dropdown reflects the account's real modes once discovered.
+func (h *Host) cachedModeWheel() []string {
+	profile := h.activeProfileName()
+	h.modeMu.Lock()
+	defer h.modeMu.Unlock()
+	return h.modeWheelCache[profile]
+}
+
+// wheelFor returns the Shift+Tab wheel to drive a session's modes. It probes
+// the live session once per profile (walking the real wheel) and caches the
+// order; when the probe is impossible (session working or in a dialog, or the
+// badge unreadable) it falls back to the standard wheel, matching the previous
+// behaviour.
+func (h *Host) wheelFor(name string) []string {
+	profile := h.activeProfileName()
+	h.modeMu.Lock()
+	w, ok := h.modeWheelCache[profile]
+	h.modeMu.Unlock()
+	if ok {
+		return w
+	}
+	if w, err := h.discoverModeWheel(name); err == nil && len(w) >= 2 {
+		h.modeMu.Lock()
+		h.modeWheelCache[profile] = w
+		h.modeMu.Unlock()
+		return w
+	}
+	return append([]string(nil), modeWheel...)
+}
+
+// discoverModeWheel walks a live session's Shift+Tab wheel, recording the mode
+// badge after each press until the sequence repeats (a full cycle). The wheel
+// order is account-dependent — auto/bypassPermissions only appear when enabled
+// — so distances derived from it are correct for any account. The session must
+// be idle and its badge readable; a full cycle ends exactly at the start, so
+// the session is left untouched. On any unreadable badge the probe restores the
+// starting mode (best effort) and returns an error so the caller falls back.
+func (h *Host) discoverModeWheel(name string) ([]string, error) {
+	if h.paneWorking(name) {
+		return nil, errServer("session %s is working; can't calibrate the mode wheel", name)
+	}
+	if waiting, _ := h.paneWaitingWithChoice(name); waiting != "" {
+		return nil, errServer("session %s is waiting; can't calibrate the mode wheel", name)
+	}
+	start := h.paneMode(name) // already the parsed token ("" when unreadable)
+	if start == "" {
+		return nil, errServer("can't read the current mode badge to calibrate")
+	}
+	seen := []string{start}
+	for i := 0; i < maxModeCycle; i++ {
+		if err := h.rawShiftTab(name); err != nil {
+			return nil, err
+		}
+		b := h.paneMode(name)
+		if b == "" {
+			h.restoreMode(name, start)
+			return nil, errServer("mode badge unreadable while calibrating")
+		}
+		if b == start {
+			return seen, nil // full cycle: the session is back where it started
+		}
+		if modePosIn(seen, b) >= 0 {
+			h.restoreMode(name, start)
+			return nil, errServer("mode wheel repeated %q mid-cycle", b)
+		}
+		seen = append(seen, b)
+	}
+	h.restoreMode(name, start)
+	return nil, errServer("mode wheel did not complete a cycle")
+}
+
+// restoreMode cycles a session forward until its badge shows want (bounded),
+// best effort: used to undo a probe that aborted mid-cycle.
+func (h *Host) restoreMode(name, want string) {
+	for i := 0; i < maxModeCycle; i++ {
+		if h.paneMode(name) == want {
+			return
+		}
+		if err := h.rawShiftTab(name); err != nil {
+			return
+		}
+	}
+}
+
 // sessionMode changes a live session's mode. plan is sent as the /plan slash
-// command (deterministic from anywhere); the rest are reached via the
-// Shift+Tab wheel, either from the current mode (when the badge is readable)
-// or anchored at plan via /plan when it isn't.
+// command (deterministic from anywhere); the rest are reached via the real
+// Shift+Tab wheel (discovered per account), either from the current mode (when
+// the badge is readable) or anchored at plan via /plan when it isn't.
 func (h *Host) sessionMode(name, target string) (map[string]any, error) {
 	if !h.sessionAlive(name) {
 		return nil, errNotFound("session not found: %s", name)
-	}
-	ti := modePos(target)
-	if ti < 0 {
-		return nil, errBad("unsupported mode: %s", target)
 	}
 	if target == "plan" {
 		if err := h.sendKeys(name, "/plan"); err != nil {
@@ -2588,8 +2693,12 @@ func (h *Host) sessionMode(name, target string) (map[string]any, error) {
 		}
 		return map[string]any{"session": name, "mode": target, "pressed": 1}, nil
 	}
-	cur := modeFromBadge(h.paneMode(name))
-	n, ok := modeDistance(cur, target)
+	wheel := h.wheelFor(name)
+	if modePosIn(wheel, target) < 0 {
+		return nil, errBad("unsupported mode %s (available: %s)", target, strings.Join(wheel, ", "))
+	}
+	cur := h.paneMode(name)
+	n, ok := distanceIn(wheel, cur, target)
 	if !ok {
 		// Badge unreadable (pane in a dialog, starting up, etc.): anchor at
 		// plan, which /plan always reaches, and count from there. The /plan
@@ -2597,7 +2706,7 @@ func (h *Host) sessionMode(name, target string) (map[string]any, error) {
 		if err := h.sendKeys(name, "/plan"); err != nil {
 			return nil, err
 		}
-		n, _ = modeDistance("plan", target)
+		n, _ = distanceIn(wheel, "plan", target)
 		n++
 	}
 	for i := 0; i < n; i++ {

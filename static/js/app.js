@@ -720,6 +720,16 @@ function ccsmApp() {
       });
     },
 
+    // The mode dropdown. Once the host has calibrated the session's real
+    // Shift+Tab wheel (auto/bypassPermissions only appear when the account
+    // enables them), the chat payload carries it in meta.modes; before that we
+    // offer the standard four. The first switch calibrates and the list adapts.
+    modeOptions() {
+      const w = this.live.meta && this.live.meta.modes;
+      if (w && w.length) return w;
+      return ['auto', 'plan', 'accept-edits', 'manual'];
+    },
+
     // Changes the session mode. /mode does not exist in Claude Code (2.1.227):
     // the host resolves it with /plan + the Shift+Tab wheel, so we send the
     // mode as a structured {mode} request, not as chat text.

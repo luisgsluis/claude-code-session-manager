@@ -505,10 +505,9 @@
       <button @click="scrollLive(1)" :title="t('live_scroll_end')" class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg transition-colors">⏬</button>
       <select @change="setMode($event.target.value); $event.target.value=''" :title="t('mode_label')" class="px-2 py-1 rounded border border-gray-700 bg-bg-card text-fg text-xs focus:outline-none focus:border-accent transition-colors">
         <option value="" selected disabled x-text="t('mode_label')"></option>
-        <option value="auto">auto</option>
-        <option value="plan">plan</option>
-        <option value="accept-edits">accept-edits</option>
-        <option value="manual">manual</option>
+        <template x-for="m in modeOptions()" :key="m">
+          <option :value="m" x-text="m"></option>
+        </template>
       </select>
       <select @change="setModel($event.target.value); $event.target.value=''" :title="t('model_label')" class="px-2 py-1 rounded border border-gray-700 bg-bg-card text-fg text-xs focus:outline-none focus:border-accent transition-colors max-w-[160px]">
         <option value="" selected disabled x-text="t('model_label')"></option>

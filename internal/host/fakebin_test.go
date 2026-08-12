@@ -22,6 +22,34 @@ case "$1" in
     for a in "$@"; do
       [ "$a" = "-S" ] && { printf '%s' "$FAKE_TMUX_HIST"; exit 0; }
     done
+    # Stateful mode wheel (discoverModeWheel tests): capture-pane returns the
+    # footer for the mode whose index is stored in FAKE_TMUX_MODE_STATE. The
+    # footer is idle (… ← for agents) so paneWorking reads false and no dialog
+    # tokens so paneWaitingReason reads "".
+    if [ -n "$FAKE_TMUX_MODE_WHEEL" ] && [ -n "$FAKE_TMUX_MODE_STATE" ]; then
+      idx="$(cat "$FAKE_TMUX_MODE_STATE" 2>/dev/null)"
+      [ -z "$idx" ] && idx=0
+      mode=""; n=0; IFS=,
+      for m in $FAKE_TMUX_MODE_WHEEL; do
+        [ "$n" = "$idx" ] && { mode="$m"; break; }
+        n=$((n + 1))
+      done
+      IFS=' '
+      [ -z "$mode" ] && exit 1
+      case "$mode" in
+        accept-edits) badge="accept edits" ;;
+        *) badge="$mode" ;;
+      esac
+      if [ "$mode" = "manual" ]; then
+        # manual idle footer: "? for shortcuts" is paneWorking's manual-idle
+        # token, so the probe's idle check passes instead of reading it as
+        # "manual mode … esc to interrupt" (the manual WORKING footer).
+        printf '  ⏵⏵ manual mode on (shift+tab to cycle) · ? for shortcuts · ← for agents\n'
+      else
+        printf '  ⏵⏵ %s mode on (shift+tab to cycle) · esc to interrupt · ← for agents\n' "$badge"
+      fi
+      exit 0
+    fi
     printf '%s' "$FAKE_TMUX_LINE"
     exit 0 ;;
   has-session)
@@ -48,6 +76,20 @@ case "$1" in
     exit 0 ;;
   send-keys)
     [ -n "$FAKE_TMUX_SENDKEYS" ] && printf '%s\n' "$*" >> "$FAKE_TMUX_SENDKEYS"
+    # A raw shift-tab (\e[Z, what rawShiftTab sends) advances the mode wheel.
+    if [ -n "$FAKE_TMUX_MODE_WHEEL" ] && [ -n "$FAKE_TMUX_MODE_STATE" ]; then
+      last=""
+      for a in "$@"; do last="$a"; done
+      if [ "$last" = "$(printf '\033')[Z" ]; then
+        idx="$(cat "$FAKE_TMUX_MODE_STATE" 2>/dev/null)"
+        [ -z "$idx" ] && idx=0
+        count=0; IFS=,
+        for _m in $FAKE_TMUX_MODE_WHEEL; do count=$((count + 1)); done
+        IFS=' '
+        idx=$(( (idx + 1) % count ))
+        printf '%s' "$idx" > "$FAKE_TMUX_MODE_STATE"
+      fi
+    fi
     exit 0 ;;
 esac
 exit 1

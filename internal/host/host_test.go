@@ -1244,6 +1244,7 @@ func TestModeFromBadge(t *testing.T) {
 		{"accept-edits con espacio", "  ⏵⏵ accept edits on (shift+tab to cycle) · ← for agents", "accept-edits"},
 		{"plan", "  ⏸ plan mode on (shift+tab to cycle) · ← for agents", "plan"},
 		{"auto", "  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents", "auto"},
+		{"bypassPermissions", "  ⏵⏵ bypassPermissions mode on (shift+tab to cycle) · ← for agents", "bypassPermissions"},
 		{"approval dialog (no mode)", " Esc to cancel · Tab to amend · ctrl+e to explain", ""},
 		{"empty line", "", ""},
 	}
