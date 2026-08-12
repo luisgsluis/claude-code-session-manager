@@ -47,7 +47,7 @@ func TestHealthEndpoint(t *testing.T) {
 	if body["status"] != "ok" {
 		t.Errorf("status: %v", body["status"])
 	}
-	if body["version"] != "0.1.5" {
+	if body["version"] != Version {
 		t.Errorf("version: %v", body["version"])
 	}
 }

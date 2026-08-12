@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.0.0] — 2026-08-12
+
+First stable release.
+
+### Added
+- `ccsm --generate-agent-secret`: generates a base64 agent shared secret from the CLI,
+  no external `openssl` dependency needed.
+
+### Fixed
+- **Live chat robustness**: the live chat/terminal `EventSource` no longer closes itself on
+  a drop (which killed the browser's automatic retry) — it now reconnects on its own, with a
+  status message that clears once the stream is back. Sending a chat message refreshes the
+  view immediately instead of waiting for the next 1s poll.
+- **Agent secret comparison was not constant-time**: `ccsm-agent`'s shared-secret check used
+  `!=` instead of `crypto/subtle.ConstantTimeCompare`, contradicting the documented timing-attack
+  mitigation.
+- **Session store crash risk**: `Store.GetSession` deleted expired sessions while holding only
+  a read lock; two concurrent requests hitting the same expired token could both call `delete()`
+  on the map at once, which Go's runtime treats as a fatal error, not a panic — the whole process
+  would crash.
+- **Config mutation was unsynchronized**: `PATCH /api/config` and the user-management endpoints
+  mutated shared config fields without a lock while other requests read them concurrently, a
+  data race that could also let two simultaneous "add user" calls both pass the duplicate check
+  and corrupt `config.yaml`. Guarded by a `sync.RWMutex`.
+- **Internal error detail no longer leaks to API clients**: backend/config-write failures used
+  to include the raw Go error (paths, socket errors) in the JSON response; they're now logged
+  server-side and returned as a generic message.
+- Malformed JSON bodies on session endpoints (`new`, `resume`, `rename`, `claude-name`, `send`)
+  were silently ignored instead of returning `400`.
+- Request bodies decoded as JSON are now capped at 1 MiB, closing an unbounded-memory-allocation
+  path on every JSON-accepting endpoint.
+- `Content-Disposition` on conversation export now escapes the filename instead of interpolating
+  it raw into the header.
+- Session cookie now sets `Secure` when the request reached CCSM over TLS (directly or via a
+  reverse proxy's `X-Forwarded-Proto`).
+
 ## [0.1.6] — 2026-08-11
 
 ### Fixed

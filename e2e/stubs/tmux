@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Stub de tmux para e2e. El estado vive en ficheros bajo $CCSM_TMUX_STATE,
-# uno por sesión; el contenido es "name\tcreated\ttitle".
+# tmux stub for e2e. State lives in files under $CCSM_TMUX_STATE, one per
+# session; the content is "name\tcreated\ttitle".
 set -u
 STATE="${CCSM_TMUX_STATE:?CCSM_TMUX_STATE must be set}"
 mkdir -p "$STATE"
@@ -8,8 +8,8 @@ mkdir -p "$STATE"
 cmd="$1"
 shift
 
-# Devuelve el valor que sigue al flag dado dentro de los args de la llamada.
-# El primer arg de la función es el flag a buscar; los demás son los args.
+# Returns the value that follows the given flag within the call's args.
+# The function's first arg is the flag to look for; the rest are the args.
 flagval() {
   local flag="$1" prev=""
   for a in "${@:2}"; do
@@ -37,7 +37,7 @@ case "$cmd" in
   capture-pane)
     name="$(flagval -t "$@")"
     if [ -f "$STATE/$name" ]; then
-      # Marca rc_connected: rcStatus detecta la subcadena "/rc" en la última línea.
+      # Marks rc_connected: rcStatus detects the "/rc" substring on the last line.
       echo "pane-of-$name /rc"
       exit 0
     fi
@@ -59,7 +59,7 @@ case "$cmd" in
     exit 0
     ;;
   set-option)
-    # CCSM etiqueta la sesión con su proyecto: tmux set-option -t =<ses> @ccsm_project <proyecto>.
+    # CCSM tags the session with its project: tmux set-option -t =<ses> @ccsm_project <project>.
     name="$(flagval -t "$@")"
     printf '%s\n' "${@: -1}" > "$STATE/$name.project"
     exit 0
@@ -68,7 +68,7 @@ case "$cmd" in
     name="$(flagval -t "$@")"
     new="${@: -1}"
     [ -f "$STATE/$name" ] || { echo "no session $name" >&2; exit 1; }
-    # El nombre vive en el primer campo del fichero: lo reescribo al mover.
+    # The name lives in the file's first field: rewrite it on the move.
     content="$(cat "$STATE/$name")"
     printf '%s\t%s\n' "$new" "${content#*$'\t'}" > "$STATE/$new"
     rm -f "$STATE/$name"
@@ -79,7 +79,7 @@ case "$cmd" in
     exit 0
     ;;
   *)
-    echo "tmux stub: comando desconocido: $cmd" >&2
+    echo "tmux stub: unknown command: $cmd" >&2
     exit 1
     ;;
 esac

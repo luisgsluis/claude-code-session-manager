@@ -961,8 +961,8 @@ func TestSessionChatCapsToRecent(t *testing.T) {
 	}
 	defer exec.Command("tmux", "kill-session", "-t", name).Run()
 
-	// No --session-id in argv -> lifetimeConv: the most recent transcript of
-	// directorio de conversaciones (aislado por TempDir) es el elegido.
+	// No --session-id in argv -> lifetimeConv: the most recent transcript in
+	// the conversations directory (isolated per TempDir) is the one chosen.
 	id := "00000000-0000-0000-0000-0000000000aa"
 	var b strings.Builder
 	total := maxChatMsgs + 50
@@ -1206,7 +1206,7 @@ func TestStripANSI(t *testing.T) {
 		want string
 	}{
 		{
-			"model feedback bold/dim", // salida real de /model con negrita y dim
+			"model feedback bold/dim", // real /model output with bold and dim
 			"\x1b[1mdeepseek-v4-flash\x1b[22m and saved for new sessions\x1b[2m\x1b[22m\n",
 			"deepseek-v4-flash and saved for new sessions\n",
 		},
@@ -1226,7 +1226,7 @@ func TestStripANSI(t *testing.T) {
 			"ready",
 		},
 		{
-			"literal [1m] in text is NOT stripped", // el id de modelo deepseek-v4-pro[1m] lleva [1m] literal
+			"literal [1m] in text is NOT stripped", // the model id deepseek-v4-pro[1m] carries a literal [1m]
 			"Set model to \x1b[1mdeepseek-v4-pro[1m]\x1b[22m ok",
 			"Set model to deepseek-v4-pro[1m] ok",
 		},

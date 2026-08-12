@@ -13,7 +13,7 @@ func TestProjectsList(t *testing.T) {
 	// A CLAUDE.md is found at various depths (1..3); dot-dirs are skipped and
 	// anything deeper than 3 levels is ignored.
 	dirs := []struct{ dir, file string }{
-		{"projects", "CLAUDE.md"}, // contenedor con doc propio: sus hijos se listan igualmente
+		{"projects", "CLAUDE.md"}, // container with its own doc: its children are still listed
 		{"projects/a", "CLAUDE.md"},
 		{"projects/b", "claude.md"},
 		{"nested/x", "CLAUDE.md"},

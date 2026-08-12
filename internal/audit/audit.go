@@ -60,11 +60,14 @@ func (l *Logger) Log(action, user, detail string) error {
 }
 
 // Read returns up to n entries from the file, most recent first. A nil Logger
-// or a missing file yields an empty slice.
+// or a missing file yields an empty slice. Takes the same lock as Log so a
+// concurrent write can never be observed as a partially-written trailing line.
 func (l *Logger) Read(n int) ([]Entry, error) {
 	if l == nil {
 		return []Entry{}, nil
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	return ReadFile(l.path, n)
 }
 

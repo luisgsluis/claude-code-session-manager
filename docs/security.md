@@ -15,7 +15,8 @@ CCSM follows a defense-in-depth model. Compromising any single layer should not 
 ### 2. Authentication
 
 - **Login form**: username + bcrypt-hashed password
-- **Session cookie**: HMAC-SHA256(token, secret), HttpOnly, SameSite=Lax, 24h TTL
+- **Session cookie**: HMAC-SHA256(token, secret) plus a random nonce, HttpOnly, SameSite=Lax, `Secure` when the request reached CCSM over TLS (directly or via a reverse proxy's `X-Forwarded-Proto`), 24h TTL
+- **`session_secret` is required**: `Config.Validate()` refuses to start if it's empty or under 16 characters — an empty secret would make the HMAC key public knowledge, letting anyone forge a session cookie
 - **LAN bypass**: requests from configured CIDRs skip login. This relies on network security (your LAN is trusted)
 - **2FA-ready**: the session architecture supports adding TOTP verification before cookie issuance — no structural changes needed
 - **User management**: users are managed through the API (`GET`/`POST /api/config/users`, `DELETE /api/config/users/{username}`, `POST /api/config/users/{username}/password`). Passwords are hashed with bcrypt (`DefaultCost = 10`) and must be at least 8 characters — enforced client-side **and** server-side. The API returns usernames only: password hashes and passwords never leave the server, are never logged, and are never serialized. Deleting the last remaining user returns `400`, which prevents lockout
@@ -24,7 +25,8 @@ CCSM follows a defense-in-depth model. Compromising any single layer should not 
 ### 3. Agent Authentication
 
 - **Shared secret**: a base64-encoded random string (32 bytes) passed in every request body
-- **Constant-time comparison**: prevents timing attacks on the secret
+- **Constant-time comparison**: `crypto/subtle.ConstantTimeCompare` prevents timing attacks on the secret
+- **`agent_secret` is required in container mode**: `Config.Validate()` refuses to start if `agent_socket` is set and `agent_secret` is empty or under 16 characters
 - **Unix socket permissions** (`0600`): the socket is owner-only on the host, and the container mounts it as a volume — only the host owner and the container process (usually root) can connect
 - **Secrets never served**: `PATCH /api/config` does not accept `session_secret` or `agent_secret` — both require a restart and are excluded by design — and the config endpoints never return them. `GET /api/config` exposes only non-secret deployment info; `GET /api/settings` returns the currently applied `settings.json` (a profile's settings) under the same auth
 

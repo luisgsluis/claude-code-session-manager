@@ -29,11 +29,11 @@ type turnWatchState struct {
 
 // turnStatus mirrors host.sessionStatus.
 type turnStatus struct {
-	Working          bool            `json:"working"`
-	Waiting          string          `json:"waiting"`
-	Choice           json.RawMessage `json:"choice"`
-	LastAssistant    string          `json:"last_assistant_id"`
-	LastAssistantText string         `json:"last_assistant_text"`
+	Working           bool            `json:"working"`
+	Waiting           string          `json:"waiting"`
+	Choice            json.RawMessage `json:"choice"`
+	LastAssistant     string          `json:"last_assistant_id"`
+	LastAssistantText string          `json:"last_assistant_text"`
 }
 
 // startTurnWatcher launches the polling loop. Errors are silent on purpose: a
@@ -97,14 +97,14 @@ func (s *Server) watchSession(state map[string]*turnWatchState, name string) {
 	// Approval requested (command permission, file edit, …).
 	if st.Waiting == "approval" && st.Waiting != ws.notifiedWait {
 		ws.notifiedWait = "approval"
-		s.events.broadcast("session_waiting", name, "sesión "+name+": espera de aprobación")
+		s.events.broadcast("session_waiting", name, "session "+name+": approval requested")
 	} else if st.Waiting != "approval" {
 		ws.notifiedWait = ""
 	}
 	// AskUserQuestion picker — the user has to choose.
 	if len(st.Choice) > 0 && !ws.notifiedChoice {
 		ws.notifiedChoice = true
-		s.events.broadcast("session_choice", name, "sesión "+name+": "+choiceQuestion(st.Choice))
+		s.events.broadcast("session_choice", name, "session "+name+": "+choiceQuestion(st.Choice))
 	} else if len(st.Choice) == 0 {
 		ws.notifiedChoice = false
 	}
@@ -118,7 +118,7 @@ func (s *Server) watchSession(state map[string]*turnWatchState, name string) {
 	if !st.Working && ws.idleStreak >= turnWatchSettle &&
 		st.LastAssistant != "" && st.LastAssistant != ws.lastNotifiedID {
 		ws.lastNotifiedID = st.LastAssistant
-		s.events.broadcast("turn_complete", name, "sesión "+name+": "+turnPreview(st.LastAssistantText))
+		s.events.broadcast("turn_complete", name, "session "+name+": "+turnPreview(st.LastAssistantText))
 	}
 }
 
@@ -126,7 +126,7 @@ func (s *Server) watchSession(state map[string]*turnWatchState, name string) {
 func turnPreview(text string) string {
 	t := strings.TrimSpace(text)
 	if t == "" {
-		return "turno completado"
+		return "turn completed"
 	}
 	if len(t) > 120 {
 		t = t[:120] + "…"
@@ -139,7 +139,7 @@ func choiceQuestion(raw json.RawMessage) string {
 		Question string `json:"question"`
 	}
 	if err := json.Unmarshal(raw, &c); err != nil || c.Question == "" {
-		return "elige una opción"
+		return "choose an option"
 	}
 	return c.Question
 }

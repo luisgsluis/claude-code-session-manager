@@ -241,7 +241,9 @@ func (h *SessionHandler) Send(w http.ResponseWriter, r *http.Request) {
 		Keys string `json:"keys"`
 		Mode string `json:"mode"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if !decodeJSON(w, r, &req) {
+		return
+	}
 	if req.Text == "" && req.Keys == "" && req.Mode == "" {
 		writeError(w, http.StatusBadRequest, "missing text, keys or mode")
 		return
@@ -353,7 +355,9 @@ func (h *SessionHandler) NewSession(w http.ResponseWriter, r *http.Request) {
 		ClaudeName string `json:"claude_name"`
 		Project    string `json:"project"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if !decodeJSON(w, r, &req) {
+		return
+	}
 
 	args := map[string]string{}
 	if req.Profile != "" {
@@ -414,7 +418,9 @@ func (h *SessionHandler) ResumeSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID string `json:"id"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if !decodeJSON(w, r, &req) {
+		return
+	}
 
 	if req.ID == "" {
 		writeError(w, http.StatusBadRequest, "missing conversation id")
@@ -463,7 +469,9 @@ func (h *SessionHandler) RenameSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		NewName string `json:"new_name"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if !decodeJSON(w, r, &req) {
+		return
+	}
 	if req.NewName == "" {
 		writeError(w, http.StatusBadRequest, "missing new_name")
 		return
@@ -496,7 +504,9 @@ func (h *SessionHandler) SetClaudeName(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Title string `json:"title"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if !decodeJSON(w, r, &req) {
+		return
+	}
 	if req.Title == "" {
 		writeError(w, http.StatusBadRequest, "missing title")
 		return
@@ -523,4 +533,19 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// maxJSONBody caps request bodies decoded as JSON, so a client can't force
+// unbounded memory allocation in json.Decode by sending an oversized body.
+const maxJSONBody = 1 << 20 // 1 MiB
+
+// decodeJSON reads and decodes a JSON body under maxJSONBody, writing a 400
+// and returning false on any read/size/parse error.
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBody)
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return false
+	}
+	return true
 }

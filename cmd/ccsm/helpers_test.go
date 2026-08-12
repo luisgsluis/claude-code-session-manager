@@ -45,12 +45,3 @@ func TestGenerateAgentSecret(t *testing.T) {
 		t.Errorf("agent secret wrong: %q", a)
 	}
 }
-
-func TestSecureCompare(t *testing.T) {
-	if !secureCompare("abc", "abc") {
-		t.Error("equal strings rejected")
-	}
-	if secureCompare("abc", "abd") {
-		t.Error("different strings accepted")
-	}
-}

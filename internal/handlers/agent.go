@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/luisgsluis/claude-code-session-manager/internal/agent"
@@ -24,5 +25,6 @@ func writeAgentError(w http.ResponseWriter, err error) {
 		writeError(w, ce.Status, ce.Msg)
 		return
 	}
-	writeError(w, http.StatusBadGateway, "backend unavailable: "+err.Error())
+	log.Printf("agent transport error: %v", err)
+	writeError(w, http.StatusBadGateway, "backend unavailable")
 }

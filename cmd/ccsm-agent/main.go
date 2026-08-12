@@ -4,6 +4,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -49,19 +50,22 @@ func main() {
 	rcSettle := flag.Int("rc-settle", 1, "confirmation margin (s) after the resume process is idle+bridge before restoring the target profile")
 	flag.Parse()
 
+	if *secretFile == "" && *secret != "" {
+		log.Printf("warning: --secret exposes the shared secret in `ps` and /proc/<pid>/cmdline; prefer --secret-file")
+	}
 	secretValue, err := resolveSecret(*secretFile, *secret)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	h := host.New(host.Options{
-		ProfilesPath:  *profiles,
-		SettingsPath:  *settings,
-		ConvPath:      *conversations,
-		ClaudeBinary:  *claudeBin,
-		TmuxBinary:    *tmuxBin,
-		BashBinary:    *bashBin,
-		RcBootstrap:   *rcProfile,
+		ProfilesPath:    *profiles,
+		SettingsPath:    *settings,
+		ConvPath:        *conversations,
+		ClaudeBinary:    *claudeBin,
+		TmuxBinary:      *tmuxBin,
+		BashBinary:      *bashBin,
+		RcBootstrap:     *rcProfile,
 		RcWaitSeconds:   *rcWait,
 		RcPollSeconds:   *rcPoll,
 		RcSettleSeconds: *rcSettle,
@@ -158,7 +162,7 @@ func handleExec(w http.ResponseWriter, r *http.Request, secret string, h *host.H
 		return
 	}
 
-	if req.Secret != secret {
+	if subtle.ConstantTimeCompare([]byte(req.Secret), []byte(secret)) != 1 {
 		writeJSON(w, http.StatusForbidden, Response{OK: false, Error: "unauthorized"})
 		return
 	}

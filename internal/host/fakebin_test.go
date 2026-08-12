@@ -132,17 +132,17 @@ func fakeHost(t *testing.T, env map[string]string) *Host {
 	os.MkdirAll(conv, 0700)
 
 	h := New(Options{
-		ProfilesPath:  profiles,
-		SettingsPath:  settings,
-		ConvPath:      conv,
-		ClaudeBinary:  filepath.Join(binDir, "claude"),
-		TmuxBinary:    tmux,
-		BashBinary:    filepath.Join(binDir, "bash"),
-		RcBootstrap:   "estandar",
-		RcWaitSeconds: 2,
+		ProfilesPath:    profiles,
+		SettingsPath:    settings,
+		ConvPath:        conv,
+		ClaudeBinary:    filepath.Join(binDir, "claude"),
+		TmuxBinary:      tmux,
+		BashBinary:      filepath.Join(binDir, "bash"),
+		RcBootstrap:     "estandar",
+		RcWaitSeconds:   2,
 		RcPollSeconds:   0,
 		RcSettleSeconds: 0,
-		Home:          base,
+		Home:            base,
 	})
 	return h
 }
@@ -220,7 +220,7 @@ func TestTmuxListHostnameTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	sessions := data.([]map[string]any)
-	if sessions[0]["task"] != "(sin tarea)" {
+	if sessions[0]["task"] != "(no task)" {
 		t.Errorf("task: %q", sessions[0]["task"])
 	}
 }

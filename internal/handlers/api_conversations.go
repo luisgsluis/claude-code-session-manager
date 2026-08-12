@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -63,10 +64,15 @@ func (h *ConversationHandler) GetConversation(w http.ResponseWriter, r *http.Req
 	}
 
 	linesStr := r.URL.Query().Get("lines")
-	if linesStr == "" {
-		linesStr = "50"
+	lines := 50
+	if linesStr != "" {
+		n, err := strconv.Atoi(linesStr)
+		if err != nil || n < 1 || n > 200 {
+			writeError(w, http.StatusBadRequest, "invalid lines (must be 1-200)")
+			return
+		}
+		lines = n
 	}
-	lines, _ := strconv.Atoi(linesStr)
 
 	resp, err := h.Agent.Exec("conversation-get", map[string]string{
 		"id":    id,
@@ -117,7 +123,7 @@ func (h *ConversationHandler) ExportConversation(w http.ResponseWriter, r *http.
 	}
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, data.Filename))
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": data.Filename}))
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, data.Content)
 }
@@ -160,8 +166,7 @@ func (h *ConversationHandler) SetConversationMeta(w http.ResponseWriter, r *http
 		Pinned   bool     `json:"pinned"`
 		Archived bool     `json:"archived"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 

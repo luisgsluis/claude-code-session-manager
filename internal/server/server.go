@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 // Server is the CCSM HTTP server.
 type Server struct {
 	cfg        *config.Config
+	cfgMu      sync.RWMutex // guards the mutable subset of cfg: Users, LANSubnets, HostAttachAddr, Rc
 	configPath string
 	http       *http.Server
 	mux        *http.ServeMux
@@ -77,15 +79,16 @@ func New(cfg *config.Config, staticPath, configPath string) *Server {
 	if cfg.AgentSocket == "" {
 		s.agentCli = nil
 		h := host.New(host.Options{
-			ProfilesPath:  cfg.ProfilesPath,
-			SettingsPath:  cfg.SettingsPath,
-			ConvPath:      cfg.ConversationsPath,
-			ClaudeBinary:  cfg.ClaudeBinary,
-			TmuxBinary:    cfg.TmuxBinary,
-			BashBinary:    cfg.BashBinary,
-			RcBootstrap:   cfg.Rc.BootstrapProfile,
-			RcWaitSeconds: cfg.Rc.WaitSeconds,
-			RcPollSeconds: cfg.Rc.PollSeconds,
+			ProfilesPath:    cfg.ProfilesPath,
+			SettingsPath:    cfg.SettingsPath,
+			ConvPath:        cfg.ConversationsPath,
+			ClaudeBinary:    cfg.ClaudeBinary,
+			TmuxBinary:      cfg.TmuxBinary,
+			BashBinary:      cfg.BashBinary,
+			RcBootstrap:     cfg.Rc.BootstrapProfile,
+			RcWaitSeconds:   cfg.Rc.WaitSeconds,
+			RcPollSeconds:   cfg.Rc.PollSeconds,
+			RcSettleSeconds: cfg.Rc.SettleSeconds,
 		})
 		executor = direct.New(h)
 	} else {
@@ -102,10 +105,8 @@ func New(cfg *config.Config, staticPath, configPath string) *Server {
 		Audit:      auditLog,
 	}
 	s.profileHdlr = &handlers.ProfileHandler{
-		Agent:        executor,
-		ProfilesPath: cfg.ProfilesPath,
-		SettingsPath: cfg.SettingsPath,
-		Audit:        auditLog,
+		Agent: executor,
+		Audit: auditLog,
 	}
 	s.conversationHdlr = &handlers.ConversationHandler{
 		Agent: executor,
@@ -215,35 +216,41 @@ type loginRequest struct {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
-		return
-	}
-
-	if auth.IsLAN(auth.ClientIP(r, s.cfg.TrustedProxies), s.cfg.LANSubnets) {
+	if s.isLANRequest(r) {
 		token, _ := s.sessions.CreateSession("[lan]", true)
-		auth.SetCookie(w, token)
+		auth.SetCookie(w, token, isHTTPS(r))
 		s.auditLog("login", "[lan]", "lan bypass")
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "lan_bypass": true})
 		return
 	}
 
 	var req loginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
-	if !auth.CheckPassword(s.cfg.Users, req.Username, req.Password) {
+	s.cfgMu.RLock()
+	ok := auth.CheckPassword(s.cfg.Users, req.Username, req.Password)
+	s.cfgMu.RUnlock()
+	if !ok {
 		s.auditLog("login_failed", req.Username, "invalid credentials")
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
 
 	token, _ := s.sessions.CreateSession(req.Username, false)
-	auth.SetCookie(w, token)
+	auth.SetCookie(w, token, isHTTPS(r))
 	s.auditLog("login", req.Username, "")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+// isHTTPS reports whether the request reached CCSM over TLS, either directly
+// or via a reverse proxy that sets X-Forwarded-Proto (Caddy/Nginx do this by
+// default). Used to decide the session cookie's Secure attribute: CCSM is
+// commonly deployed behind a proxy that terminates TLS, so r.TLS alone (only
+// set when this process itself terminates TLS) would under-report it.
+func isHTTPS(r *http.Request) bool {
+	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 }
 
 func (s *Server) auditLog(action, user, detail string) {
@@ -288,9 +295,17 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 
 // --- Auth middleware ---
 
+// isLANRequest decides the LAN-bypass under a read lock, since LANSubnets is
+// mutable via PATCH /api/config while requests are being served concurrently.
+func (s *Server) isLANRequest(r *http.Request) bool {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return auth.IsLAN(auth.ClientIP(r, s.cfg.TrustedProxies), s.cfg.LANSubnets)
+}
+
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if auth.IsLAN(auth.ClientIP(r, s.cfg.TrustedProxies), s.cfg.LANSubnets) {
+		if s.isLANRequest(r) {
 			next(w, handlers.WithUser(r, "[lan]"))
 			return
 		}
@@ -318,7 +333,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status":  "ok",
 		"uptime":  time.Since(s.uptime).String(),
-		"version": "0.1.5",
+		"version": Version,
 	})
 }
 
@@ -341,11 +356,13 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.AgentSocket == "" {
 		mode = "direct"
 	}
+
+	s.cfgMu.RLock()
 	users := make([]string, 0, len(s.cfg.Users))
 	for _, u := range s.cfg.Users {
 		users = append(users, u.Username)
 	}
-	writeJSON(w, http.StatusOK, configInfo{
+	info := configInfo{
 		Port:           s.cfg.Port,
 		Mode:           mode,
 		AgentSocket:    s.cfg.AgentSocket,
@@ -365,7 +382,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"wait_seconds":      s.cfg.Rc.WaitSeconds,
 			"poll_seconds":      s.cfg.Rc.PollSeconds,
 		},
-	})
+	}
+	s.cfgMu.RUnlock()
+	writeJSON(w, http.StatusOK, info)
 }
 
 // --- Config write-back ---
@@ -421,10 +440,12 @@ var bootstrapPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 
 func (s *Server) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 	var req patchConfigRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
+
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
 
 	var updated []string
 	needsRestart := false
@@ -486,7 +507,8 @@ func (s *Server) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := writeConfig(s.configPath, s.cfg); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write config: " + err.Error()})
+		log.Printf("write config: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist config"})
 		return
 	}
 
@@ -512,17 +534,18 @@ type changePasswordRequest struct {
 var usernamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
+	s.cfgMu.RLock()
 	names := make([]string, 0, len(s.cfg.Users))
 	for _, u := range s.cfg.Users {
 		names = append(names, u.Username)
 	}
+	s.cfgMu.RUnlock()
 	writeJSON(w, http.StatusOK, names)
 }
 
 func (s *Server) handleAddUser(w http.ResponseWriter, r *http.Request) {
 	var req addUserRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if !usernamePattern.MatchString(req.Username) {
@@ -533,21 +556,26 @@ func (s *Server) handleAddUser(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password must be at least 8 characters"})
 		return
 	}
-	// Check for duplicate
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		log.Printf("bcrypt: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to hash password"})
+		return
+	}
+
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+
 	for _, u := range s.cfg.Users {
 		if u.Username == req.Username {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "user already exists: " + req.Username})
 			return
 		}
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "bcrypt: " + err.Error()})
-		return
-	}
 	s.cfg.Users = append(s.cfg.Users, config.User{Username: req.Username, PasswordHash: string(hash)})
 	if err := writeConfig(s.configPath, s.cfg); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write config: " + err.Error()})
+		log.Printf("write config: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist config"})
 		return
 	}
 	s.auditLog("user_add", handlers.UserFrom(r), "user="+req.Username)
@@ -560,6 +588,10 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing username"})
 		return
 	}
+
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+
 	found := -1
 	for i, u := range s.cfg.Users {
 		if u.Username == username {
@@ -577,7 +609,8 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	s.cfg.Users = append(s.cfg.Users[:found], s.cfg.Users[found+1:]...)
 	if err := writeConfig(s.configPath, s.cfg); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write config: " + err.Error()})
+		log.Printf("write config: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist config"})
 		return
 	}
 	s.auditLog("user_delete", handlers.UserFrom(r), "user="+username)
@@ -591,14 +624,23 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req changePasswordRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if len(req.Password) < 8 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password must be at least 8 characters"})
 		return
 	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		log.Printf("bcrypt: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to hash password"})
+		return
+	}
+
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+
 	found := -1
 	for i, u := range s.cfg.Users {
 		if u.Username == username {
@@ -610,14 +652,10 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found: " + username})
 		return
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "bcrypt: " + err.Error()})
-		return
-	}
 	s.cfg.Users[found].PasswordHash = string(hash)
 	if err := writeConfig(s.configPath, s.cfg); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write config: " + err.Error()})
+		log.Printf("write config: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist config"})
 		return
 	}
 	s.auditLog("user_password", handlers.UserFrom(r), "user="+username)
@@ -634,7 +672,8 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	entries, err := s.audit.Read(n)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "read audit: " + err.Error()})
+		log.Printf("read audit: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read audit log"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"entries": entries})
@@ -649,7 +688,8 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := s.exec.Exec("metrics", args)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "backend: " + err.Error()})
+		log.Printf("metrics backend: %v", err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "backend unavailable"})
 		return
 	}
 	var m map[string]any
@@ -684,7 +724,8 @@ func processRAMMB() int {
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	resp, err := s.exec.Exec("settings-content", nil)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "backend: " + err.Error()})
+		log.Printf("settings-content backend: %v", err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "backend unavailable"})
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -713,6 +754,21 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	json.NewEncoder(w).Encode(v)
 }
 
+// maxJSONBody caps request bodies decoded as JSON, so a client can't force
+// unbounded memory allocation in json.Decode by sending an oversized body.
+const maxJSONBody = 1 << 20 // 1 MiB
+
+// decodeJSON reads and decodes a JSON body under maxJSONBody, writing a 400
+// and returning false on any read/size/parse error.
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, v any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBody)
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return false
+	}
+	return true
+}
+
 const minimalHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -727,9 +783,9 @@ const minimalHTML = `<!DOCTYPE html>
 </head>
 <body>
 <h1>🤖 Claude Code Session Manager</h1>
-<p>CCSM v0.1.5 — API server running.</p>
-<p>Sirve la UI desde <code>/static/</code> cuando se compila con ella embebida; sin ella,
-esta página es la respuesta de <code>/</code>.</p>
+<p>CCSM v` + Version + ` — API server running.</p>
+<p>Serves the UI from <code>/static/</code> when built with it embedded; without it,
+this page is the response for <code>/</code>.</p>
 <p>Endpoints: <code>GET /api/health</code> · <code>POST /api/auth/login</code> · <code>GET /api/auth/status</code></p>
 </body>
 </html>`

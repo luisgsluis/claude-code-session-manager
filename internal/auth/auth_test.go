@@ -74,7 +74,7 @@ func TestSessionLANBypass(t *testing.T) {
 
 func TestCookieRoundtrip(t *testing.T) {
 	w := httptest.NewRecorder()
-	SetCookie(w, "test-token-123")
+	SetCookie(w, "test-token-123", false)
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Cookie", w.Header().Get("Set-Cookie"))

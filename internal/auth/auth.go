@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
@@ -59,10 +60,13 @@ func (s *Store) CreateSession(username string, lanBypass bool) (string, *Session
 	return token, sess
 }
 
-// GetSession returns the session for a token, or nil if expired/invalid.
+// GetSession returns the session for a token, or nil if expired/invalid. Takes
+// the write lock (not RLock) because it may delete an expired entry — two
+// concurrent readers hitting the same expired token under RLock would both
+// call delete() on the map and crash the process ("concurrent map writes").
 func (s *Store) GetSession(token string) *Session {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	sess, ok := s.sessions[token]
 	if !ok {
@@ -83,19 +87,28 @@ func (s *Store) DeleteSession(token string) {
 }
 
 func (s *Store) generateToken(sess *Session) string {
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	mac := hmac.New(sha256.New, []byte(s.secret))
 	mac.Write([]byte(sess.Username))
 	mac.Write([]byte(sess.CreatedAt.String()))
-	return hex.EncodeToString(mac.Sum(nil))
+	mac.Write(nonce)
+	return hex.EncodeToString(nonce) + hex.EncodeToString(mac.Sum(nil))
 }
 
-// SetCookie writes the session cookie to the response.
-func SetCookie(w http.ResponseWriter, token string) {
+// SetCookie writes the session cookie to the response. secure should reflect
+// whether the request reached the server over TLS (directly or via a proxy)
+// — plain-HTTP LAN deployments still need to set the cookie without Secure,
+// or the browser would never send it back.
+func SetCookie(w http.ResponseWriter, token string, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(sessionTTL.Seconds()),
 	})

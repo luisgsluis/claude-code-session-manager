@@ -17,8 +17,8 @@ EXPOSE 8080
 # the binary (which defaults to "config.yaml" in CWD) loads the mounted file.
 ENTRYPOINT ["/usr/local/bin/ccsm", "--config", "/config/config.yaml"]
 
-# Healthcheck (busybox wget, ya presente en Alpine): /api/health no requiere auth
-# ni agente, es la señal de que el servidor HTTP responde. El update del homelab
-# verifica este estado y marca el contenedor como unhealthy si no pasa.
+# Healthcheck (busybox wget, already present on Alpine): /api/health requires
+# no auth and no agent — it's the signal that the HTTP server is responding.
+# Orchestrators poll this to mark the container unhealthy if it fails.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget -qO- http://127.0.0.1:8080/api/health >/dev/null 2>&1 || exit 1

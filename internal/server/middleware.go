@@ -13,7 +13,7 @@ func withSecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()")
-		// 'unsafe-eval' es requisito de Alpine.js (compila las expresiones x-data con new Function).
+		// 'unsafe-eval' is required by Alpine.js (it compiles x-data expressions with new Function).
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'")
 		next.ServeHTTP(w, r)
 	})

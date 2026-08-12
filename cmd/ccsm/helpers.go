@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 
@@ -25,11 +24,6 @@ func generateRandomSecret() string {
 		panic("crypto/rand failed: " + err.Error())
 	}
 	return hex.EncodeToString(b)
-}
-
-// secureCompare performs a constant-time comparison of two strings.
-func secureCompare(a, b string) bool {
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 // generateAgentSecret returns a base64-encoded random secret for agent auth.

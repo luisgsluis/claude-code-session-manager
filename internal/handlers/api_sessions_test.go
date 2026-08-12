@@ -145,9 +145,8 @@ func TestNewSessionInvalidJSON(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.NewSession(w, req)
 
-	// JSON decode fails silently (empty struct), agent unavailable → 502
-	if w.Code != 502 {
-		t.Errorf("expected 502, got %d", w.Code)
+	if w.Code != 400 {
+		t.Errorf("expected 400 for malformed JSON, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

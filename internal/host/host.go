@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -300,7 +301,7 @@ func (h *Host) tmuxList() ([]map[string]any, error) {
 		if len(parts) > 2 {
 			task := leadingNoise.ReplaceAllString(strings.TrimSpace(parts[2]), "")
 			if task == "" || task == hostname {
-				task = "(sin tarea)"
+				task = "(no task)"
 			}
 			s["task"] = task
 		}
@@ -457,7 +458,10 @@ func (h *Host) claudeNew(args map[string]string) (map[string]string, error) {
 		exec.Command(h.tmuxBinary, "set-option", "-t", session, "@ccsm_project", project).Run()
 	}
 	if claudeName != "" {
-		h.renameClaudeAfterReady(session, claudeName, waitRC)
+		// Fire-and-forget: waits for the RC bridge (up to rcWaitSeconds, 5-120s)
+		// before typing /rename, which must not block the HTTP response — "new
+		// session" is documented to open the live chat right away.
+		go h.renameClaudeAfterReady(session, claudeName, waitRC)
 	}
 	return map[string]string{
 		"session": session,
@@ -469,13 +473,13 @@ func (h *Host) claudeResume(id string) (map[string]string, error) {
 	if _, err := os.Stat(h.convFileFor(id)); err != nil {
 		return nil, errNotFound("conversation not found: %s", id)
 	}
-	// Gatillo del 4090 "no longer the active worker": retomar una conversación
-	// que otra sesión tiene abierta con el bridge del móvil registrado reclama el
-	// rol de worker activo y desconecta esa sesión. Advertir antes de tumbarla en
-	// silencio; para relanzar una sesión caída existe el botón "RC: re-registrar"
-	// (sessionRc), que hace el kill+resume controlado.
+	// 4090 "no longer the active worker" trigger: resuming a conversation that
+	// another session already has open with the mobile bridge registered claims
+	// the active-worker role and disconnects that session. Warn before killing it
+	// silently; to relaunch a dropped session there's the "RC: re-register" button
+	// (sessionRc), which does a controlled kill+resume.
 	if other := h.activeSessionUsingConv(id); other != "" {
-		return nil, errConflict("la conversación ya está conectada al móvil en la sesión %s; retomarla la desconectaría (code 4090). Ciérrala o usa el botón 'RC: re-registrar' de esa sesión para relanzarla", other)
+		return nil, errConflict("the conversation is already connected to the mobile app in session %s; resuming it here would disconnect that session (code 4090). Close it or use that session's 'RC: re-register' button to relaunch it", other)
 	}
 
 	var session, status string
@@ -539,38 +543,6 @@ func (h *Host) lanzarConStaging(destino, extra, name, cwd string) (string, strin
 	return session, estado, nil
 }
 
-// waitRCBridge polls rcStatusLive until the bridge registers (2 consecutive ok
-// polls), the wait window elapses (timeout), or the session dies (dead).
-// Returns "ok" | "fail" | "timeout" | "dead".
-func (h *Host) waitRCBridge(session string) string {
-	estado := "pending"
-	confirmed := 0
-	deadline := time.Now().Add(time.Duration(h.rcWaitSeconds) * time.Second)
-	for time.Now().Before(deadline) {
-		if !h.sessionAlive(session) {
-			estado = "dead"
-			break
-		}
-		switch h.rcStatusLive(session) {
-		case "rc_connected":
-			confirmed++
-			if confirmed >= 2 {
-				estado = "ok"
-			}
-		case "rc_failed":
-			estado = "fail"
-		}
-		if estado == "ok" || estado == "fail" {
-			break
-		}
-		time.Sleep(time.Duration(h.rcPollSeconds) * time.Second)
-	}
-	if estado == "pending" {
-		estado = "timeout"
-	}
-	return estado
-}
-
 // sessionIdle reports whether the session's process has finished loading (its
 // session file says status:"idle"). A resumed session is only ready once it has
 // loaded its transcript; the mobile bridge registers only after that. Without a
@@ -600,7 +572,7 @@ func (h *Host) sessionIdle(name string) bool {
 // drops it on resumed sessions (visto 2026-08-12): the bridge needs the process
 // idle before a switch to a perfilSinRC profile survives. The settle margin is
 // a short confirmation (rcSettleSeconds, 1s), not a fixed wait — the time to
-// reach idle is covered by rcWaitSeconds. Same vocabulary as waitRCBridge.
+// reach idle is covered by rcWaitSeconds. Returns "ok" | "fail" | "timeout" | "dead".
 func (h *Host) waitRCBridgeSettled(session string) string {
 	estado := "timeout"
 	deadline := time.Now().Add(time.Duration(h.rcWaitSeconds) * time.Second)
@@ -1203,7 +1175,7 @@ func (h *Host) conversationsList(args map[string]string) ([]map[string]any, erro
 	q := strings.ToLower(strings.TrimSpace(args["q"]))
 	origin := strings.TrimSpace(args["origin"])
 	aliveOnly := args["alive"] == "1" || args["alive"] == "true"
-	archived := args["archived"] // "only" = archivadas; "all" = incluir; "" = ocultar
+	archived := args["archived"] // "only" = archived only; "all" = include; "" = hide
 	from, _ := time.Parse("02/01/2006", strings.TrimSpace(args["from"]))
 	to, _ := time.Parse("02/01/2006", strings.TrimSpace(args["to"]))
 	if !to.IsZero() {
@@ -1331,6 +1303,9 @@ func (h *Host) conversationGet(id, linesStr string) (map[string]any, error) {
 			dd.add(role, text, source, line.Message.ID)
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("conversationGet %s: transcript truncated: %v", id, err)
+	}
 	dd.flushPending()
 	var msgs []map[string]any
 	for i, t := range dd.turns {
@@ -1371,7 +1346,7 @@ func (h *Host) conversationExport(id, format string) (map[string]any, error) {
 	var content string
 	if format == "txt" {
 		filename = id + ".txt"
-		content = "Conversación " + id + "\nFecha: " + info.ModTime().Format("02/01/2006 15:04") + "\n\n"
+		content = "Conversation " + id + "\nDate: " + info.ModTime().Format("02/01/2006 15:04") + "\n\n"
 		var dd chatDedup
 		for _, line := range strings.Split(string(data), "\n") {
 			var l convLine
@@ -1676,7 +1651,7 @@ func (h *Host) aggregateFileUsage(path string, idx map[string]*map[string]any, b
 
 		model := line.Message.Model
 		if model == "" {
-			model = "desconocido"
+			model = "unknown"
 		}
 		b := byModel[model]
 		if b == nil {
@@ -2208,6 +2183,9 @@ func (h *Host) sessionChat(name string) (map[string]any, error) {
 			dd.add(role, text, source, line.Message.ID)
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("sessionChat %s: transcript truncated: %v", name, err)
+	}
 	dd.flushPending()
 	// Cap to the most recent messages: the chat view is for the live session and
 	// re-emits this payload on every SSE frame, so an unbounded transcript (tens
@@ -2371,14 +2349,6 @@ func (h *Host) paneMode(name string) string {
 		}
 	}
 	return modeFromBadge(last)
-}
-
-// paneWaiting reports whether the session's pane is blocked on an interactive
-// prompt (e.g. command-permission approval) that the transcript won't contain.
-// Non-empty signals the chat view that the session is waiting, not working.
-func (h *Host) paneWaiting(name string) string {
-	w, _ := h.paneWaitingWithChoice(name)
-	return w
 }
 
 // paneWaitingWithChoice reports the waiting reason plus, when the pane shows an
@@ -2706,7 +2676,11 @@ func (h *Host) sessionMode(name, target string) (map[string]any, error) {
 		if err := h.sendKeys(name, "/plan"); err != nil {
 			return nil, err
 		}
-		n, _ = distanceIn(wheel, "plan", target)
+		var ok2 bool
+		n, ok2 = distanceIn(wheel, "plan", target)
+		if !ok2 {
+			return nil, errServer("plan is not on the discovered mode wheel: %s", strings.Join(wheel, ", "))
+		}
 		n++
 	}
 	for i := 0; i < n; i++ {
@@ -2737,19 +2711,19 @@ func (h *Host) sessionRc(name string) (map[string]any, error) {
 		return nil, errNotFound("session not found: %s", name)
 	}
 
-	// Limpia el input residual antes de teclear: un comando slash solo se ejecuta
-	// si el `/` queda al inicio del input. Con texto pendiente (p.ej. un mensaje
-	// que el móvil no llegó a enviar), /remote-control se pegaría al texto y se
-	// mandaría como mensaje de usuario en lugar de como comando.
+	// Clear the residual input before typing: a slash command only executes if
+	// the `/` lands at the start of the input. With pending text (e.g. a message
+	// the mobile app never got to send), /remote-control would append to that
+	// text and get sent as a user message instead of a command.
 	if err := h.clearInput(name); err != nil {
 		return nil, err
 	}
 
-	// Si Claude está en mitad de una generación, el comando se encola detrás del
-	// turno; y si luego no aparece el bridge, la auto-recuperación no debe matar
-	// una sesión que está trabajando. Se avisa y se para.
+	// If Claude is mid-generation, the command queues behind the turn; and if
+	// the bridge doesn't appear afterward, auto-recovery must not kill a session
+	// that's working. Warn and stop instead.
 	if h.paneWorking(name) {
-		return nil, errBad("Claude está trabajando en la sesión %s; espera a que termine antes de re-registrar el Remote Control", name)
+		return nil, errBad("Claude is working in session %s; wait for it to finish before re-registering Remote Control", name)
 	}
 
 	activo := h.activeProfileName()
@@ -2759,10 +2733,10 @@ func (h *Host) sessionRc(name string) (map[string]any, error) {
 			return nil, errServer("bootstrap profile: %v", err)
 		}
 	}
-	// Decide las pulsaciones por el bridge REAL (rcStatusLive), no por rcStatus:
-	// el fallback argv de rcStatus reporta rc_connected en cuanto el proceso lleva
-	// --remote-control, aunque el bridge esté caído, y haría un toggle off+on que
-	// no re-registra nada.
+	// Decide the press count from the REAL bridge (rcStatusLive), not rcStatus:
+	// rcStatus's argv fallback reports rc_connected as soon as the process carries
+	// --remote-control, even if the bridge is actually down, which would do an
+	// off+on toggle that re-registers nothing.
 	presses := 1
 	if h.rcStatusLive(name) == "rc_connected" {
 		presses = 2
@@ -2789,15 +2763,15 @@ func (h *Host) sessionRc(name string) (map[string]any, error) {
 		out["status"] = h.waitRCBridgeSettled(name)
 	}
 
-	// El bridge no se ha recuperado en vivo: un proceso ya degradado no puede
-	// re-registrarlo (perfil sin RC / 4090 "no longer the active worker"), y el
-	// staging no lo revierte. La vía fiable es relanzar: matar la sesión y retomar
-	// la conversación, cuyo arranque en dos fases sí registra el bridge. Eso es lo
-	// que "recolectar" significa cuando el re-tecleo no basta.
+	// The bridge did not recover live: an already-degraded process can't
+	// re-register it (perfilSinRC / 4090 "no longer the active worker"), and
+	// staging doesn't undo that. The reliable path is to relaunch: kill the
+	// session and resume the conversation, whose two-phase launch does register
+	// the bridge. That's what "re-register" means when a re-type isn't enough.
 	if out["status"] != "ok" {
 		conv := h.convIDForSession(name)
 		if conv == "" {
-			return out, nil // sin id de conversación no se puede relanzar; se reporta el fallo
+			return out, nil // no conversation id to relaunch with; report the failure
 		}
 		if err := h.tmuxKill(name); err != nil {
 			return out, err
@@ -2813,8 +2787,8 @@ func (h *Host) sessionRc(name string) (map[string]any, error) {
 	return out, nil
 }
 
-// clearInput borra el texto residual del input del TUI (C-u) antes de teclear un
-// comando slash, para que el `/` quede al inicio y el comando se ejecute.
+// clearInput clears the TUI input's residual text (C-u) before typing a slash
+// command, so the `/` lands at the start and the command executes.
 func (h *Host) clearInput(name string) error {
 	if err := exec.Command(h.tmuxBinary, "send-keys", "-t", h.paneTarget(name), "C-u").Run(); err != nil {
 		return errServer("tmux send-keys C-u: %v", err)
@@ -2822,9 +2796,9 @@ func (h *Host) clearInput(name string) error {
 	return nil
 }
 
-// activeSessionUsingConv devuelve el nombre de una sesión viva que tiene <id>
-// como conversación y el bridge del móvil registrado. Es el caso en que retomar
-// <id> desde otra sesión desconectaría la existente (code 4090).
+// activeSessionUsingConv returns the name of a live session that has <id> as
+// its conversation and the mobile bridge registered. This is the case where
+// resuming <id> from another session would disconnect the existing one (code 4090).
 func (h *Host) activeSessionUsingConv(id string) string {
 	sessions, err := h.tmuxList()
 	if err != nil {

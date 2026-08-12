@@ -20,7 +20,8 @@
 # HTTP listen port
 port: 8080
 
-# Session encryption secret — generate with: ccsm --generate-secret
+# Session encryption secret — REQUIRED, ccsm refuses to start if left empty.
+# Generate with: ccsm --generate-secret
 session_secret: ""
 
 # Subnets that bypass login (LAN + VPN typically). Note: the docker network the
@@ -48,7 +49,9 @@ users:
 
 # Agent connection (Unix socket on the host). Empty = package mode (no agent).
 agent_socket: "/run/ccsm/agent.sock"
-agent_secret: ""                          # shared secret for agent auth
+# Shared secret for agent auth — REQUIRED when agent_socket is set.
+# Generate with: ccsm --generate-agent-secret
+agent_secret: ""
 
 # Shown in the UI as "attach" command for each session
 host_attach_addr: "admin@192.168.1.175"
@@ -73,3 +76,4 @@ rc:
   bootstrap_profile: "estandar"
   wait_seconds: 25
   poll_seconds: 2
+  settle_seconds: 1

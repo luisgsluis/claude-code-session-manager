@@ -1,10 +1,19 @@
 # Claude Code Session Manager (CCSM)
 
-Web app to manage [Claude Code](https://claude.ai/code) sessions from any device on your LAN. Create, resume, rename, and monitor Claude sessions — with profile switching, editable settings, user management, conversation search, and Remote Control support.
+**Run [Claude Code](https://claude.ai/code) on your own server, drive it from anywhere.**
 
-**Stack**: Go + Alpine.js + Tailwind CSS | **Image**: ~15 MB (Alpine) | **RAM**: ~10-15 MB | **Version**: 0.2.0
+CCSM is a lightweight web app that turns any Linux box you control — a homelab server, a VPS, your workstation — into a personal Claude Code hub. Sessions run in `tmux` on that machine; you create, resume, and chat with them from a browser on your phone, tablet, or laptop.
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
+
+## Why CCSM
+
+- 🖥️ **Remote, effortless session management via `tmux`** — every session is a real `tmux` session on your own server. Close the laptop, lose the connection, come back tomorrow: the session is still there, exactly where you left it, manageable from any device.
+- 📱 **Claude Code Web & App — without a personal claude.ai account** — Remote Control lets the official Claude mobile app and claude.ai/code attach live to sessions that run on **your own API key** (Anthropic or an Anthropic-compatible provider), not a logged-in personal subscription. CCSM's two-phase bootstrap keeps that mobile bridge alive even across profile switches.
+- ⚙️ **Advanced profile management** — catalog, preview, and hot-swap full `settings.json` profiles (different models, providers, keys) per session, applied atomically with JSON pre-validation so a bad profile can never brick `settings.json`.
+- ♻️ **Session recovery on the server** — every conversation is a real Claude Code transcript stored on the host; browse, search, and resume any past session from any device, even after a crash or a reboot.
+- 💬🖥️ **Chat mode and Terminal mode** — a clean chat view for quick back-and-forth with live SSE updates, or drop into the raw terminal pane when you need the full TUI — approvals, dialogs, everything.
+- 🔍 **Advanced session search** — full-text search across your entire `.jsonl` conversation history, filterable by machine origin, date range, live/archived state, tags and notes.
 
 ## Features
 
@@ -24,6 +33,8 @@ Web app to manage [Claude Code](https://claude.ai/code) sessions from any device
 - 🩺 **Healthcheck**: `/api/health` wired into the image so orchestrators and the homelab updater can verify liveness
 
 ## Requirements
+
+**Stack**: Go + Alpine.js + Tailwind CSS | **Image**: ~15 MB (Alpine) | **RAM**: ~10-15 MB | **Version**: 1.0.0
 
 - **Host**: Linux with `tmux` and `claude` (Claude Code CLI) installed
 - **Container mode**: Docker or Podman
@@ -73,7 +84,8 @@ sudo chmod +x /usr/local/bin/ccsm-agent
 Generate a shared secret:
 
 ```bash
-openssl rand -base64 32
+ccsm --generate-agent-secret
+# or: openssl rand -base64 32
 ```
 
 Run the agent (systemd unit recommended for production, see below):
@@ -253,6 +265,7 @@ All settings can be set in `config.yaml` or overridden via environment variables
 | `rc.bootstrap_profile` | `CCSM_RC_BOOTSTRAP_PROFILE` | `estandar` | Profile used for RC bootstrap |
 | `rc.wait_seconds` | `CCSM_RC_WAIT_SECONDS` | `25` | Max seconds to wait for RC bridge |
 | `rc.poll_seconds` | `CCSM_RC_POLL_SECONDS` | `2` | Seconds between RC status polls |
+| `rc.settle_seconds` | `CCSM_RC_SETTLE_SECONDS` | `1` | Confirmation margin after a resumed session is idle+bridged before restoring the target profile |
 
 Some of these are **hot-reloadable** from the UI's ☰ menu (`lan_subnets`,
 `host_attach_addr`, and the `rc.*` block) — see [API](#patch-apiconfig-semantics)
@@ -264,6 +277,9 @@ and the `claude`/`tmux`/`bash` binaries) require a service restart.
 ```bash
 # Generate a random session secret
 ccsm --generate-secret
+
+# Generate a random agent shared secret (container mode)
+ccsm --generate-agent-secret
 
 # Hash a password for config.yaml
 ccsm --hash-password "my-password"

@@ -97,7 +97,7 @@ func TestSessionModeUnsupportedOnRealWheel(t *testing.T) {
 
 func TestDiscoverModeWheelRefusesBusy(t *testing.T) {
 	h := fakeHost(t, map[string]string{
-		"FAKE_TMUX_LINE":        "… ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ctrl+t to hide tasks",
+		"FAKE_TMUX_LINE":         "… ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ctrl+t to hide tasks",
 		"FAKE_TMUX_PANE_SESSION": "3",
 		"FAKE_TMUX_PANE_PID":     "12345",
 	})
@@ -108,7 +108,7 @@ func TestDiscoverModeWheelRefusesBusy(t *testing.T) {
 
 func TestWheelForBusyFallsBack(t *testing.T) {
 	h := fakeHost(t, map[string]string{
-		"FAKE_TMUX_LINE":        "… ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ctrl+t to hide tasks",
+		"FAKE_TMUX_LINE":         "… ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ctrl+t to hide tasks",
 		"FAKE_TMUX_PANE_SESSION": "3",
 		"FAKE_TMUX_PANE_PID":     "12345",
 	})

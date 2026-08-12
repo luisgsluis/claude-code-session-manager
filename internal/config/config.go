@@ -46,6 +46,7 @@ type RcConfig struct {
 	BootstrapProfile string `yaml:"bootstrap_profile"`
 	WaitSeconds      int    `yaml:"wait_seconds"`
 	PollSeconds      int    `yaml:"poll_seconds"`
+	SettleSeconds    int    `yaml:"settle_seconds"` // margin after resume idle+bridge before restoring the target profile
 }
 
 // User defines an authenticated user.
@@ -65,6 +66,15 @@ func (c *Config) Validate() error {
 	}
 	if c.Rc.PollSeconds < 1 || c.Rc.PollSeconds > 10 {
 		return fmt.Errorf("rc.poll_seconds must be 1-10, got %d", c.Rc.PollSeconds)
+	}
+	if c.Rc.SettleSeconds < 0 || c.Rc.SettleSeconds > 60 {
+		return fmt.Errorf("rc.settle_seconds must be 0-60, got %d", c.Rc.SettleSeconds)
+	}
+	if len(c.SessionSecret) < 16 {
+		return fmt.Errorf("session_secret must be set (min 16 chars) — generate one with 'ccsm --generate-secret'")
+	}
+	if c.AgentSocket != "" && len(c.AgentSecret) < 16 {
+		return fmt.Errorf("agent_secret must be set (min 16 chars) when agent_socket is set — generate one with 'ccsm --generate-agent-secret'")
 	}
 	for _, u := range c.Users {
 		if !regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`).MatchString(u.Username) {
@@ -93,6 +103,7 @@ func Defaults() *Config {
 			BootstrapProfile: "estandar",
 			WaitSeconds:      25,
 			PollSeconds:      2,
+			SettleSeconds:    1,
 		},
 	}
 }
@@ -129,7 +140,11 @@ func applyEnv(cfg *Config) {
 		cfg.SessionSecret = v
 	}
 	if v := os.Getenv("CCSM_LAN_SUBNETS"); v != "" {
-		cfg.LANSubnets = strings.Split(v, ",")
+		parts := strings.Split(v, ",")
+		for i, p := range parts {
+			parts[i] = strings.TrimSpace(p)
+		}
+		cfg.LANSubnets = parts
 	}
 	if v := os.Getenv("CCSM_AGENT_SOCKET"); v != "" {
 		cfg.AgentSocket = v
@@ -172,6 +187,11 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("CCSM_RC_POLL_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.Rc.PollSeconds = n
+		}
+	}
+	if v := os.Getenv("CCSM_RC_SETTLE_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Rc.SettleSeconds = n
 		}
 	}
 }

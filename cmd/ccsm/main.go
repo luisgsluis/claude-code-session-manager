@@ -14,6 +14,7 @@ func main() {
 	configPath := flag.String("config", "config.yaml", "path to config YAML file")
 	hashPassword := flag.String("hash-password", "", "generate bcrypt hash for a password and exit")
 	generateSecret := flag.Bool("generate-secret", false, "generate a random session secret and exit")
+	generateAgentSecretFlag := flag.Bool("generate-agent-secret", false, "generate a random agent shared secret (base64) and exit")
 	flag.Parse()
 
 	if *hashPassword != "" {
@@ -27,6 +28,11 @@ func main() {
 
 	if *generateSecret {
 		fmt.Println(generateRandomSecret())
+		return
+	}
+
+	if *generateAgentSecretFlag {
+		fmt.Println(generateAgentSecret())
 		return
 	}
 
@@ -45,10 +51,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("invalid config: %v", err)
+	}
 
 	srv := server.New(cfg, staticPath, *configPath)
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("server: %v", err)
-		os.Exit(1)
 	}
 }

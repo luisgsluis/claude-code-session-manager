@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Arranca el binario ccsm contra los stubs para las pruebas e2e de Playwright.
-# Playwright lanza este script como webServer; `exec` hace que el PID del shell
-# sea el del servidor para que el cierre sea limpio.
+# Starts the ccsm binary against the stubs for Playwright's e2e tests.
+# Playwright launches this script as its webServer; `exec` makes the shell's
+# PID the server's own, so shutdown is clean.
 set -euo pipefail
 
 E2E="$(cd "$(dirname "$0")" && pwd)"
@@ -10,9 +10,9 @@ STATE="$E2E/state"
 
 rm -rf "$STATE"
 mkdir -p "$STATE/tmux" "$STATE/conversations" "$STATE/profiles"
-# "Proyectos" para el desplegable: la discovery escanea $HOME en busca de
-# CLAUDE.md, así que apuntamos HOME a $STATE y creamos dos aquí (para poder
-# comprobar el orden alfabético del desplegable).
+# "Projects" for the dropdown: discovery scans $HOME looking for CLAUDE.md,
+# so we point HOME at $STATE and create two of them here (to be able to
+# check the dropdown's alphabetical order).
 mkdir -p "$STATE/projects/demo" "$STATE/projects/alpha"
 printf '# demo\n' > "$STATE/projects/demo/CLAUDE.md"
 printf '# alpha\n' > "$STATE/projects/alpha/CLAUDE.md"
@@ -44,8 +44,8 @@ if [ ! -x "$E2E/ccsm-e2e" ]; then
   (cd "$ROOT" && CGO_ENABLED=0 go build -o "$E2E/ccsm-e2e" ./cmd/ccsm)
 fi
 
-# HOME fija el home del host (h.home), que es la raíz de la discovery de
-# proyectos y el cwd por defecto de las sesiones nuevas.
+# HOME pins the host's home (h.home), which is the root of project discovery
+# and the default cwd for new sessions.
 export HOME="$STATE"
 
 exec "$E2E/ccsm-e2e" --config "$E2E/config.yaml"

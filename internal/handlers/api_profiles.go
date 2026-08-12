@@ -7,10 +7,8 @@ import (
 
 // ProfileHandler handles /api/profiles endpoints.
 type ProfileHandler struct {
-	Agent        Agent
-	SettingsPath string
-	ProfilesPath string
-	Audit        auditFunc
+	Agent Agent
+	Audit auditFunc
 }
 
 // ListProfiles returns available profiles.
@@ -39,8 +37,7 @@ func (h *ProfileHandler) ApplyProfile(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Profile string `json:"profile"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 

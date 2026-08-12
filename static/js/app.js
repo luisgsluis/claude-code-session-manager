@@ -48,6 +48,11 @@ const I18N = {
     archive: 'Archivar',
     unarchive: 'Desarchivar',
     meta_save: 'Guardar etiquetas/notas',
+    meta_saved: 'Guardado.',
+    tags_notes_label: 'Etiquetas / Notas',
+    view_profile_title: 'ver perfil {0}',
+    profile_label: 'Perfil: {0}',
+    metrics_all_models: 'Todos los modelos',
     tags_placeholder: 'etiquetas separadas por coma',
     notes_placeholder: 'Notas (máx. 500 caracteres)',
     empty_conv: '(vacía)',
@@ -156,6 +161,7 @@ const I18N = {
     live_view: 'Ver sesi\u00f3n en vivo',
     live_title: 'Sesi\u00f3n {0} en vivo',
     live_closed: 'Sesi\u00f3n cerrada o desconectada.',
+    live_reconnecting: 'Conexi\u00f3n perdida, reconectando\u2026',
     live_tab_chat: 'Chat',
     live_tab_term: 'Terminal',
     live_scroll_up: 'Subir',
@@ -240,6 +246,11 @@ const I18N = {
     archive: 'Archive',
     unarchive: 'Unarchive',
     meta_save: 'Save tags/notes',
+    meta_saved: 'Saved.',
+    tags_notes_label: 'Tags / Notes',
+    view_profile_title: 'view profile {0}',
+    profile_label: 'Profile: {0}',
+    metrics_all_models: 'All models',
     tags_placeholder: 'tags separated by commas',
     notes_placeholder: 'Notes (max 500 chars)',
     empty_conv: '(empty)',
@@ -348,6 +359,7 @@ const I18N = {
     live_view: 'View session live',
     live_title: 'Session {0} live',
     live_closed: 'Session closed or disconnected.',
+    live_reconnecting: 'Connection lost, reconnecting…',
     live_tab_chat: 'Chat',
     live_tab_term: 'Terminal',
     live_scroll_up: 'Scroll up',
@@ -417,7 +429,7 @@ function ccsmApp() {
     userModal: { open: false, mode: 'add', username: '', password: '', error: '' },
     audit: { open: false, loading: false, q: '', entries: [] },
     metrics: { open: false, loading: false, data: null, model: '' },
-    notify: { supported: false, permission: 'default', muted: false },
+    notify: { supported: false, permission: 'default', muted: false, es: null },
     live: { open: false, name: '', view: 'chat', content: '', status: '', chatStatus: '', es: null, ces: null, timer: null, msgs: [], termHist: '', meta: null, input: '', sending: false, elapsed: '', models: [], maxH: null },
     rename: { open: false, session: '', tmuxName: '', claudeName: '' },
     profViewer: { open: false, name: '', html: '' },
@@ -547,6 +559,7 @@ function ccsmApp() {
           this.userLabel = this.loginUser;
           this.loginPass = '';
           this.loadAll();
+          this.initNotify();
         } else {
           this.loginError = this.t('toast_error_auth');
         }
@@ -561,6 +574,7 @@ function ccsmApp() {
       this.showLogin = true;
       this.userLabel = '';
       if (this.pollInterval) clearInterval(this.pollInterval);
+      this.stopNotify();
     },
 
     // --- Data loading ---
@@ -595,6 +609,7 @@ function ccsmApp() {
 
     async loadConversations(page = 1) {
       this.conversations.loading = true;
+      this.conversations.error = '';
       try {
         const params = new URLSearchParams({ page: String(page), per_page: '20' });
         if (this.convSearch) params.set('q', this.convSearch);
@@ -694,8 +709,8 @@ function ccsmApp() {
       this.startChatStream();
     },
 
-    // Modelos disponibles: opus/sonnet/haiku + los que aparezcan en el
-    // settings.json aplicado (p. ej. ANTHROPIC_DEFAULT_*_MODEL).
+    // Available models: opus/sonnet/haiku + whatever appears in the applied
+    // settings.json (e.g. ANTHROPIC_DEFAULT_*_MODEL).
     async loadModels() {
       const base = ['opus', 'sonnet', 'haiku'];
       let extra = [];
@@ -710,7 +725,7 @@ function ccsmApp() {
           const keys = Object.keys(env).filter(k => /^ANTHROPIC_(DEFAULT_(OPUS|SONNET|HAIKU)_MODEL|SMALL_FAST_MODEL|MODEL)$|^CLAUDE_CODE_(SUBAGENT|BG_CLASSIFIER)_MODEL$/.test(k));
           keys.forEach(k => { if (env[k]) extra.push(String(env[k])); });
         }
-      } catch (e) { /* sin modelos extra */ }
+      } catch (e) { /* no extra models */ }
       const seen = new Set();
       this.live.models = base.concat(extra).filter(m => {
         m = m.trim();
@@ -804,6 +819,7 @@ function ccsmApp() {
       this.live.status = '';
       const es = new EventSource('/api/sessions/' + encodeURIComponent(this.live.name) + '/stream');
       this.live.es = es;
+      es.onopen = () => { this.live.status = ''; };
       es.onmessage = (ev) => {
         const el = this.$refs.livePane;
         const stick = el ? this.atBottom(el) : true;
@@ -813,10 +829,11 @@ function ccsmApp() {
           if (stick && el) el.scrollTop = el.scrollHeight;
         });
       };
+      // Don't close() on error: EventSource reconnects on its own (browser
+      // retry), and closing it here would kill that automatic reconnect.
+      // onopen clears the "closed" status once the stream comes back.
       es.onerror = () => {
-        this.live.status = this.t('live_closed');
-        es.close();
-        this.live.es = null;
+        this.live.status = this.t('live_reconnecting');
       };
     },
 
@@ -835,14 +852,16 @@ function ccsmApp() {
       }, 1000);
       const es = new EventSource('/api/sessions/' + encodeURIComponent(this.live.name) + '/chat/stream');
       this.live.ces = es;
+      es.onopen = () => { this.live.chatStatus = ''; };
       es.onmessage = (ev) => {
         this.applyChat(ev.data);
         this.live.chatStatus = '';
       };
+      // Don't close() on error: EventSource reconnects on its own (browser
+      // retry), and closing it here would kill that automatic reconnect.
+      // onopen clears the "closed" status once the stream comes back.
       es.onerror = () => {
-        this.live.chatStatus = this.t('live_closed');
-        es.close();
-        this.live.ces = null;
+        this.live.chatStatus = this.t('live_reconnecting');
       };
     },
 
@@ -910,7 +929,9 @@ function ccsmApp() {
       if (!text.trim()) return;
       this.live.input = '';
       this.live.sending = true;
-      await this.sendChatText(text);
+      // Refresh right away instead of waiting for the next 1s SSE poll tick,
+      // so the sent message appears immediately.
+      if (await this.sendChatText(text)) this.loadChat();
       this.live.sending = false;
     },
 
@@ -936,12 +957,18 @@ function ccsmApp() {
 
     async sendKey(key) {
       try {
-        await fetch('/api/sessions/' + encodeURIComponent(this.live.name) + '/send', {
+        const resp = await fetch('/api/sessions/' + encodeURIComponent(this.live.name) + '/send', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ keys: key }),
         });
-      } catch (e) { /* ignore */ }
+        if (!resp.ok) {
+          const b = await resp.json().catch(() => ({}));
+          this.toastError((b && b.error) || this.t('chat_err'));
+        }
+      } catch (e) {
+        this.toastError(this.t('chat_err'));
+      }
     },
 
     closeLive() {
@@ -1004,7 +1031,7 @@ function ccsmApp() {
       (d.sessions_per_day || []).forEach(r => rows.push(['sessions', r.date, r.count, '', '']));
       (d.token_usage_by_model || []).forEach(r => rows.push(['model:' + r.model, r.messages + ' msg', r.input, r.output, r.cache]));
       const esc = v => String(v).replace(/"/g, '""');
-      const csv = ['tipo,fecha,input,output,cache']
+      const csv = ['type,date,input,output,cache']
         .concat(rows.map(r => r.map(v => `"${esc(v)}"`).join(',')))
         .join('\n');
       this.downloadBlob(csv, 'text/csv', `ccsm-metrics-${stamp}.csv`);
@@ -1050,12 +1077,14 @@ function ccsmApp() {
 
     // --- Notifications (web push via SSE + Notification API) ---
     initNotify() {
+      if (this.notify.es) return; // already connected (re-login without reload)
       this.notify.supported = 'Notification' in window;
       if (!this.notify.supported) return;
       this.notify.permission = Notification.permission;
       this.notify.muted = localStorage.getItem('ccsm_notify_muted') === '1';
       try {
         const es = new EventSource('/api/events');
+        this.notify.es = es;
         es.onmessage = (e) => {
           let ev;
           try { ev = JSON.parse(e.data); } catch (err) { return; }
@@ -1068,6 +1097,13 @@ function ccsmApp() {
         };
         es.onerror = () => { /* EventSource reconnects on its own */ };
       } catch (e) { /* noop */ }
+    },
+
+    stopNotify() {
+      if (this.notify.es) {
+        this.notify.es.close();
+        this.notify.es = null;
+      }
     },
 
     async toggleNotify() {
@@ -1200,7 +1236,16 @@ function ccsmApp() {
       } else if (row.field.startsWith('rc.')) {
         body.rc = {};
         const key = row.field.replace('rc.', '');
-        body.rc[key] = row.type === 'number' ? parseInt(this.settings.editValue, 10) : this.settings.editValue.trim();
+        if (row.type === 'number') {
+          const n = parseInt(this.settings.editValue, 10);
+          if (!Number.isFinite(n)) {
+            this.toastMsg(this.t('name_invalid'), 'error');
+            return;
+          }
+          body.rc[key] = n;
+        } else {
+          body.rc[key] = this.settings.editValue.trim();
+        }
       }
       try {
         const resp = await fetch('/api/config', {
@@ -1284,7 +1329,7 @@ function ccsmApp() {
         return;
       }
       try {
-        const resp = await fetch('/api/config/users/' + this.userModal.username + '/password', {
+        const resp = await fetch('/api/config/users/' + encodeURIComponent(this.userModal.username) + '/password', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password: this.userModal.password }),
@@ -1303,7 +1348,7 @@ function ccsmApp() {
     async deleteUser(username) {
       if (!confirm(this.t('cfg_confirm_del_user', [username]))) return;
       try {
-        const resp = await fetch('/api/config/users/' + username, { method: 'DELETE' });
+        const resp = await fetch('/api/config/users/' + encodeURIComponent(username), { method: 'DELETE' });
         const data = await resp.json();
         if (data.ok) {
           this.toastMsg(this.t('cfg_user_deleted', [username]), 'success');
@@ -1409,7 +1454,7 @@ function ccsmApp() {
     async killSession(s) {
       if (!confirm(this.t('confirm_kill', [s.name]))) return;
       try {
-        const resp = await fetch('/api/sessions/' + s.name, { method: 'DELETE' });
+        const resp = await fetch('/api/sessions/' + encodeURIComponent(s.name), { method: 'DELETE' });
         if (resp.ok) {
           this.toastMsg(this.t('toast_session_killed', [s.name]), 'success');
           await this.loadSessions();
@@ -1574,18 +1619,18 @@ function ccsmApp() {
     // --- Profile viewer ---
     async viewProfile(name) {
       this.profViewer.name = name;
-      this.profViewer.html = '<span class="text-fg-muted">cargando...</span>';
+      this.profViewer.html = '<span class="text-fg-muted">' + escapeHtml(this.t('loading')) + '</span>';
       this.profViewer.open = true;
       try {
         const resp = await fetch('/api/profiles/' + name);
         if (!resp.ok) {
-          this.profViewer.html = '<span class="text-danger">Error: ' + (await resp.text()) + '</span>';
+          this.profViewer.html = '<span class="text-danger">Error: ' + escapeHtml(await resp.text()) + '</span>';
           return;
         }
         const data = await resp.json();
         this.profViewer.html = highlightJSON(data.content);
       } catch (e) {
-        this.profViewer.html = '<span class="text-danger">' + e.message + '</span>';
+        this.profViewer.html = '<span class="text-danger">' + escapeHtml(e.message) + '</span>';
       }
     },
 
@@ -1604,7 +1649,7 @@ function ccsmApp() {
         return;
       }
       try {
-        const resp = await fetch('/api/sessions/' + this.rename.session + '/rename', {
+        const resp = await fetch('/api/sessions/' + encodeURIComponent(this.rename.session) + '/rename', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ new_name: newName }),
@@ -1630,7 +1675,7 @@ function ccsmApp() {
         return;
       }
       try {
-        const resp = await fetch('/api/sessions/' + this.rename.session + '/claude-name', {
+        const resp = await fetch('/api/sessions/' + encodeURIComponent(this.rename.session) + '/claude-name', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title: title }),
@@ -1649,18 +1694,18 @@ function ccsmApp() {
 
     async viewCurrentSettings() {
       this.profViewer.name = this.t('cfg_viewing_settings');
-      this.profViewer.html = '<span class="text-fg-muted">cargando...</span>';
+      this.profViewer.html = '<span class="text-fg-muted">' + escapeHtml(this.t('loading')) + '</span>';
       this.profViewer.open = true;
       try {
         const resp = await fetch('/api/settings');
         if (!resp.ok) {
-          this.profViewer.html = '<span class="text-danger">Error: ' + (await resp.text()) + '</span>';
+          this.profViewer.html = '<span class="text-danger">Error: ' + escapeHtml(await resp.text()) + '</span>';
           return;
         }
         const data = await resp.json();
         this.profViewer.html = highlightJSON(data.content);
       } catch (e) {
-        this.profViewer.html = '<span class="text-danger">' + e.message + '</span>';
+        this.profViewer.html = '<span class="text-danger">' + escapeHtml(e.message) + '</span>';
       }
     },
 
@@ -1677,11 +1722,16 @@ function ccsmApp() {
   };
 }
 
+// escapeHtml neutralizes a string for safe interpolation into x-html content.
+function escapeHtml(raw) {
+  return String(raw).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 // highlightJSON returns syntax-highlighted HTML for a JSON string.
 // Token types: keys=cyan, strings=green, numbers=yellow, booleans/null=magenta,
 // brackets/braces=dimmed, commas=white.
 function highlightJSON(raw) {
-  const escaped = raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const escaped = escapeHtml(raw);
   return escaped.replace(
     /("(?:\\.|[^"\\])*")\s*:|("(?:\\.|[^"\\])*")|(-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|(\b(?:true|false|null)\b)|([{}[\]])|(,)/g,
     function(m, key, str, num, word, brack, comma) {

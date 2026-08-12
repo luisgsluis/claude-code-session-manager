@@ -2,7 +2,7 @@
 
 BINARY := bin/ccsm
 AGENT  := bin/ccsm-agent
-IMAGE  := claude-code-session-manager
+IMAGE  := ccsm
 
 build:
 	mkdir -p bin

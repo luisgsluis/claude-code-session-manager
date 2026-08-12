@@ -225,6 +225,72 @@ func TestEnvInvalidNumbers(t *testing.T) {
 	}
 }
 
+func validConfig() *Config {
+	cfg := Defaults()
+	cfg.SessionSecret = "0123456789abcdef"
+	cfg.AgentSecret = "0123456789abcdef"
+	cfg.Users = []User{{Username: "luis", PasswordHash: "$2a$10$hash"}}
+	return cfg
+}
+
+func TestValidateOK(t *testing.T) {
+	if err := validConfig().Validate(); err != nil {
+		t.Errorf("expected valid config to pass, got %v", err)
+	}
+}
+
+func TestValidateDirectModeNoAgentSecretRequired(t *testing.T) {
+	cfg := validConfig()
+	cfg.AgentSocket = ""
+	cfg.AgentSecret = ""
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("direct mode (empty agent_socket) should not require agent_secret: %v", err)
+	}
+}
+
+func TestValidateRejectsEmptySessionSecret(t *testing.T) {
+	cfg := validConfig()
+	cfg.SessionSecret = ""
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for empty session_secret")
+	}
+}
+
+func TestValidateRejectsMissingAgentSecretInAgentMode(t *testing.T) {
+	cfg := validConfig()
+	cfg.AgentSocket = "/run/ccsm/agent.sock"
+	cfg.AgentSecret = ""
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for missing agent_secret with agent_socket set")
+	}
+}
+
+func TestValidateAllowsNoUsers(t *testing.T) {
+	// LAN-only deployments can skip the login form entirely (LANBypass), so
+	// an empty user list is valid — e.g. the e2e config runs with users: [].
+	cfg := validConfig()
+	cfg.Users = nil
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected no error for empty users (LAN-only deployment), got %v", err)
+	}
+}
+
+func TestValidateRejectsBadPort(t *testing.T) {
+	cfg := validConfig()
+	cfg.Port = 0
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for invalid port")
+	}
+}
+
+func TestValidateRejectsBadSettleSeconds(t *testing.T) {
+	cfg := validConfig()
+	cfg.Rc.SettleSeconds = -1
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for negative rc.settle_seconds")
+	}
+}
+
 func TestEnvOverridesYAML(t *testing.T) {
 	tmp := t.TempDir() + "/test.yaml"
 	data := `port: 9090`

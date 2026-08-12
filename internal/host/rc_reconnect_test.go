@@ -188,6 +188,7 @@ func TestSessionRcStaging(t *testing.T) {
 		t.Errorf("presses = %v, want 2", out["presses"])
 	}
 }
+
 // spawnRcSession starts a long-running shell whose argv carries --remote-control
 // and a pinned --session-id, as a CCSM-launched Claude does.
 func spawnRcSession(t *testing.T, id string) int {
@@ -200,10 +201,10 @@ func spawnRcSession(t *testing.T, id string) int {
 	return cmd.Process.Pid
 }
 
-// TestSessionRcAutoRecover: cuando el bridge no vuelve tras el /remote-control,
-// sessionRc relanza la sesión: la mata y retoma la conversación, cuyo arranque
-// en dos fases sí registra el bridge. Es la vía recuperable para una sesión con
-// perfil sin RC que perdió su rol de worker (code 4090).
+// TestSessionRcAutoRecover: when the bridge doesn't come back after
+// /remote-control, sessionRc relaunches the session: kills it and resumes the
+// conversation, whose two-phase launch does register the bridge. This is the
+// recovery path for a perfilSinRC session that lost its worker role (code 4090).
 func TestSessionRcAutoRecover(t *testing.T) {
 	id := "a1b2c3d4-1111-2222-3333-444455556666"
 	pid := spawnRcSession(t, id)
@@ -228,18 +229,18 @@ func TestSessionRcAutoRecover(t *testing.T) {
 		t.Fatalf("recovered = %v, want true", out["recovered"])
 	}
 	if s, _ := out["session"].(string); s != "5" {
-		t.Errorf("session = %q, want 5 (la relanzada)", s)
+		t.Errorf("session = %q, want 5 (the relaunched one)", s)
 	}
 	kdata, _ := os.ReadFile(kills)
 	if !strings.Contains(string(kdata), "3") {
-		t.Errorf("kill-session de la sesión vieja no registrado: %q", string(kdata))
+		t.Errorf("kill-session of the old session not recorded: %q", string(kdata))
 	}
 }
 
-// TestClaudeResumeRejectsActiveConv: retomar una conversación que otra sesión
-// tiene abierta con el bridge del móvil registrado la desconectaría (code 4090
-// "no longer the active worker"); el resume debe devolver 409 y advertir, no
-// tumbar la otra en silencio.
+// TestClaudeResumeRejectsActiveConv: resuming a conversation that another
+// session already has open with the mobile bridge registered would disconnect
+// it (code 4090 "no longer the active worker"); the resume must return 409 and
+// warn, not kill the other one silently.
 func TestClaudeResumeRejectsActiveConv(t *testing.T) {
 	id := "a1b2c3d4-1111-2222-3333-444455556666"
 	pid := spawnRcSession(t, id)
@@ -269,9 +270,9 @@ func TestClaudeResumeRejectsActiveConv(t *testing.T) {
 	}
 }
 
-// TestWaitRCBridgeSettledWaitsForIdle: un resume solo sobrevive a la restauración
-// del perfil cuando su proceso ha terminado de cargar (status idle). Mientras
-// busy, waitRCBridgeSettled sigue esperando; al pasar a idle con el bridge, ok.
+// TestWaitRCBridgeSettledWaitsForIdle: a resume only survives the profile
+// restore once its process has finished loading (status idle). While busy,
+// waitRCBridgeSettled keeps waiting; once idle with the bridge, ok.
 func TestWaitRCBridgeSettledWaitsForIdle(t *testing.T) {
 	pid := spawnRcSession(t, "a1b2c3d4-1111-2222-3333-444455556666")
 	h := fakeHost(t, map[string]string{
@@ -294,4 +295,3 @@ func TestWaitRCBridgeSettledWaitsForIdle(t *testing.T) {
 		t.Errorf("settled = %q, want ok", got)
 	}
 }
-
