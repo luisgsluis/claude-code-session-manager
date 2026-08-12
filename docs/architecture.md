@@ -75,8 +75,13 @@ GET  /api/health                             public; used by the Docker healthch
 POST /api/auth/login                         login (password, or LAN bypass)
 POST /api/auth/logout
 GET  /api/auth/status
-GET  /api/sessions                           list tmux sessions
-POST /api/sessions/new                       start a Claude session
+GET  /api/sessions                           list tmux sessions (each may carry `project`)
+POST /api/sessions/new                       start a Claude session; body may include
+                                             {"project":"<name from /api/projects>"} to
+                                             launch with that dir as cwd (its CLAUDE.md
+                                             applies) and tag the session
+GET  /api/projects                           launch targets: "principal" (home) + dirs
+                                             under home with a CLAUDE.md (≤3 levels)
 POST /api/sessions/resume                    resume a conversation (UUID)
 DELETE /api/sessions/{name}                  kill a tmux session
 POST /api/sessions/{name}/rename             rename the tmux session; body {"new_name":"..."}
@@ -103,9 +108,12 @@ differ from the saved profile files, so it is separate from `GET /api/profiles/{
 
 The `=` target prefix (`-t =name`) is valid only for tmux **session** targets —
 `rename-session`, `has-session` and `kill-session` all use it. It is NOT valid for
-**pane** targets: `tmux send-keys -t =name` fails with "can't find pane". So the
-tmux-session rename targets the session with `=name`, while the Claude-title rename
-(`/claude-name`) sends keys to the pane using the bare session name.
+**pane** targets: `tmux send-keys -t =name` fails with "can't find pane". It is also
+NOT valid for `set-option`'s target: `tmux set-option -t =name` looks for a session
+literally named "=name" (visto 2026-08 al etiquetar sesiones con `@ccsm_project`) —
+use the bare session name there. So the tmux-session rename targets the session with
+`=name`, the Claude-title rename (`/claude-name`) sends keys to the pane with the bare
+name, and project tagging (`set-option`) uses the bare name too.
 
 ### Deployment info for the UI
 

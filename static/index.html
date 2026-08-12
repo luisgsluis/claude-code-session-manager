@@ -46,9 +46,6 @@
         class="text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors text-lg leading-none"
         :title="notify.permission === 'granted' ? (notify.muted ? t('notify_muted') : t('notify_unmuted')) : (notify.permission === 'denied' ? t('notify_denied') : t('notify_grant'))"
         x-text="notify.permission === 'granted' ? (notify.muted ? '🔕' : '🔔') : (notify.permission === 'denied' ? '🚫' : '🔔')"></button>
-      <button x-show="notify.supported" @click="testNotify()"
-        class="text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors text-lg leading-none"
-        :title="notify.permission === 'granted' ? t('notify_test') : t('notify_grant')" x-text="'🧪'"></button>
       <div class="relative" x-data="{ open: false }">
         <button @click="open = !open"
           class="text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors text-lg leading-none"
@@ -106,6 +103,16 @@
             </template>
           </select>
         </div>
+        <div>
+          <label for="adv-project" class="block text-xs text-fg-muted mb-1" x-text="t('adv_project')"></label>
+          <select id="adv-project" x-model="adv.project"
+            class="w-full bg-bg border border-gray-700 rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent transition-colors">
+            <option value="principal" x-text="t('adv_project_default')"></option>
+            <template x-for="p in projects.filter(p => p.name !== 'principal')" :key="p.name">
+              <option :value="p.name" x-text="projectLabel(p.name)" :title="p.path"></option>
+            </template>
+          </select>
+        </div>
         <button @click="newSessionAdvanced(); open = false" :disabled="actionLoading"
           class="w-full px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-xl text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-wait">
           <span x-text="t('adv_create')"></span>
@@ -159,6 +166,7 @@
             <div class="flex items-center gap-2 text-sm">
               <span class="text-accent font-mono" x-text="t('session_label', [s.name])"></span>
               <span class="w-2 h-2 rounded-full" :class="s.status === 'rc_connected' ? 'bg-success' : 'bg-warn'" :title="s.status"></span>
+              <span x-show="s.project" class="text-xs px-2 py-0.5 rounded bg-accent/10 text-accent font-mono" :title="s.project" x-text="projectLabel(s.project)"></span>
             </div>
             <p class="text-sm text-fg-muted truncate mt-0.5" x-text="s.task || t('no_task')"></p>
           </div>

@@ -31,6 +31,9 @@ case "$1" in
     [ -n "$FAKE_TMUX_KILL_FAIL" ] && { echo "no such session" >&2; exit 1; }
     echo "$3" >> "$FAKE_TMUX_KILLS"
     exit 0 ;;
+  set-option)
+    [ -n "$FAKE_TMUX_OPTS" ] && printf '%s\n' "$5" >> "$FAKE_TMUX_OPTS"
+    exit 0 ;;
   new-session)
     [ -n "$FAKE_TMUX_NEW_FAIL" ] && { echo "create failed" >&2; exit 1; }
     printf '%s\n' "${FAKE_TMUX_NEW_NAME:-3}"
@@ -142,6 +145,26 @@ func TestTmuxListSortNoiseAndStatus(t *testing.T) {
 	}
 	if sessions[0]["status"] != "rc_connected" {
 		t.Errorf("status: %v", sessions[0]["status"])
+	}
+}
+
+func TestTmuxListProject(t *testing.T) {
+	h := fakeHost(t, map[string]string{
+		"FAKE_TMUX_LIST": "3\t2024-01-01 10:00:00\tclaude\tprojects/ccsm\n4\t2024-01-01 10:00:00\tclaude\n",
+	})
+	data, err := h.Exec("tmux-ls", nil)
+	if err != nil {
+		t.Fatalf("tmux-ls: %v", err)
+	}
+	sessions := data.([]map[string]any)
+	if len(sessions) != 2 {
+		t.Fatalf("want 2 sessions, got %d", len(sessions))
+	}
+	if sessions[0]["project"] != "projects/ccsm" {
+		t.Errorf("project: %q", sessions[0]["project"])
+	}
+	if p, ok := sessions[1]["project"]; ok && p != "" {
+		t.Errorf("untagged session project: %q", p)
 	}
 }
 

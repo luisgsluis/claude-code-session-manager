@@ -88,6 +88,43 @@ func TestNewSessionWithProfile(t *testing.T) {
 	}
 }
 
+func TestNewSessionWithProject(t *testing.T) {
+	// Valid project names pass the handler; the agent is unavailable here so
+	// 502 means the request was forwarded.
+	h := &SessionHandler{Agent: newMockAgent(), AttachAddr: "admin@host"}
+	for _, body := range []string{
+		`{"project":"claude-code-session-manager"}`,
+		`{"project":"principal"}`,
+		`{"project":"homelab/services/ccsm"}`,
+	} {
+		req := httptest.NewRequest("POST", "/api/sessions/new", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.NewSession(w, req)
+		if w.Code != 502 {
+			t.Errorf("body %s: expected 502, got %d: %s", body, w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestNewSessionInvalidProject(t *testing.T) {
+	h := &SessionHandler{Agent: newMockAgent(), AttachAddr: "admin@host"}
+	for _, body := range []string{
+		`{"project":"../etc"}`,
+		`{"project":"a b"}`,
+		`{"project":"a\\b"}`,
+		`{"project":"/abs"}`,
+	} {
+		req := httptest.NewRequest("POST", "/api/sessions/new", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.NewSession(w, req)
+		if w.Code != 400 {
+			t.Errorf("body %s: expected 400, got %d: %s", body, w.Code, w.Body.String())
+		}
+	}
+}
+
 func TestNewSessionInvalidProfileName(t *testing.T) {
 	h := &SessionHandler{Agent: newMockAgent(), AttachAddr: "admin@host"}
 	body := `{"profile":"bad/name"}`

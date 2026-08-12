@@ -22,6 +22,10 @@ var sessionNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
 // claudeTitlePattern mirrors the agent's whitelist for Claude session titles.
 var claudeTitlePattern = regexp.MustCompile(`^[\p{L}\p{N}\p{P} ]{1,80}$`)
 
+// projectNamePattern mirrors the agent's whitelist for project names (relative
+// paths under home as returned by /api/projects).
+var projectNamePattern = regexp.MustCompile(`^[\p{L}\p{N}._-]+(/[\p{L}\p{N}._-]+)*$`)
+
 // SessionHandler handles /api/sessions endpoints.
 type SessionHandler struct {
 	Agent      Agent
@@ -347,6 +351,7 @@ func (h *SessionHandler) NewSession(w http.ResponseWriter, r *http.Request) {
 		Profile    string `json:"profile"`
 		Name       string `json:"name"`
 		ClaudeName string `json:"claude_name"`
+		Project    string `json:"project"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 
@@ -372,6 +377,13 @@ func (h *SessionHandler) NewSession(w http.ResponseWriter, r *http.Request) {
 		}
 		args["claude_name"] = req.ClaudeName
 	}
+	if req.Project != "" {
+		if !projectNamePattern.MatchString(req.Project) || strings.Contains(req.Project, "..") {
+			writeError(w, http.StatusBadRequest, "invalid project")
+			return
+		}
+		args["project"] = req.Project
+	}
 
 	resp, err := h.Agent.Exec("claude-nueva", args)
 	if err != nil {
@@ -394,7 +406,7 @@ func (h *SessionHandler) NewSession(w http.ResponseWriter, r *http.Request) {
 		"status":       data["status"],
 		"attach_cmd":   data["attach_cmd"],
 	})
-	audit(h.Audit, "session_new", UserFrom(r), "session="+sessionName+", profile="+req.Profile)
+	audit(h.Audit, "session_new", UserFrom(r), "session="+sessionName+", profile="+req.Profile+", project="+req.Project)
 }
 
 // ResumeSession resumes a conversation.

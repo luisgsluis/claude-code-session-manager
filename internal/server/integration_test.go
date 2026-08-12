@@ -177,6 +177,7 @@ func TestE2EProtectedEndpoints(t *testing.T) {
 		{"POST", "/api/sessions/resume"},
 		{"GET", "/api/profiles"},
 		{"POST", "/api/profiles/apply"},
+		{"GET", "/api/projects"},
 		{"GET", "/api/conversations"},
 		{"GET", "/api/conversations/" + testUUID},
 	} {
@@ -209,6 +210,26 @@ func TestE2ESessions(t *testing.T) {
 	// attach_cmd enrichment
 	if ac, ok := list[0]["attach_cmd"].(string); !ok || !strings.HasPrefix(ac, "ssh admin@rb.lan") {
 		t.Errorf("missing attach_cmd: %v", list[0])
+	}
+}
+
+func TestE2EProjects(t *testing.T) {
+	m := startMockAgent(t, map[string]string{
+		"projects-ls": `[{"name":"principal","path":"/home/admin"},{"name":"projects/ccsm","path":"/home/admin/projects/ccsm"}]`,
+	}, nil)
+	srv := newIntegrationServer(t, m, "")
+	token, _ := srv.sessions.CreateSession("luis", false)
+
+	w := authedRequest(srv, token, "GET", "/api/projects", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("projects: %d %s", w.Code, w.Body.String())
+	}
+	var list []map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(list) != 2 || list[0]["name"] != "principal" {
+		t.Errorf("unexpected projects: %v", list)
 	}
 }
 
@@ -246,10 +267,25 @@ func TestE2ENewSession(t *testing.T) {
 		t.Errorf("profile should be absent, got %v", args)
 	}
 
+	// With a project.
+	w = authedRequest(srv, token, "POST", "/api/sessions/new", `{"project":"projects/ccsm"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("new with project: %d %s", w.Code, w.Body.String())
+	}
+	cmd, args, _ = m.lastCmd()
+	if cmd != "claude-nueva" || args["project"] != "projects/ccsm" {
+		t.Errorf("agent got %s %v", cmd, args)
+	}
+
 	// Invalid profile name must be rejected server-side.
 	w = authedRequest(srv, token, "POST", "/api/sessions/new", `{"profile":"deepseek; rm -rf /"}`)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("invalid profile: expected 400, got %d", w.Code)
+	}
+	// Path-traversal project must be rejected server-side.
+	w = authedRequest(srv, token, "POST", "/api/sessions/new", `{"project":"../etc"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("invalid project: expected 400, got %d", w.Code)
 	}
 	// Malformed JSON body.
 	w = authedRequest(srv, token, "POST", "/api/sessions/new", `not-json`)

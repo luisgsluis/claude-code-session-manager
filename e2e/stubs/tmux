@@ -23,8 +23,10 @@ case "$cmd" in
   list-sessions)
     for f in "$STATE"/*; do
       [ -f "$f" ] || continue
-      cat "$f"
-      echo
+      n="$(basename "$f")"
+      proj=""
+      [ -f "$STATE/$n.project" ] && proj="$(cat "$STATE/$n.project")"
+      printf '%s\t%s\n' "$(cat "$f")" "$proj"
     done
     exit 0
     ;;
@@ -53,7 +55,13 @@ case "$cmd" in
     ;;
   kill-session)
     name="$(flagval -t "$@")"
-    rm -f "$STATE/$name"
+    rm -f "$STATE/$name" "$STATE/$name.project"
+    exit 0
+    ;;
+  set-option)
+    # CCSM etiqueta la sesión con su proyecto: tmux set-option -t =<ses> @ccsm_project <proyecto>.
+    name="$(flagval -t "$@")"
+    printf '%s\n' "${@: -1}" > "$STATE/$name.project"
     exit 0
     ;;
   rename-session)
@@ -64,6 +72,7 @@ case "$cmd" in
     content="$(cat "$STATE/$name")"
     printf '%s\t%s\n' "$new" "${content#*$'\t'}" > "$STATE/$new"
     rm -f "$STATE/$name"
+    [ -f "$STATE/$name.project" ] && mv "$STATE/$name.project" "$STATE/$new.project"
     exit 0
     ;;
   send-keys)

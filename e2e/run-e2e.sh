@@ -10,6 +10,10 @@ STATE="$E2E/state"
 
 rm -rf "$STATE"
 mkdir -p "$STATE/tmux" "$STATE/conversations" "$STATE/profiles"
+# Un "proyecto" para el desplegable: la discovery escanea $HOME en busca de
+# CLAUDE.md, así que apuntamos HOME a $STATE y creamos uno aquí.
+mkdir -p "$STATE/projects/demo"
+printf '# demo\n' > "$STATE/projects/demo/CLAUDE.md"
 
 cat > "$E2E/config.yaml" <<YAML
 port: 8799
@@ -37,5 +41,9 @@ YAML
 if [ ! -x "$E2E/ccsm-e2e" ]; then
   (cd "$ROOT" && CGO_ENABLED=0 go build -o "$E2E/ccsm-e2e" ./cmd/ccsm)
 fi
+
+# HOME fija el home del host (h.home), que es la raíz de la discovery de
+# proyectos y el cwd por defecto de las sesiones nuevas.
+export HOME="$STATE"
 
 exec "$E2E/ccsm-e2e" --config "$E2E/config.yaml"

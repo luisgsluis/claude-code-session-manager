@@ -203,6 +203,8 @@ func (h *Host) Exec(cmd string, args map[string]string) (any, error) {
 		return nil, h.claudeProfile(name)
 	case "profiles-ls":
 		return h.profilesList()
+	case "projects-ls":
+		return h.projectsList()
 	case "profile-content":
 		name := args["name"]
 		if !safeProfileName(name) {
@@ -252,7 +254,15 @@ var (
 	uuidPattern    = regexp.MustCompile(`^` + uuidRe.String() + `$`)
 	profilePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 	titlePattern   = regexp.MustCompile(`^[\p{L}\p{N}\p{P} ]{1,80}$`)
+	// projectPattern matches the relative name of a project dir under home
+	// (as returned by projectsList). No path traversal: dots are allowed only
+	// as part of names, never as "..".
+	projectPattern = regexp.MustCompile(`^[\p{L}\p{N}._-]+(/[\p{L}\p{N}._-]+)*$`)
 )
+
+func safeProjectName(s string) bool {
+	return projectPattern.MatchString(s) && !strings.Contains(s, "..")
+}
 
 func safeName(s string) bool        { return namePattern.MatchString(s) }
 func safeUUID(s string) bool        { return uuidPattern.MatchString(s) }
@@ -262,7 +272,7 @@ func safeTitle(s string) bool       { return titlePattern.MatchString(s) }
 var leadingNoise = regexp.MustCompile(`^[^\p{L}\p{N}]*[\s]*`)
 
 func (h *Host) tmuxList() ([]map[string]any, error) {
-	out, err := exec.Command(h.tmuxBinary, "list-sessions", "-F", "#{session_name}\t#{session_created_string}\t#{pane_title}").Output()
+	out, err := exec.Command(h.tmuxBinary, "list-sessions", "-F", "#{session_name}\t#{session_created_string}\t#{pane_title}\t#{@ccsm_project}").Output()
 	if err != nil {
 		// No sessions is not an error — tmux exits 1
 		return []map[string]any{}, nil
@@ -274,7 +284,7 @@ func (h *Host) tmuxList() ([]map[string]any, error) {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 3)
+		parts := strings.SplitN(line, "\t", 4)
 		s := map[string]any{"name": parts[0]}
 		if len(parts) > 1 {
 			s["created"] = parts[1]
@@ -285,6 +295,9 @@ func (h *Host) tmuxList() ([]map[string]any, error) {
 				task = "(sin tarea)"
 			}
 			s["task"] = task
+		}
+		if len(parts) > 3 {
+			s["project"] = strings.TrimSpace(parts[3])
 		}
 		s["status"] = h.rcStatus(parts[0])
 		sessions = append(sessions, s)
@@ -382,6 +395,14 @@ func (h *Host) claudeNew(args map[string]string) (map[string]string, error) {
 	if claudeName != "" && !safeTitle(claudeName) {
 		return nil, errBad("invalid claude name")
 	}
+	// The project (a name from projectsList) pins the working dir Claude starts
+	// in, so the session boots with that project's CLAUDE.md. "principal" (or
+	// empty) keeps the historical launch from home and is never tagged.
+	project := args["project"]
+	cwd, ok := h.projectCwd(project)
+	if !ok {
+		return nil, errBad("unknown project: %s", project)
+	}
 
 	var session, status string
 	var waitRC bool
@@ -393,10 +414,10 @@ func (h *Host) claudeNew(args map[string]string) (map[string]string, error) {
 
 	if profile == "" {
 		if activo := h.activeProfileName(); activo != "" && perfilSinRC(h.profilesPath+"/"+activo+".json") {
-			session, status, err = h.lanzarConStaging(activo, "--session-id "+sessionID, name)
+			session, status, err = h.lanzarConStaging(activo, "--session-id "+sessionID, name, cwd)
 		} else {
 			waitRC = true
-			session, err = h.newSession("--remote-control --session-id "+sessionID, name)
+			session, err = h.newSession("--remote-control --session-id "+sessionID, name, cwd)
 			if err == nil {
 				status = h.rcStatus(session)
 			}
@@ -407,10 +428,10 @@ func (h *Host) claudeNew(args map[string]string) (map[string]string, error) {
 			return nil, errNotFound("profile not found: %s", profile)
 		}
 		if perfilSinRC(profileFile) {
-			session, status, err = h.lanzarConStaging(profile, "--session-id "+sessionID, name)
+			session, status, err = h.lanzarConStaging(profile, "--session-id "+sessionID, name, cwd)
 		} else {
 			waitRC = true
-			session, err = h.newSession("--settings "+profileFile+" --remote-control --session-id "+sessionID, name)
+			session, err = h.newSession("--settings "+profileFile+" --remote-control --session-id "+sessionID, name, cwd)
 			if err == nil {
 				status = h.rcStatus(session)
 			}
@@ -419,6 +440,13 @@ func (h *Host) claudeNew(args map[string]string) (map[string]string, error) {
 
 	if err != nil {
 		return nil, errServer("%v", err)
+	}
+	// Tag the session with its project so the sessions list can show it. The
+	// "principal" entry is the implicit default and carries no tag. The bare
+	// name is required: set-option's target doesn't accept the "=" prefix that
+	// kill-session does (it would look for a session literally named "=name").
+	if project != "" && project != "principal" {
+		exec.Command(h.tmuxBinary, "set-option", "-t", session, "@ccsm_project", project).Run()
 	}
 	if claudeName != "" {
 		h.renameClaudeAfterReady(session, claudeName, waitRC)
@@ -446,9 +474,9 @@ func (h *Host) claudeResume(id string) (map[string]string, error) {
 	var err error
 	activo := h.activeProfileName()
 	if activo != "" && perfilSinRC(h.profilesPath+"/"+activo+".json") {
-		session, status, err = h.lanzarConStaging(activo, "--resume "+id, "")
+		session, status, err = h.lanzarConStaging(activo, "--resume "+id, "", h.home)
 	} else {
-		session, err = h.newSession("--resume "+id+" --remote-control", "")
+		session, err = h.newSession("--resume "+id+" --remote-control", "", h.home)
 		if err == nil {
 			status = h.rcStatus(session)
 		}
@@ -485,11 +513,11 @@ func rcState(staging string) string {
 // enables at startup, create the session with --remote-control, wait for the
 // bridge to connect (2 consecutive ok polls), then hot-apply the target
 // profile — RC survives the switch. Returns (session, "ok"|"fail"|"timeout"|"dead").
-func (h *Host) lanzarConStaging(destino, extra, name string) (string, string, error) {
+func (h *Host) lanzarConStaging(destino, extra, name, cwd string) (string, string, error) {
 	if err := h.applyProfile(h.rcBootstrap); err != nil {
 		return "", "", fmt.Errorf("bootstrap profile: %w", err)
 	}
-	session, err := h.newSession("--remote-control "+extra, name)
+	session, err := h.newSession("--remote-control "+extra, name, cwd)
 	if err != nil {
 		h.applyProfile(destino) // restore target; best effort
 		return "", "", err
@@ -755,6 +783,78 @@ func (h *Host) profilesList() ([]map[string]any, error) {
 	}
 
 	return profiles, nil
+}
+
+// projectsList discovers launchable "projects": the home itself (entry
+// "principal") plus every directory under home, up to 3 levels deep (skipping
+// dot-dirs), that contains a CLAUDE.md. The name is the path relative to home,
+// so entries are unique and round-trip through projectCwd without ambiguity.
+// Descent is never cut short at a CLAUDE.md dir: a container dir like
+// ~/projects may have its own CLAUDE.md while its children are the projects.
+func (h *Host) projectsList() ([]map[string]any, error) {
+	out := []map[string]any{{"name": "principal", "path": h.home}}
+
+	hasDoc := func(p string) bool {
+		for _, name := range []string{"CLAUDE.md", "claude.md"} {
+			if _, err := os.Stat(filepath.Join(p, name)); err == nil {
+				return true
+			}
+		}
+		return false
+	}
+
+	var walk func(dir string, depth int)
+	walk = func(dir string, depth int) {
+		if depth > 3 {
+			return
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+				continue
+			}
+			p := filepath.Join(dir, e.Name())
+			if p == h.home {
+				continue
+			}
+			if hasDoc(p) {
+				if rel, err := filepath.Rel(h.home, p); err == nil {
+					out = append(out, map[string]any{"name": rel, "path": p})
+				}
+			}
+			walk(p, depth+1)
+		}
+	}
+	walk(h.home, 1)
+
+	sort.Slice(out[1:], func(i, j int) bool { return out[i+1]["name"].(string) < out[j+1]["name"].(string) })
+	return out, nil
+}
+
+// projectCwd resolves a project name to the working dir to launch Claude in,
+// or "" when the name is not a known project. "principal" (or empty) maps to
+// the home itself, keeping the historical launch behaviour.
+func (h *Host) projectCwd(project string) (string, bool) {
+	if project == "" || project == "principal" {
+		return h.home, true
+	}
+	if !safeProjectName(project) {
+		return "", false
+	}
+	want := filepath.Join(h.home, filepath.FromSlash(project))
+	projects, err := h.projectsList()
+	if err != nil {
+		return "", false
+	}
+	for _, pr := range projects {
+		if pr["name"] == project && pr["path"] == want {
+			return want, true
+		}
+	}
+	return "", false
 }
 
 // convLine is one JSON object of a Claude Code conversation .jsonl file.
@@ -1582,10 +1682,13 @@ func (h *Host) aggregateFileUsage(path string, idx map[string]*map[string]any, b
 	}
 }
 
-func (h *Host) newSession(extraArgs, name string) (string, error) {
+func (h *Host) newSession(extraArgs, name, cwd string) (string, error) {
 	cmd := h.claudeBinary + " " + extraArgs
 	fullCmd := h.bashBinary + " -lc '" + strings.ReplaceAll(cmd, "'", "'\\''") + "'"
-	args := []string{"new-session", "-d", "-P", "-F", "#S", "-c", h.home}
+	if cwd == "" {
+		cwd = h.home
+	}
+	args := []string{"new-session", "-d", "-P", "-F", "#S", "-c", cwd}
 	if name != "" {
 		args = append(args, "-s", name)
 	}
@@ -2230,8 +2333,12 @@ func (h *Host) lastAssistant(name string) (id, text string) {
 			continue
 		}
 		if line.Type == "assistant" {
+			// Track the id unconditionally: a turn whose final record carries no
+			// text (only tool_use, or an error) must still advance the watcher,
+			// or its completion is never announced. Text stays best-effort.
+			id = line.Message.ID
 			if t, ok := extractText(line.Message.Content); ok {
-				id, text = line.Message.ID, t
+				text = t
 			}
 		}
 	}

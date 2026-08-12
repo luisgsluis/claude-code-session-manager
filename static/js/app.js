@@ -12,6 +12,8 @@ const I18N = {
     adv_claude_ph: 'opcional',
     adv_profile: 'Perfil a aplicar',
     adv_profile_default: 'Perfil activo (por defecto)',
+    adv_project: 'Proyecto (CLAUDE.md)',
+    adv_project_default: 'Principal (inicio)',
     adv_create: 'Crear sesión',
     new_with_profile: 'Nueva con perfil',
     change_profile: 'Cambiar perfil',
@@ -143,7 +145,7 @@ const I18N = {
     notify_denied: 'Notificaciones denegadas en el navegador.',
     notify_unmuted: 'Notificaciones activadas',
     notify_muted: 'Notificaciones silenciadas',
-    notify_test: 'Notificación de prueba (directa, sin SSE)',
+    notify_action_login: 'Inicio de sesión',
     notify_action_session_new: 'Nueva sesi\u00f3n',
     notify_action_session_kill: 'Sesi\u00f3n cerrada',
     notify_action_session_resume: 'Sesi\u00f3n retomada',
@@ -202,6 +204,8 @@ const I18N = {
     adv_claude_ph: 'optional',
     adv_profile: 'Profile to apply',
     adv_profile_default: 'Active profile (default)',
+    adv_project: 'Project (CLAUDE.md)',
+    adv_project_default: 'Principal (home)',
     adv_create: 'Create session',
     new_with_profile: 'New with profile',
     change_profile: 'Change profile',
@@ -333,7 +337,7 @@ const I18N = {
     notify_denied: 'Notifications blocked in the browser.',
     notify_unmuted: 'Notifications enabled',
     notify_muted: 'Notifications muted',
-    notify_test: 'Test notification (direct, no SSE)',
+    notify_action_login: 'Login',
     notify_action_session_new: 'New session',
     notify_action_session_kill: 'Session closed',
     notify_action_session_resume: 'Session resumed',
@@ -404,8 +408,10 @@ function ccsmApp() {
     convSearch: '',
     convFilters: { origin: '', from: '', to: '', alive: false },
     actionLoading: false,
-    // "New session" advanced form (optional tmux name, Claude name, profile).
-    adv: { tmux: '', claude: '', profile: '' },
+    // "New session" advanced form (optional tmux name, Claude name, profile,
+    // project). project defaults to "principal" (home), the historical launch.
+    adv: { tmux: '', claude: '', profile: '', project: 'principal' },
+    projects: [],
     preview: { open: false, messages: [], date: '', origin: '', id: '', title: '', is_alive: false, tags: '', notes: '', saving: false },
     settings: { open: false, loading: false, groups: [], editing: null, editValue: '', users: [] },
     userModal: { open: false, mode: 'add', username: '', password: '', error: '' },
@@ -563,6 +569,7 @@ function ccsmApp() {
         this.loadSessions(),
         this.loadConversations(),
         this.loadProfiles(),
+        this.loadProjects(),
       ]);
       if (this.pollInterval) clearInterval(this.pollInterval);
       this.pollInterval = setInterval(() => this.loadSessions(), 30000);
@@ -633,6 +640,20 @@ function ccsmApp() {
         const resp = await fetch('/api/profiles');
         if (resp.ok) this.profiles = await resp.json();
       } catch (e) { /* ignore */ }
+    },
+
+    async loadProjects() {
+      try {
+        const resp = await fetch('/api/projects');
+        if (resp.ok) this.projects = await resp.json();
+      } catch (e) { /* ignore */ }
+    },
+
+    // Short label for a project: its name relative to home already is unique;
+    // the dropdown shows just the base dir, and the session badge too.
+    projectLabel(rel) {
+      const p = String(rel || '').split('/');
+      return p[p.length - 1] || rel;
     },
 
     // --- Live session view (SSE): Terminal + Chat ---
@@ -1048,21 +1069,6 @@ function ccsmApp() {
       return (key in I18N[this.lang]) ? this.t(key) : action;
     },
 
-    // Fires a Notification directly (no SSE, no hidden-tab requirement) so the
-    // permission/Notification-API path can be tested in isolation.
-    testNotify() {
-      if (!this.notify.supported) return;
-      if (this.notify.permission !== 'granted') {
-        this.toggleNotify();
-        return;
-      }
-      new Notification('CCSM · ' + this.t('notify_test'), {
-        body: this.t('notify_test'),
-        tag: 'ccsm-test'
-      });
-      this.toastMsg(this.t('notify_test'), 'success');
-    },
-
     async loadAudit() {
       this.audit.loading = true;
       try {
@@ -1296,6 +1302,7 @@ function ccsmApp() {
         if (opts.profile) payload.profile = opts.profile;
         if (opts.name) payload.name = opts.name;
         if (opts.claudeName) payload.claude_name = opts.claudeName;
+        if (opts.project && opts.project !== 'principal') payload.project = opts.project;
         const resp = await fetch('/api/sessions/new', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1338,8 +1345,8 @@ function ccsmApp() {
         this.toastMsg(this.t('name_invalid'), 'error');
         return;
       }
-      const data = await this.createSession({ name: tmux, claudeName: claude, profile: this.adv.profile });
-      this.adv = { tmux: '', claude: '', profile: '' };
+      const data = await this.createSession({ name: tmux, claudeName: claude, profile: this.adv.profile, project: this.adv.project });
+      this.adv = { tmux: '', claude: '', profile: '', project: 'principal' };
       if (data && data.session_name) {
         this.openLive({ name: data.session_name });
       }

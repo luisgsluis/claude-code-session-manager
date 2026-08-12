@@ -33,3 +33,36 @@ test('auto-login LAN, crear sesión y cerrarla', async ({ page }) => {
   await card.getByTitle('Cerrar sesión').click();
   await expect(page.getByText('No hay sesiones activas')).toBeVisible();
 });
+
+test('sesión avanzada con proyecto: arranca en el proyecto y muestra badge', async ({ page }) => {
+  page.on('dialog', (d) => {
+    d.accept();
+  });
+
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+
+  // El desplegable ofrece la entrada "principal" (home) y el proyecto demo.
+  await page.getByRole('button', { name: /Nueva sesión avanzada/ }).click();
+  const projSelect = page.getByLabel('Proyecto (CLAUDE.md)');
+  const options = await projSelect.locator('option').allTextContents();
+  expect(options.join(',')).toContain('Principal');
+  expect(options.join(',')).toContain('demo');
+
+  // Elegir el proyecto, crear la sesión y cerrar el modal live.
+  await projSelect.selectOption('projects/demo');
+  await page.getByLabel('Nombre sesión tmux').fill('e2e-proj');
+  await page.getByRole('button', { name: 'Crear sesión' }).click();
+  const liveModal = page.locator('div[x-show="live.open"]');
+  await expect(liveModal).toBeVisible();
+  await liveModal.click({ position: { x: 5, y: 5 } });
+
+  // La tarjeta lleva el badge con el nombre base del proyecto.
+  const card = page.locator('.group').filter({ hasText: 'sesión e2e-proj' });
+  await expect(card).toBeVisible();
+  await expect(card.getByText('demo')).toBeVisible();
+  await expect(card.getByText('demo')).toHaveAttribute('title', 'projects/demo');
+
+  // Cerrarla y volver al estado vacío.
+  await card.getByTitle('Cerrar sesión').click();
+  await expect(page.getByText('No hay sesiones activas')).toBeVisible();
+});

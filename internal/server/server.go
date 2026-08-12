@@ -154,6 +154,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/sessions/{name}/send", s.auth(s.sessionHdlr.Send))
 	s.mux.HandleFunc("POST /api/sessions/{name}/rc", s.auth(s.sessionHdlr.ReconnectRC))
 
+	// Projects (protected)
+	s.mux.HandleFunc("GET /api/projects", s.auth(s.sessionHdlr.ListProjects))
+
 	// Profiles (protected)
 	s.mux.HandleFunc("GET /api/profiles", s.auth(s.profileHdlr.ListProfiles))
 	s.mux.HandleFunc("POST /api/profiles/apply", s.auth(s.profileHdlr.ApplyProfile))
