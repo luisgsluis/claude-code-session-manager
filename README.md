@@ -115,7 +115,7 @@ host_attach_addr: "admin@myhost.local"        # shown in the UI for tmux attach
 # docker-compose.yml
 services:
   ccsm:
-    image: ghcr.io/luisgsluis/claude-code-session-manager:latest
+    image: ghcr.io/luisgsluis/ccsm:latest
     container_name: claude-sessions
     restart: unless-stopped
     ports:
