@@ -1,6 +1,7 @@
 package host
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // spawnWithRc starts a long-running shell whose argv carries a --remote-control
@@ -186,3 +188,110 @@ func TestSessionRcStaging(t *testing.T) {
 		t.Errorf("presses = %v, want 2", out["presses"])
 	}
 }
+// spawnRcSession starts a long-running shell whose argv carries --remote-control
+// and a pinned --session-id, as a CCSM-launched Claude does.
+func spawnRcSession(t *testing.T, id string) int {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", "sleep 60", "--remote-control", "--session-id", id)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cmd.Process.Kill() })
+	return cmd.Process.Pid
+}
+
+// TestSessionRcAutoRecover: cuando el bridge no vuelve tras el /remote-control,
+// sessionRc relanza la sesión: la mata y retoma la conversación, cuyo arranque
+// en dos fases sí registra el bridge. Es la vía recuperable para una sesión con
+// perfil sin RC que perdió su rol de worker (code 4090).
+func TestSessionRcAutoRecover(t *testing.T) {
+	id := "a1b2c3d4-1111-2222-3333-444455556666"
+	pid := spawnRcSession(t, id)
+	sendkeys := filepath.Join(t.TempDir(), "sendkeys.txt")
+	kills := filepath.Join(t.TempDir(), "kills.txt")
+	h := fakeHost(t, map[string]string{
+		"FAKE_TMUX_SENDKEYS":     sendkeys,
+		"FAKE_TMUX_KILLS":        kills,
+		"FAKE_TMUX_PANE_SESSION": "3",
+		"FAKE_TMUX_PANE_PID":     strconv.Itoa(pid),
+		"FAKE_TMUX_NEW_NAME":     "5",
+	})
+	if err := os.WriteFile(filepath.Join(h.convPath, id+".jsonl"), []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := h.sessionRc("3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["recovered"] != true {
+		t.Fatalf("recovered = %v, want true", out["recovered"])
+	}
+	if s, _ := out["session"].(string); s != "5" {
+		t.Errorf("session = %q, want 5 (la relanzada)", s)
+	}
+	kdata, _ := os.ReadFile(kills)
+	if !strings.Contains(string(kdata), "3") {
+		t.Errorf("kill-session de la sesión vieja no registrado: %q", string(kdata))
+	}
+}
+
+// TestClaudeResumeRejectsActiveConv: retomar una conversación que otra sesión
+// tiene abierta con el bridge del móvil registrado la desconectaría (code 4090
+// "no longer the active worker"); el resume debe devolver 409 y advertir, no
+// tumbar la otra en silencio.
+func TestClaudeResumeRejectsActiveConv(t *testing.T) {
+	id := "a1b2c3d4-1111-2222-3333-444455556666"
+	pid := spawnRcSession(t, id)
+	h := fakeHost(t, map[string]string{
+		"FAKE_TMUX_LIST":         "3\t2026-01-01 00:00:00\tclaude\n",
+		"FAKE_TMUX_PANE_SESSION": "3",
+		"FAKE_TMUX_PANE_PID":     strconv.Itoa(pid),
+	})
+	if err := os.WriteFile(filepath.Join(h.convPath, id+".jsonl"), []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	sdir := filepath.Join(h.home, ".claude", "sessions")
+	if err := os.MkdirAll(sdir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sdir, fmt.Sprintf("%d.json", pid)), []byte(`{"bridgeSessionId":"sess"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := h.claudeResume(id)
+	if err == nil {
+		t.Fatal("claudeResume: want 409 for active conversation, got nil")
+	}
+	var e *Error
+	if !errors.As(err, &e) || e.Status != 409 {
+		t.Fatalf("want *Error{409}, got %v", err)
+	}
+}
+
+// TestWaitRCBridgeSettledWaitsForIdle: un resume solo sobrevive a la restauración
+// del perfil cuando su proceso ha terminado de cargar (status idle). Mientras
+// busy, waitRCBridgeSettled sigue esperando; al pasar a idle con el bridge, ok.
+func TestWaitRCBridgeSettledWaitsForIdle(t *testing.T) {
+	pid := spawnRcSession(t, "a1b2c3d4-1111-2222-3333-444455556666")
+	h := fakeHost(t, map[string]string{
+		"FAKE_TMUX_PANE_SESSION": "3",
+		"FAKE_TMUX_PANE_PID":     strconv.Itoa(pid),
+	})
+	sdir := filepath.Join(h.home, ".claude", "sessions")
+	if err := os.MkdirAll(sdir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	sf := filepath.Join(sdir, fmt.Sprintf("%d.json", pid))
+	if err := os.WriteFile(sf, []byte(`{"status":"busy","bridgeSessionId":"sess"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		os.WriteFile(sf, []byte(`{"status":"idle","bridgeSessionId":"sess"}`), 0600)
+	}()
+	if got := h.waitRCBridgeSettled("3"); got != "ok" {
+		t.Errorf("settled = %q, want ok", got)
+	}
+}
+

@@ -46,6 +46,7 @@ func main() {
 	rcProfile := flag.String("rc-profile", "estandar", "bootstrap profile for RC")
 	rcWait := flag.Int("rc-wait", 25, "seconds to wait for RC connect")
 	rcPoll := flag.Int("rc-poll", 2, "seconds between RC polls")
+	rcSettle := flag.Int("rc-settle", 1, "confirmation margin (s) after the resume process is idle+bridge before restoring the target profile")
 	flag.Parse()
 
 	secretValue, err := resolveSecret(*secretFile, *secret)
@@ -61,8 +62,9 @@ func main() {
 		TmuxBinary:    *tmuxBin,
 		BashBinary:    *bashBin,
 		RcBootstrap:   *rcProfile,
-		RcWaitSeconds: *rcWait,
-		RcPollSeconds: *rcPoll,
+		RcWaitSeconds:   *rcWait,
+		RcPollSeconds:   *rcPoll,
+		RcSettleSeconds: *rcSettle,
 	})
 
 	if err := ensureSingle(*socket); err != nil {

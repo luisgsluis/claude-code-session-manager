@@ -182,9 +182,11 @@ const I18N = {
     rc_reconnect_on: 'RC: re-registrar',
     rc_reconnect_off: 'RC: activar',
     rc_reconnect_title: 'Reconectar Remote Control: fuerza un re-registro del bridge para que la sesión aparezca en la app de Claude.',
-    confirm_rc_reconnect_on: 'Se tecleará /remote-control dos veces (apagar y encender) para forzar un re-registro fresco. ¿Continuar?',
-    confirm_rc_reconnect_off: 'Se tecleará /remote-control para activar el Remote Control y que la sesión aparezca en la app. ¿Continuar?',
-    toast_rc_reconnect: 'Re-registro de Remote Control enviado',
+    confirm_rc_reconnect_on: 'Se re-registrará el Remote Control; si el bridge no se recupera en vivo, la sesión se cerrará y relanzará sola (retomando la conversación). ¿Continuar?',
+    confirm_rc_reconnect_off: 'Se activará el Remote Control; si el bridge no se recupera en vivo, la sesión se cerrará y relanzará sola (retomando la conversación). ¿Continuar?',
+    toast_rc_reconnect: 'Remote Control re-registrado',
+    toast_rc_recovered: 'Bridge no recuperable en vivo: sesión relanzada como {0}',
+    toast_rc_fail: 'No se pudo re-registrar el Remote Control ni relanzar la sesión ({0})',
     mode_sent: 'Modo cambiado a {0}',
     model_sent: 'Modelo cambiado a {0}',
   },
@@ -372,9 +374,11 @@ const I18N = {
     rc_reconnect_on: 'RC: re-register',
     rc_reconnect_off: 'RC: enable',
     rc_reconnect_title: 'Reconnect Remote Control: force a fresh bridge re-registration so the session appears in the Claude app.',
-    confirm_rc_reconnect_on: 'It will type /remote-control twice (off then on) to force a fresh re-registration. Continue?',
-    confirm_rc_reconnect_off: 'It will type /remote-control to enable Remote Control so the session appears in the app. Continue?',
-    toast_rc_reconnect: 'Remote Control re-registration sent',
+    confirm_rc_reconnect_on: 'It will re-register Remote Control; if the bridge cannot recover live, the session will be closed and relaunched (resuming the conversation). Continue?',
+    confirm_rc_reconnect_off: 'It will enable Remote Control; if the bridge cannot recover live, the session will be closed and relaunched (resuming the conversation). Continue?',
+    toast_rc_reconnect: 'Remote Control re-registered',
+    toast_rc_recovered: 'Bridge not recoverable live: session relaunched as {0}',
+    toast_rc_fail: 'Could not re-register Remote Control or relaunch the session ({0})',
   },
 };
 
@@ -1386,12 +1390,21 @@ function ccsmApp() {
       if (!confirm(msg)) return;
       try {
         const resp = await fetch('/api/sessions/' + encodeURIComponent(this.live.name) + '/rc', { method: 'POST' });
-        if (resp.ok) {
-          this.toastMsg(this.t('toast_rc_reconnect'), 'success');
-        } else {
-          const data = await resp.json().catch(() => ({}));
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
           this.toastMsg(data.error || this.t('chat_err'), 'error');
+          return;
         }
+        if (data.recovered) {
+          this.toastMsg(this.t('toast_rc_recovered', [data.session]), 'success');
+          this.openLive({ name: data.session });
+          return;
+        }
+        if (data.status && data.status !== 'ok' && data.status !== 'rc_connected') {
+          this.toastMsg(this.t('toast_rc_fail', [data.status]), 'error');
+          return;
+        }
+        this.toastMsg(this.t('toast_rc_reconnect'), 'success');
       } catch (e) {
         this.toastMsg(this.t('toast_error_conn', [e.message]), 'error');
       }

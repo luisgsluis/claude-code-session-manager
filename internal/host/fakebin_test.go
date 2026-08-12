@@ -95,7 +95,8 @@ func fakeHost(t *testing.T, env map[string]string) *Host {
 		BashBinary:    filepath.Join(binDir, "bash"),
 		RcBootstrap:   "estandar",
 		RcWaitSeconds: 2,
-		RcPollSeconds: 0,
+		RcPollSeconds:   0,
+		RcSettleSeconds: 0,
 		Home:          base,
 	})
 	return h

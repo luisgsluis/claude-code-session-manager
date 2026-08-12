@@ -23,31 +23,33 @@ import (
 
 // Options configures a Host executor.
 type Options struct {
-	ProfilesPath  string
-	SettingsPath  string
-	ConvPath      string
-	ClaudeBinary  string
-	TmuxBinary    string
-	BashBinary    string
-	RcBootstrap   string
-	RcWaitSeconds int
-	RcPollSeconds int
-	Home          string
+	ProfilesPath    string
+	SettingsPath    string
+	ConvPath        string
+	ClaudeBinary    string
+	TmuxBinary      string
+	BashBinary      string
+	RcBootstrap     string
+	RcWaitSeconds   int
+	RcPollSeconds   int
+	RcSettleSeconds int
+	Home            string
 }
 
 // Host executes tmux/claude commands. It runs either in the ccsm-agent process
 // (container deployment) or directly inside ccsm (package deployment).
 type Host struct {
-	profilesPath  string
-	settingsPath  string
-	convPath      string
-	claudeBinary  string
-	tmuxBinary    string
-	bashBinary    string
-	rcBootstrap   string
-	rcWaitSeconds int
-	rcPollSeconds int
-	home          string
+	profilesPath    string
+	settingsPath    string
+	convPath        string
+	claudeBinary    string
+	tmuxBinary      string
+	bashBinary      string
+	rcBootstrap     string
+	rcWaitSeconds   int
+	rcPollSeconds   int
+	rcSettleSeconds int
+	home            string
 }
 
 // Error carries an HTTP-like status so the web server can return the right
@@ -74,6 +76,11 @@ func errServer(format string, args ...any) error {
 	return &Error{Status: 500, Msg: fmt.Sprintf(format, args...)}
 }
 
+// errConflict builds a 409 error.
+func errConflict(format string, args ...any) error {
+	return &Error{Status: 409, Msg: fmt.Sprintf(format, args...)}
+}
+
 // New resolves "auto"/empty paths against $HOME and returns a Host.
 func New(o Options) *Host {
 	if o.Home == "" {
@@ -86,16 +93,17 @@ func New(o Options) *Host {
 		return v
 	}
 	return &Host{
-		profilesPath:  def(o.ProfilesPath, o.Home+"/claude-shared/claude-perfiles"),
-		settingsPath:  def(o.SettingsPath, o.Home+"/.claude/settings.json"),
-		convPath:      def(o.ConvPath, o.Home+"/.claude/projects/-home-admin"),
-		claudeBinary:  def(o.ClaudeBinary, o.Home+"/.local/bin/claude"),
-		tmuxBinary:    def(o.TmuxBinary, "/usr/bin/tmux"),
-		bashBinary:    def(o.BashBinary, "/usr/bin/bash"),
-		rcBootstrap:   def(o.RcBootstrap, "estandar"),
-		rcWaitSeconds: o.RcWaitSeconds,
-		rcPollSeconds: o.RcPollSeconds,
-		home:          o.Home,
+		profilesPath:    def(o.ProfilesPath, o.Home+"/claude-shared/claude-perfiles"),
+		settingsPath:    def(o.SettingsPath, o.Home+"/.claude/settings.json"),
+		convPath:        def(o.ConvPath, o.Home+"/.claude/projects/-home-admin"),
+		claudeBinary:    def(o.ClaudeBinary, o.Home+"/.local/bin/claude"),
+		tmuxBinary:      def(o.TmuxBinary, "/usr/bin/tmux"),
+		bashBinary:      def(o.BashBinary, "/usr/bin/bash"),
+		rcBootstrap:     def(o.RcBootstrap, "estandar"),
+		rcWaitSeconds:   o.RcWaitSeconds,
+		rcPollSeconds:   o.RcPollSeconds,
+		rcSettleSeconds: o.RcSettleSeconds,
+		home:            o.Home,
 	}
 }
 
@@ -425,6 +433,14 @@ func (h *Host) claudeResume(id string) (map[string]string, error) {
 	if _, err := os.Stat(h.convFileFor(id)); err != nil {
 		return nil, errNotFound("conversation not found: %s", id)
 	}
+	// Gatillo del 4090 "no longer the active worker": retomar una conversación
+	// que otra sesión tiene abierta con el bridge del móvil registrado reclama el
+	// rol de worker activo y desconecta esa sesión. Advertir antes de tumbarla en
+	// silencio; para relanzar una sesión caída existe el botón "RC: re-registrar"
+	// (sessionRc), que hace el kill+resume controlado.
+	if other := h.activeSessionUsingConv(id); other != "" {
+		return nil, errConflict("la conversación ya está conectada al móvil en la sesión %s; retomarla la desconectaría (code 4090). Ciérrala o usa el botón 'RC: re-registrar' de esa sesión para relanzarla", other)
+	}
 
 	var session, status string
 	var err error
@@ -478,7 +494,7 @@ func (h *Host) lanzarConStaging(destino, extra, name string) (string, string, er
 		h.applyProfile(destino) // restore target; best effort
 		return "", "", err
 	}
-	estado := h.waitRCBridge(session)
+	estado := h.waitRCBridgeSettled(session)
 	// Always restore the target profile (even on failure) so the global
 	// settings end in the requested state.
 	if err := h.applyProfile(destino); err != nil {
@@ -517,6 +533,72 @@ func (h *Host) waitRCBridge(session string) string {
 		estado = "timeout"
 	}
 	return estado
+}
+
+// sessionIdle reports whether the session's process has finished loading (its
+// session file says status:"idle"). A resumed session is only ready once it has
+// loaded its transcript; the mobile bridge registers only after that. Without a
+// session file there is nothing to read, so it reports idle (don't block).
+func (h *Host) sessionIdle(name string) bool {
+	pid := h.panePID(name)
+	if pid <= 0 {
+		return true
+	}
+	f := filepath.Join(h.home, ".claude", "sessions", fmt.Sprintf("%d.json", pid))
+	data, err := os.ReadFile(f)
+	if err != nil {
+		return true
+	}
+	var sf struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(data, &sf); err != nil {
+		return true
+	}
+	return sf.Status == "idle"
+}
+
+// waitRCBridgeSettled waits for the bridge to register AND the session process
+// to be idle (a resume finished loading its transcript), holding that state for
+// a settle margin. Restoring the target profile right after the bridge appears
+// drops it on resumed sessions (visto 2026-08-12): the bridge needs the process
+// idle before a switch to a perfilSinRC profile survives. The settle margin is
+// a short confirmation (rcSettleSeconds, 1s), not a fixed wait — the time to
+// reach idle is covered by rcWaitSeconds. Same vocabulary as waitRCBridge.
+func (h *Host) waitRCBridgeSettled(session string) string {
+	estado := "timeout"
+	deadline := time.Now().Add(time.Duration(h.rcWaitSeconds) * time.Second)
+	for time.Now().Before(deadline) {
+		if !h.sessionAlive(session) {
+			return "dead"
+		}
+		switch h.rcStatusLive(session) {
+		case "rc_connected":
+			if h.sessionIdle(session) {
+				estado = "ok"
+			}
+		case "rc_failed":
+			return "fail"
+		}
+		if estado == "ok" {
+			break
+		}
+		time.Sleep(time.Duration(h.rcPollSeconds) * time.Second)
+	}
+	if estado != "ok" {
+		return "timeout"
+	}
+	deadline = time.Now().Add(time.Duration(h.rcSettleSeconds) * time.Second)
+	for time.Now().Before(deadline) {
+		if !h.sessionAlive(session) {
+			return "dead"
+		}
+		if !h.sessionIdle(session) || h.rcStatusLive(session) != "rc_connected" {
+			return "fail"
+		}
+		time.Sleep(time.Duration(h.rcPollSeconds) * time.Second)
+	}
+	return "ok"
 }
 
 func (h *Host) claudeProfile(name string) error {
@@ -2077,6 +2159,7 @@ func (h *Host) sessionStatus(name string) (map[string]any, error) {
 //   - auto mode, idle:     "… esc to interrupt · ← for agents"
 //   - manual mode, working: "… manual mode on · esc to interrupt · ← for agents"
 //   - manual mode, idle:   "… manual mode on · ? for shortcuts · ← for agents"
+//
 // Best-effort: the transcript-stability side of the watcher guards false hits.
 func (h *Host) paneWorking(name string) bool {
 	out, err := exec.Command(h.tmuxBinary, "capture-pane", "-p", "-t", h.paneTarget(name)).Output()
@@ -2437,6 +2520,22 @@ func (h *Host) sessionRc(name string) (map[string]any, error) {
 	if !h.sessionAlive(name) {
 		return nil, errNotFound("session not found: %s", name)
 	}
+
+	// Limpia el input residual antes de teclear: un comando slash solo se ejecuta
+	// si el `/` queda al inicio del input. Con texto pendiente (p.ej. un mensaje
+	// que el móvil no llegó a enviar), /remote-control se pegaría al texto y se
+	// mandaría como mensaje de usuario en lugar de como comando.
+	if err := h.clearInput(name); err != nil {
+		return nil, err
+	}
+
+	// Si Claude está en mitad de una generación, el comando se encola detrás del
+	// turno; y si luego no aparece el bridge, la auto-recuperación no debe matar
+	// una sesión que está trabajando. Se avisa y se para.
+	if h.paneWorking(name) {
+		return nil, errBad("Claude está trabajando en la sesión %s; espera a que termine antes de re-registrar el Remote Control", name)
+	}
+
 	activo := h.activeProfileName()
 	staging := activo != "" && perfilSinRC(h.profilesPath+"/"+activo+".json")
 	if staging {
@@ -2444,8 +2543,12 @@ func (h *Host) sessionRc(name string) (map[string]any, error) {
 			return nil, errServer("bootstrap profile: %v", err)
 		}
 	}
+	// Decide las pulsaciones por el bridge REAL (rcStatusLive), no por rcStatus:
+	// el fallback argv de rcStatus reporta rc_connected en cuanto el proceso lleva
+	// --remote-control, aunque el bridge esté caído, y haría un toggle off+on que
+	// no re-registra nada.
 	presses := 1
-	if h.rcStatus(name) == "rc_connected" {
+	if h.rcStatusLive(name) == "rc_connected" {
 		presses = 2
 	}
 	for i := 0; i < presses; i++ {
@@ -2459,14 +2562,65 @@ func (h *Host) sessionRc(name string) (map[string]any, error) {
 			time.Sleep(rcPressDelay)
 		}
 	}
+
 	out := map[string]any{"session": name, "presses": presses, "staging": staging}
 	if staging {
-		out["status"] = h.waitRCBridge(name)
+		out["status"] = h.waitRCBridgeSettled(name)
 		if err := h.applyProfile(activo); err != nil {
 			return nil, errServer("restore profile: %v", err)
 		}
+	} else {
+		out["status"] = h.waitRCBridgeSettled(name)
+	}
+
+	// El bridge no se ha recuperado en vivo: un proceso ya degradado no puede
+	// re-registrarlo (perfil sin RC / 4090 "no longer the active worker"), y el
+	// staging no lo revierte. La vía fiable es relanzar: matar la sesión y retomar
+	// la conversación, cuyo arranque en dos fases sí registra el bridge. Eso es lo
+	// que "recolectar" significa cuando el re-tecleo no basta.
+	if out["status"] != "ok" {
+		conv := h.convIDForSession(name)
+		if conv == "" {
+			return out, nil // sin id de conversación no se puede relanzar; se reporta el fallo
+		}
+		if err := h.tmuxKill(name); err != nil {
+			return out, err
+		}
+		resumed, err := h.claudeResume(conv)
+		if err != nil {
+			return out, err
+		}
+		out["recovered"] = true
+		out["session"] = resumed["session"]
+		out["status"] = rcState(resumed["status"])
 	}
 	return out, nil
+}
+
+// clearInput borra el texto residual del input del TUI (C-u) antes de teclear un
+// comando slash, para que el `/` quede al inicio y el comando se ejecute.
+func (h *Host) clearInput(name string) error {
+	if err := exec.Command(h.tmuxBinary, "send-keys", "-t", h.paneTarget(name), "C-u").Run(); err != nil {
+		return errServer("tmux send-keys C-u: %v", err)
+	}
+	return nil
+}
+
+// activeSessionUsingConv devuelve el nombre de una sesión viva que tiene <id>
+// como conversación y el bridge del móvil registrado. Es el caso en que retomar
+// <id> desde otra sesión desconectaría la existente (code 4090).
+func (h *Host) activeSessionUsingConv(id string) string {
+	sessions, err := h.tmuxList()
+	if err != nil {
+		return ""
+	}
+	for _, s := range sessions {
+		name := s["name"].(string)
+		if h.convIDForSession(name) == id && h.sessionBridgeID(name) != "" {
+			return name
+		}
+	}
+	return ""
 }
 
 func (h *Host) tmuxRename(name, newName string) (map[string]string, error) {

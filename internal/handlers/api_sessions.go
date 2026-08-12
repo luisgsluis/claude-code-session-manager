@@ -292,12 +292,20 @@ func (h *SessionHandler) ReconnectRC(w http.ResponseWriter, r *http.Request) {
 	var data map[string]interface{}
 	json.Unmarshal(resp.Data, &data)
 	presses, _ := data["presses"].(float64)
+	status, _ := data["status"].(string)
+	recovered, _ := data["recovered"].(bool)
+	newsession, _ := data["session"].(string)
+	if newsession == "" {
+		newsession = name
+	}
 
-	audit(h.Audit, "session_rc", UserFrom(r), "session="+name+", presses="+strconv.FormatFloat(presses, 'f', -1, 64))
+	audit(h.Audit, "session_rc", UserFrom(r), "session="+name+", presses="+strconv.FormatFloat(presses, 'f', -1, 64)+", status="+status)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"ok":      true,
-		"session": name,
-		"presses": presses,
+		"ok":        true,
+		"session":   newsession,
+		"presses":   presses,
+		"status":    status,
+		"recovered": recovered,
 	})
 }
 
