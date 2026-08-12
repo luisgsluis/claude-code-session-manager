@@ -27,6 +27,7 @@ Prioritized list of features. The "Backlog" holds features deliberately deferred
   without structural changes. After validating user+password, a TOTP code is required before
   issuing the session cookie; the auth middleware checks a `totp_verified` flag.
 - **Mobile app**: native or PWA mobile version
+- **Full terminal view**
 
 ## Release/CI
 
