@@ -2,7 +2,7 @@
 
 Web app to manage [Claude Code](https://claude.ai/code) sessions from any device on your LAN. Create, resume, rename, and monitor Claude sessions — with profile switching, editable settings, user management, conversation search, and Remote Control support.
 
-**Stack**: Go + Alpine.js + Tailwind CSS | **Image**: ~15 MB (Alpine) | **RAM**: ~10-15 MB | **Version**: 0.1.5
+**Stack**: Go + Alpine.js + Tailwind CSS | **Image**: ~15 MB (Alpine) | **RAM**: ~10-15 MB | **Version**: 0.2.0
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
