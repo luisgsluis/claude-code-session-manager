@@ -41,15 +41,25 @@ test('sesión avanzada con proyecto: arranca en el proyecto y muestra badge', as
 
   await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-  // El desplegable ofrece la entrada "principal" (home) y el proyecto demo.
+  // El desplegable ofrece la entrada "principal" (home) y los proyectos demo
+  // y alpha, ordenados alfabéticamente por la etiqueta visible.
   await page.getByRole('button', { name: /Nueva sesión avanzada/ }).click();
   const projSelect = page.getByLabel('Proyecto (CLAUDE.md)');
   const options = await projSelect.locator('option').allTextContents();
   expect(options.join(',')).toContain('Principal');
   expect(options.join(',')).toContain('demo');
+  // Los proyectos (sin la entrada fija "principal") van por orden alfabético.
+  const real = await projSelect.locator('option').evaluateAll(els =>
+    els.filter(e => e.value !== 'principal').map(e => e.textContent));
+  expect(real).toEqual([...real].sort());
+  expect(real[0]).toBe('alpha');
+  expect(real[1]).toBe('demo');
+
+  // Al elegir un proyecto, bajo el desplegable se ve su ruta relativa.
+  await projSelect.selectOption('projects/demo');
+  await expect(page.getByText('projects/demo')).toBeVisible();
 
   // Elegir el proyecto, crear la sesión y cerrar el modal live.
-  await projSelect.selectOption('projects/demo');
   await page.getByLabel('Nombre sesión tmux').fill('e2e-proj');
   await page.getByRole('button', { name: 'Crear sesión' }).click();
   const liveModal = page.locator('div[x-show="live.open"]');

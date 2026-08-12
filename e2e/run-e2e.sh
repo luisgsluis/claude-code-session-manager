@@ -10,10 +10,12 @@ STATE="$E2E/state"
 
 rm -rf "$STATE"
 mkdir -p "$STATE/tmux" "$STATE/conversations" "$STATE/profiles"
-# Un "proyecto" para el desplegable: la discovery escanea $HOME en busca de
-# CLAUDE.md, así que apuntamos HOME a $STATE y creamos uno aquí.
-mkdir -p "$STATE/projects/demo"
+# "Proyectos" para el desplegable: la discovery escanea $HOME en busca de
+# CLAUDE.md, así que apuntamos HOME a $STATE y creamos dos aquí (para poder
+# comprobar el orden alfabético del desplegable).
+mkdir -p "$STATE/projects/demo" "$STATE/projects/alpha"
 printf '# demo\n' > "$STATE/projects/demo/CLAUDE.md"
+printf '# alpha\n' > "$STATE/projects/alpha/CLAUDE.md"
 
 cat > "$E2E/config.yaml" <<YAML
 port: 8799

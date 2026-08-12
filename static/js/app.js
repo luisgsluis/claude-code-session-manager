@@ -656,6 +656,26 @@ function ccsmApp() {
       return p[p.length - 1] || rel;
     },
 
+    // Projects for the dropdown, sorted by the visible label (base dir), with
+    // "principal" handled as a fixed first option in the markup.
+    sortedProjects() {
+      return this.projects
+        .filter(p => p.name !== 'principal')
+        .sort((a, b) => {
+          const la = this.projectLabel(a.name);
+          const lb = this.projectLabel(b.name);
+          return la === lb ? a.name.localeCompare(b.name) : la.localeCompare(lb);
+        });
+    },
+
+    // Relative path (from the dir Claude runs in) of the selected project, for
+    // the hint under the dropdown. Home is the launch dir itself, shown as "~".
+    selectedProjectPath() {
+      const p = this.adv.project;
+      if (!p || p === 'principal') return '~';
+      return p;
+    },
+
     // --- Live session view (SSE): Terminal + Chat ---
     openLive(s) {
       this.closeLive();
