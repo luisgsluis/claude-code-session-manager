@@ -6,6 +6,7 @@
 <title>Claude Sessions</title>
 <link rel="stylesheet" href="/static/css/app.css">
 <link rel="stylesheet" href="/static/css/terminal-grid.css">
+<script src="/static/js/skin-init.js"></script>
 <script defer src="/static/js/alpine.min.js"></script>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
 </head>
@@ -34,6 +35,29 @@
           <button @click="setLang('en'); open = false"
             class="block w-full text-left px-4 py-2 text-sm hover:bg-bg-hover transition-colors"
             :class="lang === 'en' ? 'text-accent font-medium' : 'text-fg'">English</button>
+        </div>
+      </div>
+
+      <!-- Skin selector -->
+      <div class="relative" x-data="{ open: false }">
+        <button @click="open = !open"
+          class="text-sm text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors"
+          :title="t('skin_' + skin)"
+          x-text="skin === 'light' ? '☀️' : (skin === 'contrast' ? '⚡' : (skin === 'solarized' ? '🌊' : '🌙'))"></button>
+        <div x-show="open" @click.outside="open = false"
+          class="absolute right-0 top-full mt-1 bg-bg-card border border-gray-700 rounded-xl shadow-xl py-1 min-w-[140px] z-50">
+          <button @click="setSkin('light'); open = false"
+            class="block w-full text-left px-4 py-2 text-sm hover:bg-bg-hover transition-colors"
+            :class="skin === 'light' ? 'text-accent font-medium' : 'text-fg'">☀️ <span x-text="t('skin_light')"></span></button>
+          <button @click="setSkin('dark'); open = false"
+            class="block w-full text-left px-4 py-2 text-sm hover:bg-bg-hover transition-colors"
+            :class="skin === 'dark' ? 'text-accent font-medium' : 'text-fg'">🌙 <span x-text="t('skin_dark')"></span></button>
+          <button @click="setSkin('solarized'); open = false"
+            class="block w-full text-left px-4 py-2 text-sm hover:bg-bg-hover transition-colors"
+            :class="skin === 'solarized' ? 'text-accent font-medium' : 'text-fg'">🌊 <span x-text="t('skin_solarized')"></span></button>
+          <button @click="setSkin('contrast'); open = false"
+            class="block w-full text-left px-4 py-2 text-sm hover:bg-bg-hover transition-colors"
+            :class="skin === 'contrast' ? 'text-accent font-medium' : 'text-fg'">⚡ <span x-text="t('skin_contrast')"></span></button>
         </div>
       </div>
 
@@ -79,7 +103,7 @@
     <!-- New session with options (tmux name, Claude name, profile) -->
     <div class="relative" x-data="{ open: false }">
       <button @click="open = !open" :disabled="actionLoading"
-        class="px-4 py-2 bg-bg-card border border-accent/50 text-accent hover:border-accent rounded-xl text-sm font-medium transition-colors disabled:opacity-50">
+        class="px-4 py-2 bg-bg-card border border-gray-700 hover:border-gray-600 rounded-xl text-sm font-medium transition-colors disabled:opacity-50">
         🎛️ <span x-text="t('new_advanced')"></span> ▾
       </button>
       <div x-show="open" @click.outside="open = false"

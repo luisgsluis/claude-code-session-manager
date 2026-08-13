@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.2.0] — 2026-08-13
+
+### Added
+- **Selectable UI skins**: Light, Dark (default), Ocean (a muted teal/blue palette in the
+  spirit of Solarized, easier on the eyes over long terminal sessions) and Contrast, picked from a
+  header dropdown (🌙/☀️/🌊/⚡) and remembered in `localStorage`. Colors are CSS custom
+  properties scoped by `data-skin` on `<html>`; every existing Tailwind color utility
+  (`bg-accent`, `text-fg-muted`, etc.) resolves through them, so no class lists needed
+  changing. `docs/skins.md` documents how to add another one.
+- The terminal grid's pane, per-tile selects and ANSI palette are themed too: the Light skin
+  gets its own near-white pane and a readable light ANSI palette instead of a dark rectangle
+  sitting in an otherwise light UI; Dark/Contrast/Ocean share the original dark terminal
+  look, which already reads fine against a dark or black page.
+
+### Fixed
+- The action bar's four buttons ("Nueva sesión rápida", "Nueva sesión avanzada", "Cambiar
+  perfil", "Modo terminal") had three different border/text treatments for what are visually
+  three secondary actions plus one primary one. "Nueva sesión avanzada" now matches the
+  neutral outline style of the other two secondary buttons instead of standing out with an
+  accent-tinted border.
+- The skin-persistence script that applies the saved skin before first paint (avoiding a
+  flash of the wrong one on reload) was inline in `index.html`'s `<head>` and silently
+  blocked by the CSP (`script-src` has no `'unsafe-inline'`) — a saved Light/Ocean/
+  Contrast choice never actually reapplied after a reload. Moved to an external file
+  (`static/js/skin-init.js`), which the CSP's `'self'` already allows.
+
 ## [1.1.1] — 2026-08-13
 
 ### Fixed

@@ -9,6 +9,120 @@
   --transition-speed: 150ms;
 }
 
+/* Skins: each block redefines the same RGB triplets (space-separated, no
+   `rgb()`, so Tailwind's `rgb(var(--x) / <alpha-value>)` colors in
+   tailwind.config.js can apply opacity modifiers like bg-accent/20). Selected
+   by setting data-skin on <html> (see app.js initSkin/setSkin); :root carries
+   the default so an unset/unknown value still renders correctly. */
+:root,
+[data-skin="dark"] {
+  --color-bg: 15 15 26;
+  --color-bg-card: 26 26 46;
+  --color-bg-hover: 37 37 66;
+  --color-fg: 224 224 224;
+  --color-fg-muted: 139 139 158;
+  --color-accent: 108 92 231;
+  --color-accent-hover: 125 111 240;
+  --color-accent-muted: 72 52 212;
+  --color-danger: 231 76 60;
+  --color-danger-hover: 240 98 146;
+  --color-success: 46 213 115;
+  --color-warn: 255 165 2;
+}
+
+/* Light: very light gray background, white cards, grayscale accent (no hue) —
+   status colors (danger/success/warn) keep a muted tint so they stay legible. */
+[data-skin="light"] {
+  --color-bg: 245 245 247;
+  --color-bg-card: 255 255 255;
+  --color-bg-hover: 232 232 236;
+  --color-fg: 28 28 30;
+  --color-fg-muted: 108 108 116;
+  --color-accent: 58 58 60;
+  --color-accent-hover: 40 40 42;
+  --color-accent-muted: 90 90 96;
+  --color-danger: 200 40 30;
+  --color-danger-hover: 220 60 50;
+  --color-success: 30 140 70;
+  --color-warn: 178 110 0;
+}
+
+/* Contrast: true black + amber, max contrast against both the purple-dark
+   default and the white/gray light skin. */
+[data-skin="contrast"] {
+  --color-bg: 0 0 0;
+  --color-bg-card: 17 17 17;
+  --color-bg-hover: 30 30 30;
+  --color-fg: 245 245 245;
+  --color-fg-muted: 165 165 165;
+  --color-accent: 255 176 0;
+  --color-accent-hover: 255 200 74;
+  --color-accent-muted: 204 139 0;
+  --color-danger: 255 59 48;
+  --color-danger-hover: 255 110 100;
+  --color-success: 0 230 118;
+  --color-warn: 255 214 10;
+}
+
+/* "Ocean" skin (data-skin="solarized" — internal id kept from its origin,
+   the UI label is localized as "Ocean"/"Océano"): muted, low-contrast dev
+   palette in the spirit of Ethan Schoonover's Solarized Dark. Added as the
+   4th skin because this app is used for long terminal sessions — Solarized
+   is a well-known choice specifically for reducing eye strain over long
+   stretches, distinct in character from both the vivid purple default and
+   the amber contrast skin. */
+[data-skin="solarized"] {
+  --color-bg: 0 43 54;
+  --color-bg-card: 7 54 66;
+  --color-bg-hover: 13 71 84;
+  --color-fg: 147 161 161;
+  --color-fg-muted: 88 110 117;
+  --color-accent: 38 139 210;
+  --color-accent-hover: 58 160 232;
+  --color-accent-muted: 29 111 168;
+  --color-danger: 220 50 47;
+  --color-danger-hover: 230 82 79;
+  --color-success: 133 153 0;
+  --color-warn: 181 137 0;
+}
+
+/* Neutral gray-* utilities (borders/dividers) aren't part of the color-token
+   system above — they're literal Tailwind grays, tuned for the dark skin.
+   Override the ones this project actually uses (see grep for gray- in
+   static/index.html) so borders don't look wrong on light/contrast skins. */
+[data-skin="light"] .border-gray-600,
+[data-skin="light"] .border-gray-700,
+[data-skin="light"] .border-gray-800,
+[data-skin="light"] .divide-gray-800 > :not([hidden]) ~ :not([hidden]),
+[data-skin="light"] .hover\:border-gray-600:hover,
+[data-skin="light"] .hover\:border-gray-700:hover {
+  border-color: rgb(214 214 219);
+}
+[data-skin="light"] .bg-gray-700 { background-color: rgb(224 224 229); }
+[data-skin="light"] .text-gray-400 { color: rgb(120 120 128); }
+
+[data-skin="contrast"] .border-gray-600,
+[data-skin="contrast"] .border-gray-700,
+[data-skin="contrast"] .border-gray-800,
+[data-skin="contrast"] .divide-gray-800 > :not([hidden]) ~ :not([hidden]),
+[data-skin="contrast"] .hover\:border-gray-600:hover,
+[data-skin="contrast"] .hover\:border-gray-700:hover {
+  border-color: rgb(48 48 48);
+}
+[data-skin="contrast"] .bg-gray-700 { background-color: rgb(40 40 40); }
+[data-skin="contrast"] .text-gray-400 { color: rgb(170 170 170); }
+
+[data-skin="solarized"] .border-gray-600,
+[data-skin="solarized"] .border-gray-700,
+[data-skin="solarized"] .border-gray-800,
+[data-skin="solarized"] .divide-gray-800 > :not([hidden]) ~ :not([hidden]),
+[data-skin="solarized"] .hover\:border-gray-600:hover,
+[data-skin="solarized"] .hover\:border-gray-700:hover {
+  border-color: rgb(42 89 100);
+}
+[data-skin="solarized"] .bg-gray-700 { background-color: rgb(20 74 90); }
+[data-skin="solarized"] .text-gray-400 { color: rgb(101 123 131); }
+
 /* Line clamp utility (Tailwind v3 built-in, but ensure) */
 .line-clamp-3 {
   display: -webkit-box;
@@ -34,7 +148,7 @@
 
 /* Focus visible */
 *:focus-visible {
-  outline: 2px solid #6c5ce7;
+  outline: 2px solid rgb(var(--color-accent));
   outline-offset: 2px;
   border-radius: 4px;
 }

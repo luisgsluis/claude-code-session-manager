@@ -7,6 +7,10 @@ const I18N = {
   es: {
     logout: 'salir',
     refresh: 'Refrescar',
+    skin_dark: 'Oscuro',
+    skin_light: 'Claro',
+    skin_contrast: 'Contraste',
+    skin_solarized: 'Océano',
     new_session: 'Nueva sesión',
     new_quick: 'Nueva sesión rápida',
     new_advanced: 'Nueva sesión avanzada',
@@ -215,6 +219,10 @@ const I18N = {
   en: {
     logout: 'logout',
     refresh: 'Refresh',
+    skin_dark: 'Dark',
+    skin_light: 'Light',
+    skin_contrast: 'Contrast',
+    skin_solarized: 'Ocean',
     new_session: 'New session',
     new_quick: 'Quick session',
     new_advanced: 'Advanced session',
@@ -440,6 +448,7 @@ function ccsmApp() {
 
     // UI state
     lang: 'es',
+    skin: 'dark',
     viewMode: 'list',
     convSearch: '',
     convFilters: { origin: '', from: '', to: '', alive: false },
@@ -476,6 +485,22 @@ function ccsmApp() {
       this.lang = l;
       try { localStorage.setItem('ccsm_lang', l); } catch (e) { /* private mode */ }
     },
+
+    // --- Skin (color theme) ---
+    // skin-init.js (loaded before Alpine, in index.html's <head>) applies
+    // data-skin on <html> synchronously to avoid a flash of the wrong skin.
+    // initSkin() re-applies it (idempotent) and syncs Alpine's own copy so
+    // the settings menu highlights the right option.
+    initSkin() {
+      const saved = localStorage.getItem('ccsm_skin');
+      this.skin = ['light', 'contrast', 'solarized'].includes(saved) ? saved : 'dark';
+      document.documentElement.setAttribute('data-skin', this.skin);
+    },
+    setSkin(s) {
+      this.skin = s;
+      document.documentElement.setAttribute('data-skin', s);
+      try { localStorage.setItem('ccsm_skin', s); } catch (e) { /* private mode */ }
+    },
     t(key, vars) {
       const dict = I18N[this.lang] || I18N.es;
       let s = dict[key] !== undefined ? dict[key] : (I18N.es[key] !== undefined ? I18N.es[key] : key);
@@ -487,6 +512,7 @@ function ccsmApp() {
 
     async init() {
       this.initLang();
+      this.initSkin();
       this.initViewportTrack();
       this.$watch('settings.open', v => this.setBodyLock());
       this.$watch('preview.open', v => this.setBodyLock());

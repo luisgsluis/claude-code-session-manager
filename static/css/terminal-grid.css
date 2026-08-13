@@ -57,10 +57,35 @@
 .bg-warn\/5     { background-color: rgba(255, 165, 2, 0.05); }
 .border-warn\/40 { border-color: rgba(255, 165, 2, 0.4); }
 
-/* --- Terminal pane --- */
+/* --- Terminal pane colors, themed per skin. :root carries the dark default
+   (also used, unmodified, by contrast and solarized — a dark terminal reads
+   fine against a dark or near-black page); [data-skin="light"] gets its own
+   set so the pane isn't a jarring dark rectangle floating in an otherwise
+   light UI. The ANSI palette below follows the same split. --- */
+:root {
+  --term-bg: #0b0b12;
+  --term-fg: #d8d8e0;
+  --term-input-fg: #e0e0e0;
+  --term-placeholder: #8b8b9e;
+  --term-select-bg: #17171f;
+  --term-select-fg: #d8d8e0;
+  --term-select-border: #374151;
+  --term-select-focus-border: #6c9cff;
+}
+[data-skin="light"] {
+  --term-bg: #f7f7f8;
+  --term-fg: #1c1c1e;
+  --term-input-fg: #1c1c1e;
+  --term-placeholder: #6e6e76;
+  --term-select-bg: #ececed;
+  --term-select-fg: #1c1c1e;
+  --term-select-border: #d0d0d5;
+  --term-select-focus-border: #005cc5;
+}
+
 .tgrid-pane {
-  background: #0b0b12;
-  color: #d8d8e0;
+  background: var(--term-bg);
+  color: var(--term-fg);
 }
 
 /* Per-tile prompt input. Explicit styling rather than Tailwind's bg-transparent
@@ -70,7 +95,7 @@
    font, no resize handle. */
 .tgrid-input {
   background: transparent;
-  color: #e0e0e0;
+  color: var(--term-input-fg);
   font-size: 0.75rem;
   line-height: 1.4;
   padding: 0.25rem 0;
@@ -78,7 +103,7 @@
   resize: none;
   height: 1.4em;
 }
-.tgrid-input::placeholder { color: #8b8b9e; }
+.tgrid-input::placeholder { color: var(--term-placeholder); }
 .tgrid-input:focus { outline: none; }
 
 /* Compact mode/model pickers in the tile header row. Fixed narrow width (not
@@ -93,53 +118,131 @@
   width: 3.75rem;
   padding: 0.25rem 0.3rem;
   border-radius: 0.375rem;
-  border: 1px solid #374151;
-  background: #17171f;
-  color: #d8d8e0;
+  border: 1px solid var(--term-select-border);
+  background: var(--term-select-bg);
+  color: var(--term-select-fg);
   font-size: 0.65rem;
   line-height: 1rem;
 }
-.tgrid-select:focus { outline: none; border-color: #6c9cff; }
+.tgrid-select:focus { outline: none; border-color: var(--term-select-focus-border); }
 
-/* --- ANSI palette (rendered by ansiToHtml). Tuned for the dark terminal
-   background above; bright variants are the 90-97 / 100-107 range. --- */
+/* --- ANSI palette (rendered by ansiToHtml), themed per skin via CSS vars —
+   :root has the dark set (also covers contrast/solarized), [data-skin=light]
+   redefines all 32 for legibility against a light pane. Bright variants are
+   the 90-97 / 100-107 range. --- */
 .ansi-bold      { font-weight: 700; }
 .ansi-dim       { opacity: 0.65; }
 .ansi-italic    { font-style: italic; }
 .ansi-underline { text-decoration: underline; }
 
-.ansi-fg-0 { color: #5c5c68; } /* black (lifted so it stays readable) */
-.ansi-fg-1 { color: #ff6b6b; }
-.ansi-fg-2 { color: #2ed573; }
-.ansi-fg-3 { color: #ffa502; }
-.ansi-fg-4 { color: #6c9cff; }
-.ansi-fg-5 { color: #e090e0; }
-.ansi-fg-6 { color: #6cd4ff; }
-.ansi-fg-7 { color: #d8d8e0; }
+:root {
+  --ansi-fg-0: #5c5c68; /* black (lifted so it stays readable) */
+  --ansi-fg-1: #ff6b6b;
+  --ansi-fg-2: #2ed573;
+  --ansi-fg-3: #ffa502;
+  --ansi-fg-4: #6c9cff;
+  --ansi-fg-5: #e090e0;
+  --ansi-fg-6: #6cd4ff;
+  --ansi-fg-7: #d8d8e0;
+  --ansi-fg-8: #7a7a88;
+  --ansi-fg-9: #ff8787;
+  --ansi-fg-10: #6ef2a0;
+  --ansi-fg-11: #ffc75f;
+  --ansi-fg-12: #8fb8ff;
+  --ansi-fg-13: #f0b0f0;
+  --ansi-fg-14: #9ce6ff;
+  --ansi-fg-15: #ffffff;
 
-.ansi-fg-8  { color: #7a7a88; }
-.ansi-fg-9  { color: #ff8787; }
-.ansi-fg-10 { color: #6ef2a0; }
-.ansi-fg-11 { color: #ffc75f; }
-.ansi-fg-12 { color: #8fb8ff; }
-.ansi-fg-13 { color: #f0b0f0; }
-.ansi-fg-14 { color: #9ce6ff; }
-.ansi-fg-15 { color: #ffffff; }
+  --ansi-bg-0: #1a1a2e;
+  --ansi-bg-1: #7a2020;
+  --ansi-bg-2: #1e6b3a;
+  --ansi-bg-3: #7a5a10;
+  --ansi-bg-4: #24407a;
+  --ansi-bg-5: #6b2a6b;
+  --ansi-bg-6: #1f5f7a;
+  --ansi-bg-7: #4a4a56;
+  --ansi-bg-8: #2a2a3a;
+  --ansi-bg-9: #9c3030;
+  --ansi-bg-10: #2a8a4c;
+  --ansi-bg-11: #9c7420;
+  --ansi-bg-12: #33559c;
+  --ansi-bg-13: #8a388a;
+  --ansi-bg-14: #2a7a9c;
+  --ansi-bg-15: #6a6a78;
+}
 
-.ansi-bg-0 { background-color: #1a1a2e; }
-.ansi-bg-1 { background-color: #7a2020; }
-.ansi-bg-2 { background-color: #1e6b3a; }
-.ansi-bg-3 { background-color: #7a5a10; }
-.ansi-bg-4 { background-color: #24407a; }
-.ansi-bg-5 { background-color: #6b2a6b; }
-.ansi-bg-6 { background-color: #1f5f7a; }
-.ansi-bg-7 { background-color: #4a4a56; }
+/* Light: darker, more saturated foregrounds (readable on a near-white pane)
+   and pale tinted backgrounds instead of the dark set's deep ones. "Bright
+   white" (15) maps to near-black rather than literal white, which would be
+   invisible on a light pane — content relying on it for emphasis (common in
+   terminal UIs designed for dark backgrounds) still reads as the strongest
+   foreground here, just inverted. */
+[data-skin="light"] {
+  --ansi-fg-0: #24292e;
+  --ansi-fg-1: #d73a49;
+  --ansi-fg-2: #22863a;
+  --ansi-fg-3: #b08800;
+  --ansi-fg-4: #005cc5;
+  --ansi-fg-5: #5a32a3;
+  --ansi-fg-6: #0598bc;
+  --ansi-fg-7: #6a737d;
+  --ansi-fg-8: #959da5;
+  --ansi-fg-9: #cb2431;
+  --ansi-fg-10: #28a745;
+  --ansi-fg-11: #dbab09;
+  --ansi-fg-12: #2188ff;
+  --ansi-fg-13: #8a63d2;
+  --ansi-fg-14: #3192aa;
+  --ansi-fg-15: #1c1c1e;
 
-.ansi-bg-8  { background-color: #2a2a3a; }
-.ansi-bg-9  { background-color: #9c3030; }
-.ansi-bg-10 { background-color: #2a8a4c; }
-.ansi-bg-11 { background-color: #9c7420; }
-.ansi-bg-12 { background-color: #33559c; }
-.ansi-bg-13 { background-color: #8a388a; }
-.ansi-bg-14 { background-color: #2a7a9c; }
-.ansi-bg-15 { background-color: #6a6a78; }
+  --ansi-bg-0: #ececee;
+  --ansi-bg-1: #fbe4e4;
+  --ansi-bg-2: #e3f3e3;
+  --ansi-bg-3: #faf0d0;
+  --ansi-bg-4: #e1edfa;
+  --ansi-bg-5: #f0e6f7;
+  --ansi-bg-6: #dff4f8;
+  --ansi-bg-7: #eceff1;
+  --ansi-bg-8: #e2e2e5;
+  --ansi-bg-9: #f8d3d3;
+  --ansi-bg-10: #d2ecd2;
+  --ansi-bg-11: #f7e6b8;
+  --ansi-bg-12: #d3e6fb;
+  --ansi-bg-13: #e8d8f5;
+  --ansi-bg-14: #cdeef4;
+  --ansi-bg-15: #f2f2f3;
+}
+
+.ansi-fg-0 { color: var(--ansi-fg-0); }
+.ansi-fg-1 { color: var(--ansi-fg-1); }
+.ansi-fg-2 { color: var(--ansi-fg-2); }
+.ansi-fg-3 { color: var(--ansi-fg-3); }
+.ansi-fg-4 { color: var(--ansi-fg-4); }
+.ansi-fg-5 { color: var(--ansi-fg-5); }
+.ansi-fg-6 { color: var(--ansi-fg-6); }
+.ansi-fg-7 { color: var(--ansi-fg-7); }
+.ansi-fg-8  { color: var(--ansi-fg-8); }
+.ansi-fg-9  { color: var(--ansi-fg-9); }
+.ansi-fg-10 { color: var(--ansi-fg-10); }
+.ansi-fg-11 { color: var(--ansi-fg-11); }
+.ansi-fg-12 { color: var(--ansi-fg-12); }
+.ansi-fg-13 { color: var(--ansi-fg-13); }
+.ansi-fg-14 { color: var(--ansi-fg-14); }
+.ansi-fg-15 { color: var(--ansi-fg-15); }
+
+.ansi-bg-0 { background-color: var(--ansi-bg-0); }
+.ansi-bg-1 { background-color: var(--ansi-bg-1); }
+.ansi-bg-2 { background-color: var(--ansi-bg-2); }
+.ansi-bg-3 { background-color: var(--ansi-bg-3); }
+.ansi-bg-4 { background-color: var(--ansi-bg-4); }
+.ansi-bg-5 { background-color: var(--ansi-bg-5); }
+.ansi-bg-6 { background-color: var(--ansi-bg-6); }
+.ansi-bg-7 { background-color: var(--ansi-bg-7); }
+.ansi-bg-8  { background-color: var(--ansi-bg-8); }
+.ansi-bg-9  { background-color: var(--ansi-bg-9); }
+.ansi-bg-10 { background-color: var(--ansi-bg-10); }
+.ansi-bg-11 { background-color: var(--ansi-bg-11); }
+.ansi-bg-12 { background-color: var(--ansi-bg-12); }
+.ansi-bg-13 { background-color: var(--ansi-bg-13); }
+.ansi-bg-14 { background-color: var(--ansi-bg-14); }
+.ansi-bg-15 { background-color: var(--ansi-bg-15); }

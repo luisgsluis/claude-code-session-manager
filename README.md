@@ -27,6 +27,8 @@ CCSM is a lightweight web app that turns any Linux box you control — a homelab
 - ⚙️ **Editable settings**: the ☰ menu edits hot-reloadable settings in place (no restart), persisted atomically to `config.yaml`; restart-only settings are left untouched
 - 👥 **User management**: add / delete users and change passwords from the UI — min 8-char passwords, bcrypt-hashed, hashes never exposed
 - 🔧 **Active settings viewer**: see the CURRENTLY APPLIED `settings.json` (distinct from the saved profile files) with syntax highlighting
+- 🎨 **Selectable skins** (Light, Dark, Ocean, Contrast) via a header dropdown, remembered
+  in localStorage — see [`docs/skins.md`](docs/skins.md) to add your own
 - 🌐 **Multi-language UI** (ES/EN via a 🌐 dropdown), selectable per user and remembered in localStorage
 - 📱 **Responsive UI**: works on desktop and mobile, with a future mobile-native skin planned
 - 🔒 **Security in depth**: login form + LAN bypass + Unix socket agent + restricted tmux/claude execution
@@ -35,7 +37,7 @@ CCSM is a lightweight web app that turns any Linux box you control — a homelab
 
 ## Requirements
 
-**Stack**: Go + Alpine.js + Tailwind CSS | **Image**: ~15 MB (Alpine) | **RAM**: ~10-15 MB | **Version**: 1.1.1
+**Stack**: Go + Alpine.js + Tailwind CSS | **Image**: ~15 MB (Alpine) | **RAM**: ~10-15 MB | **Version**: 1.2.0
 
 - **Host**: Linux with `tmux` and `claude` (Claude Code CLI) installed
 - **Container mode**: Docker or Podman
@@ -497,6 +499,8 @@ go build ./...            # build the web server and agent
 go test ./...             # unit tests
 cd e2e && npx playwright test   # end-to-end tests (stubbed tmux/claude)
 ```
+
+Adding a UI skin: [`docs/skins.md`](docs/skins.md).
 
 ## Looking for Contributors
 
