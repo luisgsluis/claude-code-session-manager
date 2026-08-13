@@ -1056,7 +1056,7 @@ function ccsmApp() {
     tileText(name) {
       const tile = this.grid.tiles[name];
       if (!tile) return '';
-      const live = ansiToHtml(tile.content || '');
+      const live = ansiToHtml(stripInputBoxChrome(tile.content || ''));
       if (!tile.termHist) return live;
       return escapeHtml(tile.termHist) + '\n\n' + escapeHtml(this.t('live_screen_sep')) + '\n' + live;
     },
@@ -2008,6 +2008,34 @@ const ANSI_SGR = /\x1b\[([0-9;]*)m/g;
 // Every other CSI sequence (cursor moves, clears) carries no colour and would
 // otherwise show up as literal junk; dropped, like stripANSI does server-side.
 const ANSI_OTHER_CSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+
+function stripAnsiForMatch(line) {
+  return line.replace(ANSI_OSC, '').replace(ANSI_SGR, '').replace(ANSI_OTHER_CSI, '');
+}
+
+const BOX_RULE_RE = /^─+$/;
+
+// Claude Code's own input box (a full-width rule, the "❯" prompt line,
+// another rule) is redundant in a grid tile: each tile already has its own
+// input row below the pane for typing, so showing the native box too just
+// wastes vertical space. Strip that 3-line block wherever it appears.
+function stripInputBoxChrome(raw) {
+  const lines = raw.split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (
+      i + 2 < lines.length &&
+      BOX_RULE_RE.test(stripAnsiForMatch(lines[i]).trim()) &&
+      stripAnsiForMatch(lines[i + 1]).trim().startsWith('❯') &&
+      BOX_RULE_RE.test(stripAnsiForMatch(lines[i + 2]).trim())
+    ) {
+      i += 2;
+      continue;
+    }
+    out.push(lines[i]);
+  }
+  return out.join('\n');
+}
 
 // xterm's standard 256-colour palette, needed for 38;5;N / 48;5;N sequences:
 // 0-15 the basic/bright 16, 16-231 a 6x6x6 colour cube, 232-255 a grey ramp.

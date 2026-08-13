@@ -2,14 +2,14 @@
 
 **Run [Claude Code](https://claude.ai/code) on your own server, drive it from anywhere.**
 
-CCSM is a lightweight web app that turns any Linux box you control — a homelab server, a VPS, your workstation — into a personal Claude Code hub. Sessions run in `tmux` on that machine; you create, resume, and chat with them from a browser on your phone, tablet, or laptop.
+CCSM is a lightweight web app that turns any Linux box you control — a homelab server, a VPS, your workstation — into a personal Claude Code hub. Sessions run in `tmux` on that machine; you create, resume, and chat with them from a browser on your phone, tablet, or laptop, even if using your own API connection instead of your claude.ai suscription.
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ## Why CCSM
 
 - 🖥️ **Remote, effortless session management via `tmux`** — every session is a real `tmux` session on your own server. Close the laptop, lose the connection, come back tomorrow: the session is still there, exactly where you left it, manageable from any device.
-- 📱 **Claude Code Web & App — without a personal claude.ai account** — Remote Control lets the official Claude mobile app and claude.ai/code attach live to sessions that run on **your own API key** (Anthropic or an Anthropic-compatible provider), not a logged-in personal subscription. CCSM's two-phase bootstrap keeps that mobile bridge alive even across profile switches.
+- 📱 **Claude Code Web & App — using your compatible API key while synchronizing wuth you personal claude.ai account** — Remote Control lets the official Claude mobile app and claude.ai/code attach live to sessions that run on **your own API key** (Anthropic or an Anthropic-compatible provider), not a logged-in personal subscription. CCSM's two-phase bootstrap keeps that mobile bridge alive even across profile switches.
 - ⚙️ **Advanced profile management** — catalog, preview, and hot-swap full `settings.json` profiles (different models, providers, keys) per session, applied atomically with JSON pre-validation so a bad profile can never brick `settings.json`.
 - ♻️ **Session recovery on the server** — every conversation is a real Claude Code transcript stored on the host; browse, search, and resume any past session from any device, even after a crash or a reboot.
 - 💬🖥️ **Chat mode and Terminal mode** — a clean chat view for quick back-and-forth with live SSE updates, or drop into the raw terminal pane when you need the full TUI — approvals, dialogs, everything.
@@ -35,7 +35,7 @@ CCSM is a lightweight web app that turns any Linux box you control — a homelab
 
 ## Requirements
 
-**Stack**: Go + Alpine.js + Tailwind CSS | **Image**: ~15 MB (Alpine) | **RAM**: ~10-15 MB | **Version**: 1.0.0
+**Stack**: Go + Alpine.js + Tailwind CSS | **Image**: ~15 MB (Alpine) | **RAM**: ~10-15 MB | **Version**: 1.1.0
 
 - **Host**: Linux with `tmux` and `claude` (Claude Code CLI) installed
 - **Container mode**: Docker or Podman
@@ -294,11 +294,22 @@ used by the container healthcheck.
 
 **Sessions**
 - `GET /api/sessions` — list sessions
-- `POST /api/sessions/new` — start a new session (optionally with a profile)
+- `GET /api/projects` — launch targets for a new session ("principal" = home, plus any dir
+  under home with a `CLAUDE.md`)
+- `POST /api/sessions/new` — start a new session (optionally with a profile or a project)
 - `POST /api/sessions/resume` — resume a past conversation
 - `DELETE /api/sessions/{name}` — kill a session
 - `POST /api/sessions/{name}/rename` — rename the tmux session; body `{"new_name": "..."}`
 - `POST /api/sessions/{name}/claude-name` — set the Claude conversation title; body `{"title": "..."}`. Implemented by typing `/rename <title>` + Enter into the pane, so the title may include punctuation (including `!`).
+- `GET /api/sessions/{name}/chat` — recent conversation turns plus live status (mode, model, waiting/approval state)
+- `GET /api/sessions/{name}/chat/stream` — SSE stream of chat updates
+- `GET /api/sessions/{name}/stream` — SSE stream of the raw terminal pane (what the Terminal
+  tab and the terminal grid render); `?color=1` preserves ANSI colour instead of the default
+  plain text
+- `POST /api/sessions/{name}/send` — send a chat message (`{"text": "..."}`), a special key
+  (`{"keys": "..."}`, e.g. `enter`/`escape`/`ctrl-o`), or a mode switch (`{"mode": "..."}`,
+  driven by cycling Claude Code's real Shift+Tab wheel)
+- `POST /api/sessions/{name}/rc` — force a fresh Remote Control bridge re-registration
 
 **Profiles & conversations**
 - `GET /api/profiles` — list profiles
@@ -486,6 +497,12 @@ go build ./...            # build the web server and agent
 go test ./...             # unit tests
 cd e2e && npx playwright test   # end-to-end tests (stubbed tmux/claude)
 ```
+
+## Contributing
+
+Issues and PRs are welcome — bug reports, feature ideas, or fixes. For anything non-trivial,
+open an issue first so we can align on approach before you put in the work. See `ROADMAP.md`
+for what's deliberately deferred.
 
 ## License
 

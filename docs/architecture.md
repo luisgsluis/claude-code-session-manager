@@ -86,6 +86,14 @@ POST /api/sessions/resume                    resume a conversation (UUID)
 DELETE /api/sessions/{name}                  kill a tmux session
 POST /api/sessions/{name}/rename             rename the tmux session; body {"new_name":"..."}
 POST /api/sessions/{name}/claude-name        set the Claude conversation title; body {"title":"..."}
+GET  /api/sessions/{name}/chat               recent turns + live status (mode, model, waiting)
+GET  /api/sessions/{name}/chat/stream        SSE stream of chat updates
+GET  /api/sessions/{name}/stream             SSE stream of the raw terminal pane; ?color=1
+                                             preserves ANSI colour (tmux capture-pane -e)
+                                             instead of the server-stripped default
+POST /api/sessions/{name}/send               body {"text"} chat msg, {"keys"} special key
+                                             (tmuxKeyMap whitelist), or {"mode"} mode switch
+POST /api/sessions/{name}/rc                 force a fresh Remote Control bridge re-registration
 GET  /api/profiles                           list profiles
 GET  /api/profiles/{name}                    profile content viewer
 POST /api/profiles/apply                     apply a profile to settings.json
@@ -208,6 +216,20 @@ Status values (detected from the per-process session file, with the pane as fall
 
 The name `0` carries no special meaning — the old reserved-name guard for session 0
 was removed.
+
+### Mode Switching
+
+`/mode` does not exist in Claude Code, so a mode switch (`POST /send` with `{"mode":...}`)
+is driven entirely by cycling the real Shift+Tab wheel — never a slash command. The wheel
+order is account-dependent (`auto`/`bypassPermissions` only appear when enabled), so it's
+discovered once per profile by walking a live, idle session and reading the mode badge after
+each press until the sequence repeats; `GET /chat` exposes the discovered wheel as `modes`.
+`paneMode` reads the badge from the pane's footer, checking the last few non-blank lines (a
+long footer can wrap, pushing the badge above the very last line). When the current mode
+can't be read, `sessionMode` presses Shift+Tab and re-checks the badge after each press
+until it lands on the target, bounded by the wheel length — see `internal/host/host.go` for
+the full mechanics and CCSM's own `CLAUDE.md` for the account-specific gotchas observed in
+production.
 
 ### Conversation Search
 

@@ -1,26 +1,35 @@
 # Changelog
 
-## [Unreleased]
+## [1.1.0] — 2026-08-13
 
 ### Added
-- **Modo terminal**: full-screen grid tiling every active session's raw
-  terminal pane at once, with minimize/restore, tmux-style zoom, per-tile interactive
-  input, and rendered ANSI colour (16/256/truecolor). See `ROADMAP.md` for the design
-  notes. Backend surface: an opt-in `color=1` query param on `GET
-  /api/sessions/{name}/stream`, and a `ctrl-o` entry in the session-send key whitelist.
+- **Terminal mode** ("Modo terminal" in the UI): full-screen grid tiling every active
+  session's raw terminal pane at once, with minimize/restore, tmux-style zoom, per-tile
+  interactive input, and rendered ANSI colour (16/256/truecolor). Backend surface: an
+  opt-in `color=1` query param on `GET /api/sessions/{name}/stream`, and a `ctrl-o` entry
+  in the session-send key whitelist.
 - Each grid tile now has its own compact mode/model selectors in the header row
   (no extra line), mirroring the single-session view's controls.
+- Grid tiles strip Claude Code's own input box (the rule/❯/rule chrome) from
+  the rendered pane: each tile already has its own input row below, so the
+  native box was redundant.
+
+### Changed
+- Grid tile header row dropped the "open in single-session view" (👁️) button —
+  the tile is already the interactive view, so it was a redundant hop.
+- Reconnect status text shortened to "Reconnecting…" (was "Connection lost,
+  reconnecting…").
 
 ### Fixed
 - **Mode badge/switch reliability**: `paneMode` only checked the pane's single
-  last non-blank line; on a long footer that wraps, the trailing `/rc` hint lands
-  on its own line and pushed the real mode badge out of view, making the mode
-  switch button and the chat view's persistent mode indicator unreliable
-  ("la mayoría de las veces no selecciona el modo requerido"). It now checks the
-  last few non-blank lines. `sessionMode` also no longer sends `/plan` as a
-  slash command under any circumstance (even when the badge is unreadable): it
-  reaches every mode, including plan, purely by cycling the real Shift+Tab wheel,
-  re-checking the badge after each press.
+  last non-blank line; on a long footer that wraps, the trailing `/rc` hint
+  lands on its own line and pushed the real mode badge out of view, making
+  both the mode switch and the chat view's persistent mode indicator
+  unreliable. It now checks the last few non-blank lines. `sessionMode` also
+  no longer sends `/plan` as a slash command under any circumstance (even
+  when the badge is unreadable): it reaches every mode, including plan,
+  purely by cycling the real Shift+Tab wheel, re-checking the badge after
+  each press.
 
 ## [1.0.0] — 2026-08-12
 
