@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.1] — 2026-08-13
+
+### Fixed
+- e2e: the terminal-grid spec located tiles via `.tgrid > div`, which matched
+  a `.tgrid-row` (possibly holding several tiles) after the row-packing
+  layout change, not a single tile — CI caught this as a strict-mode
+  violation. Each tile now carries its own `.tgrid-tile` class for the spec
+  to target. No runtime behaviour change.
+
 ## [1.1.0] — 2026-08-13
 
 ### Added

@@ -35,7 +35,7 @@ CCSM is a lightweight web app that turns any Linux box you control — a homelab
 
 ## Requirements
 
-**Stack**: Go + Alpine.js + Tailwind CSS | **Image**: ~15 MB (Alpine) | **RAM**: ~10-15 MB | **Version**: 1.1.0
+**Stack**: Go + Alpine.js + Tailwind CSS | **Image**: ~15 MB (Alpine) | **RAM**: ~10-15 MB | **Version**: 1.1.1
 
 - **Host**: Linux with `tmux` and `claude` (Claude Code CLI) installed
 - **Container mode**: Docker or Podman
