@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Modo terminal**: full-screen grid tiling every active session's raw
+  terminal pane at once, with minimize/restore, tmux-style zoom, per-tile interactive
+  input, and rendered ANSI colour (16/256/truecolor). See `ROADMAP.md` for the design
+  notes. Backend surface: an opt-in `color=1` query param on `GET
+  /api/sessions/{name}/stream`, and a `ctrl-o` entry in the session-send key whitelist.
+- Each grid tile now has its own compact mode/model selectors in the header row
+  (no extra line), mirroring the single-session view's controls.
+
+### Fixed
+- **Mode badge/switch reliability**: `paneMode` only checked the pane's single
+  last non-blank line; on a long footer that wraps, the trailing `/rc` hint lands
+  on its own line and pushed the real mode badge out of view, making the mode
+  switch button and the chat view's persistent mode indicator unreliable
+  ("la mayoría de las veces no selecciona el modo requerido"). It now checks the
+  last few non-blank lines. `sessionMode` also no longer sends `/plan` as a
+  slash command under any circumstance (even when the badge is unreadable): it
+  reaches every mode, including plan, purely by cycling the real Shift+Tab wheel,
+  re-checking the badge after each press.
+
 ## [1.0.0] — 2026-08-12
 
 First stable release.

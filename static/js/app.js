@@ -1,3 +1,7 @@
+// Watcher events that mean a session's approval/choice state may have moved,
+// so an open terminal-grid tile for it should refetch its metadata.
+const GRID_REFRESH_ACTIONS = new Set(['turn_complete', 'session_waiting', 'session_choice']);
+
 // Translations for the CCSM UI. es is the default; en is the alternative.
 const I18N = {
   es: {
@@ -161,7 +165,17 @@ const I18N = {
     live_view: 'Ver sesi\u00f3n en vivo',
     live_title: 'Sesi\u00f3n {0} en vivo',
     live_closed: 'Sesi\u00f3n cerrada o desconectada.',
-    live_reconnecting: 'Conexi\u00f3n perdida, reconectando\u2026',
+    live_reconnecting: 'Reconectando\u2026',
+    term_grid: 'Modo terminal',
+    term_grid_title: 'Modo terminal ({0})',
+    term_grid_empty: 'Ninguna sesión que mostrar.',
+    term_grid_narrow: 'La vista en mosaico necesita una pantalla m\u00e1s ancha. Abre cada sesi\u00f3n por separado desde la lista.',
+    term_tile_minimize: 'Minimizar',
+    term_tile_restore: 'Restaurar',
+    term_tile_zoom: 'Pantalla completa',
+    term_tile_unzoom: 'Salir de pantalla completa',
+    term_tile_output: 'Contraer/expandir salida detallada (Ctrl+O)',
+    term_tile_prompt: 'Escribe y pulsa Enter\u2026',
     live_tab_chat: 'Chat',
     live_tab_term: 'Terminal',
     live_scroll_up: 'Subir',
@@ -359,7 +373,17 @@ const I18N = {
     live_view: 'View session live',
     live_title: 'Session {0} live',
     live_closed: 'Session closed or disconnected.',
-    live_reconnecting: 'Connection lost, reconnecting…',
+    live_reconnecting: 'Reconnecting…',
+    term_grid: 'Terminal mode',
+    term_grid_title: 'Terminal mode ({0})',
+    term_grid_empty: 'No sessions to show.',
+    term_grid_narrow: 'The tiled view needs a wider screen. Open each session individually from the list.',
+    term_tile_minimize: 'Minimize',
+    term_tile_restore: 'Restore',
+    term_tile_zoom: 'Full screen',
+    term_tile_unzoom: 'Exit full screen',
+    term_tile_output: 'Collapse/expand detailed output (Ctrl+O)',
+    term_tile_prompt: 'Type and press Enter…',
     live_tab_chat: 'Chat',
     live_tab_term: 'Terminal',
     live_scroll_up: 'Scroll up',
@@ -431,6 +455,10 @@ function ccsmApp() {
     metrics: { open: false, loading: false, data: null, model: '' },
     notify: { supported: false, permission: 'default', muted: false, es: null },
     live: { open: false, name: '', view: 'chat', content: '', status: '', chatStatus: '', es: null, ces: null, timer: null, msgs: [], termHist: '', meta: null, input: '', sending: false, elapsed: '', models: [], maxH: null },
+    // Terminal grid: tiles keyed by session name (the same stable identity the
+    // session list uses), plus a single `zoomed` name — only one tile can be
+    // zoomed at a time.
+    grid: { open: false, zoomed: null, minimized: {}, tiles: {} },
     rename: { open: false, session: '', tmuxName: '', claudeName: '' },
     profViewer: { open: false, name: '', html: '' },
     toast: { show: false, message: '', type: 'success' },
@@ -465,6 +493,7 @@ function ccsmApp() {
       this.$watch('rename.open', v => this.setBodyLock());
       this.$watch('profViewer.open', v => this.setBodyLock());
       this.$watch('userModal.open', v => this.setBodyLock());
+      this.$watch('grid.open', v => this.setBodyLock());
       await this.checkAuth();
       if (this.authenticated) {
         this.showLogin = false;
@@ -475,7 +504,7 @@ function ccsmApp() {
 
     setBodyLock() {
       document.body.style.overflow =
-        (this.settings.open || this.preview.open || this.rename.open || this.profViewer.open || this.userModal.open) ? 'hidden' : '';
+        (this.settings.open || this.preview.open || this.rename.open || this.profViewer.open || this.userModal.open || this.grid.open) ? 'hidden' : '';
     },
 
     // Follows the visualViewport: when the mobile keyboard opens/closes, limit
@@ -605,6 +634,7 @@ function ccsmApp() {
         this.sessions.error = e.message;
       }
       this.sessions.loading = false;
+      if (this.grid.open) this.syncGridTiles();
     },
 
     async loadConversations(page = 1) {
@@ -746,7 +776,7 @@ function ccsmApp() {
     },
 
     // Changes the session mode. /mode does not exist in Claude Code (2.1.227):
-    // the host resolves it with /plan + the Shift+Tab wheel, so we send the
+    // the host resolves it by cycling the real Shift+Tab wheel, so we send the
     // mode as a structured {mode} request, not as chat text.
     async setMode(mode) {
       if (!mode) return;
@@ -935,13 +965,14 @@ function ccsmApp() {
       this.live.sending = false;
     },
 
-    async sendChatText(text) {
-      if (!text || !text.trim()) return false;
+    // postSessionSend is the single POST /send code path, shared by the live
+    // modal and the terminal grid tiles so both behave identically.
+    async postSessionSend(name, body) {
       try {
-        const resp = await fetch('/api/sessions/' + encodeURIComponent(this.live.name) + '/send', {
+        const resp = await fetch('/api/sessions/' + encodeURIComponent(name) + '/send', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: text.trim() }),
+          body: JSON.stringify(body),
         });
         if (!resp.ok) {
           const b = await resp.json().catch(() => ({}));
@@ -955,26 +986,240 @@ function ccsmApp() {
       }
     },
 
+    async sendChatText(text) {
+      if (!text || !text.trim()) return false;
+      return this.postSessionSend(this.live.name, { text: text.trim() });
+    },
+
     async sendKey(key) {
-      try {
-        const resp = await fetch('/api/sessions/' + encodeURIComponent(this.live.name) + '/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ keys: key }),
-        });
-        if (!resp.ok) {
-          const b = await resp.json().catch(() => ({}));
-          this.toastError((b && b.error) || this.t('chat_err'));
-        }
-      } catch (e) {
-        this.toastError(this.t('chat_err'));
-      }
+      await this.postSessionSend(this.live.name, { keys: key });
     },
 
     closeLive() {
       this.closeTermStream();
       this.closeChatStream();
       this.live.open = false;
+    },
+
+    // --- Terminal grid: every active session tiled at once ---
+    // Each tile is the same raw pane stream the single-session Terminal tab
+    // uses (so reasoning and internal output show up, unlike the chat view),
+    // asked for with colour. Metadata (approval / choice / mode) is fetched
+    // reactively off the shared /api/events stream rather than opening a
+    // second persistent connection per tile.
+
+    async openTermGrid() {
+      this.grid.open = true;
+      this.grid.zoomed = null;
+      this.grid.minimized = {};
+      if (!this.live.models.length) this.loadModels();
+      await this.loadSessions();
+      this.syncGridTiles();
+      // While the grid is open a new or dead session should show up quickly;
+      // the usual 30s list poll would leave a stale tile on screen too long.
+      if (this.pollInterval) clearInterval(this.pollInterval);
+      this.pollInterval = setInterval(() => this.loadSessions(), 5000);
+    },
+
+    closeTermGrid() {
+      Object.keys(this.grid.tiles).forEach(name => this.closeGridTile(name));
+      this.grid.open = false;
+      this.grid.zoomed = null;
+      this.grid.minimized = {};
+      if (this.pollInterval) clearInterval(this.pollInterval);
+      this.pollInterval = setInterval(() => this.loadSessions(), 30000);
+    },
+
+    // syncGridTiles reconciles the tiles against the live session list: new
+    // sessions get a tile, vanished ones lose theirs, the rest are left alone
+    // so their streams are never needlessly restarted.
+    syncGridTiles() {
+      const live = new Set(this.sessions.items.map(s => s.name));
+      live.forEach(name => { if (!this.grid.tiles[name]) this.openGridTile(name); });
+      Object.keys(this.grid.tiles).forEach(name => {
+        if (!live.has(name)) this.closeGridTile(name);
+      });
+    },
+
+    openGridTile(name) {
+      this.grid.tiles[name] = {
+        name, content: '', status: '', es: null, termHist: '',
+        meta: null, input: '', sending: false,
+      };
+      this.startTileStream(name);
+      this.fetchTileMeta(name);
+    },
+
+    // tileText mirrors the single-session termText getter: the /chat-derived
+    // history (termHist) so there's something to scroll up to, then a
+    // separator, then the live (optionally coloured) pane screen.
+    tileText(name) {
+      const tile = this.grid.tiles[name];
+      if (!tile) return '';
+      const live = ansiToHtml(tile.content || '');
+      if (!tile.termHist) return live;
+      return escapeHtml(tile.termHist) + '\n\n' + escapeHtml(this.t('live_screen_sep')) + '\n' + live;
+    },
+
+    closeGridTile(name) {
+      this.stopTileStream(name);
+      delete this.grid.minimized[name];
+      if (this.grid.zoomed === name) this.grid.zoomed = null;
+      delete this.grid.tiles[name];
+    },
+
+    startTileStream(name) {
+      const tile = this.grid.tiles[name];
+      if (!tile) return;
+      const es = new EventSource('/api/sessions/' + encodeURIComponent(name) + '/stream?color=1');
+      tile.es = es;
+      es.onopen = () => { tile.status = ''; };
+      es.onmessage = (ev) => {
+        const el = document.getElementById('tile-pane-' + name);
+        const stick = el ? this.atBottom(el) : true;
+        tile.content = ev.data.replace(/\\n/g, '\n');
+        tile.status = '';
+        this.$nextTick(() => { if (stick && el) el.scrollTop = el.scrollHeight; });
+      };
+      // Don't close() on error: the browser reconnects on its own, and closing
+      // here would kill that retry. Same reasoning as startTermStream.
+      es.onerror = () => { tile.status = this.t('live_reconnecting'); };
+    },
+
+    stopTileStream(name) {
+      const tile = this.grid.tiles[name];
+      if (tile && tile.es) { tile.es.close(); tile.es = null; }
+    },
+
+    // fetchTileMeta pulls the approval/choice/mode state for one tile. Called
+    // when the tile opens and whenever /api/events reports that session moved.
+    async fetchTileMeta(name) {
+      const tile = this.grid.tiles[name];
+      if (!tile) return;
+      try {
+        const resp = await fetch('/api/sessions/' + encodeURIComponent(name) + '/chat');
+        if (!resp.ok) return;
+        const d = await resp.json();
+        const t = this.grid.tiles[name];
+        if (!t) return; // tile closed while in flight
+        t.meta = d;
+        // Claude Code draws its TUI on the alternate screen, so tmux's
+        // scrollback for that pane is just the current screen — there is
+        // nothing to scroll up to (same reasoning as the single-session
+        // Terminal tab's termHist). Reuse the /chat messages already fetched
+        // above for the approval/choice state as the "history" text, instead
+        // of opening a second stream just for this.
+        const msgs = (d.messages || []).map(m => String(m.content || '').trim() ? (m.role === 'user' ? '❯ ' : '') + String(m.content).trim() : '');
+        t.termHist = msgs.filter(Boolean).join('\n\n');
+        const el = document.getElementById('tile-pane-' + name);
+        if (el && this.atBottom(el)) this.$nextTick(() => { el.scrollTop = el.scrollHeight; });
+      } catch (e) { /* transient; the next event retries */ }
+    },
+
+    tileRcConnected(name) {
+      const s = this.sessions.items.find(x => x.name === name);
+      return !!s && s.status === 'rc_connected';
+    },
+
+    tileTask(name) {
+      const s = this.sessions.items.find(x => x.name === name);
+      return (s && s.task) || '';
+    },
+
+    // Mirrors modeOptions(): once the host has calibrated that session's real
+    // Shift+Tab wheel it's in tile.meta.modes; before that, the standard four.
+    tileModeOptions(name) {
+      const tile = this.grid.tiles[name];
+      const w = tile && tile.meta && tile.meta.modes;
+      if (w && w.length) return w;
+      return ['auto', 'plan', 'accept-edits', 'manual'];
+    },
+
+    async setTileMode(name, mode) {
+      if (!mode) return;
+      if (await this.postSessionSend(name, { mode })) {
+        this.toastSuccess(this.t('mode_sent', [mode]));
+        this.fetchTileMeta(name);
+      }
+    },
+
+    async setTileModel(name, model) {
+      if (!model) return;
+      if (await this.postSessionSend(name, { text: '/model ' + model })) {
+        this.toastSuccess(this.t('model_sent', [model]));
+        this.fetchTileMeta(name);
+      }
+    },
+
+    visibleTileNames() {
+      return Object.keys(this.grid.tiles).filter(n => !this.grid.minimized[n]);
+    },
+
+    minimizedTileNames() {
+      return Object.keys(this.grid.minimized);
+    },
+
+    minimizeTile(name) {
+      this.grid.minimized[name] = true;
+      if (this.grid.zoomed === name) this.grid.zoomed = null;
+    },
+
+    restoreTile(name) {
+      delete this.grid.minimized[name];
+    },
+
+    // Only one tile can be zoomed, so this is a single field rather than a
+    // per-tile flag: the "two zoomed at once" state cannot be represented.
+    toggleTileZoom(name) {
+      if (this.grid.minimized[name]) return;
+      this.grid.zoomed = this.grid.zoomed === name ? null : name;
+    },
+
+    // tileRows packs the visible tiles into near-square rows so an incomplete
+    // last row never leaves an empty gap: each row is its own flex line where
+    // every tile gets flex:1, so a short row's tiles simply grow to fill it
+    // (a lone tile in the last row takes the full row width automatically —
+    // no per-tile width math needed). Row sizes differ by at most one tile,
+    // e.g. 3 tiles -> [2,1] (not a 2x2 grid with a dead cell), 5 -> [3,2],
+    // 7 -> [3,2,2]. Recomputed on every render, driven only by tile count, so
+    // minimizing a tile immediately reflows the rest into fewer/larger rows.
+    tileRows() {
+      const names = this.visibleTileNames();
+      const n = names.length;
+      if (n === 0) return [];
+      const cols = Math.ceil(Math.sqrt(n));
+      const rows = Math.ceil(n / cols);
+      const base = Math.floor(n / rows);
+      let extra = n % rows;
+      const result = [];
+      let i = 0;
+      for (let r = 0; r < rows; r++) {
+        const size = base + (extra > 0 ? 1 : 0);
+        if (extra > 0) extra--;
+        result.push(names.slice(i, i + size));
+        i += size;
+      }
+      return result;
+    },
+
+    async sendTileText(name) {
+      const tile = this.grid.tiles[name];
+      if (!tile || !tile.input.trim()) return;
+      const text = tile.input.trim();
+      tile.input = '';
+      tile.sending = true;
+      if (await this.postSessionSend(name, { text })) this.fetchTileMeta(name);
+      tile.sending = false;
+    },
+
+    async sendTileKey(name, key) {
+      if (await this.postSessionSend(name, { keys: key })) this.fetchTileMeta(name);
+    },
+
+    onTileKeydown(e, name) {
+      if (e.shiftKey) return;  // Shift+Enter: newline
+      e.preventDefault();      // Enter: send
+      this.sendTileText(name);
     },
 
     // --- Settings panel ---
@@ -1093,6 +1338,12 @@ function ccsmApp() {
               body: ev.detail || ev.user || ev.action,
               tag: 'ccsm-event'
             });
+          }
+          // Refresh the matching grid tile's approval/choice state. For these
+          // three watcher actions the `user` field carries the SESSION name,
+          // not a login name (see internal/server/watcher.go) — don't "fix" it.
+          if (this.grid.open && GRID_REFRESH_ACTIONS.has(ev.action) && this.grid.tiles[ev.user]) {
+            this.fetchTileMeta(ev.user);
           }
         };
         es.onerror = () => { /* EventSource reconnects on its own */ };
@@ -1744,4 +1995,110 @@ function highlightJSON(raw) {
       return m;
     }
   );
+}
+
+// --- ANSI rendering for the multi-session terminal grid ---
+// The grid asks the backend for the pane WITH its colour codes (?color=1), so
+// they have to be turned into markup here. Same discipline as highlightJSON:
+// escape first, then wrap the already-escaped text in spans — never the other
+// way round, or the pane content becomes an HTML injection vector.
+
+const ANSI_OSC = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+const ANSI_SGR = /\x1b\[([0-9;]*)m/g;
+// Every other CSI sequence (cursor moves, clears) carries no colour and would
+// otherwise show up as literal junk; dropped, like stripANSI does server-side.
+const ANSI_OTHER_CSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+
+// xterm's standard 256-colour palette, needed for 38;5;N / 48;5;N sequences:
+// 0-15 the basic/bright 16, 16-231 a 6x6x6 colour cube, 232-255 a grey ramp.
+function xterm256ToHex(n) {
+  const basic = [
+    '5c5c68', 'ff6b6b', '2ed573', 'ffa502', '6c9cff', 'e090e0', '6cd4ff', 'd8d8e0',
+    '7a7a88', 'ff8787', '6ef2a0', 'ffc75f', '8fb8ff', 'f0b0f0', '9ce6ff', 'ffffff',
+  ];
+  if (n < 16) return basic[n];
+  if (n < 232) {
+    const i = n - 16;
+    const levels = [0, 95, 135, 175, 215, 255];
+    const r = levels[Math.floor(i / 36) % 6], g = levels[Math.floor(i / 6) % 6], b = levels[i % 6];
+    return [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+  }
+  const grey = 8 + (n - 232) * 10;
+  return [grey, grey, grey].map(v => v.toString(16).padStart(2, '0')).join('');
+}
+
+// ansiClass maps a basic (0-107) SGR code to a CSS class, or '' when it's not
+// one we paint (unknown/unsupported attribute codes are simply ignored).
+function ansiClass(code) {
+  if (code === 1) return 'ansi-bold';
+  if (code === 2) return 'ansi-dim';
+  if (code === 3) return 'ansi-italic';
+  if (code === 4) return 'ansi-underline';
+  if (code >= 30 && code <= 37) return 'ansi-fg-' + (code - 30);
+  if (code >= 90 && code <= 97) return 'ansi-fg-' + (code - 90 + 8);
+  if (code >= 40 && code <= 47) return 'ansi-bg-' + (code - 40);
+  if (code >= 100 && code <= 107) return 'ansi-bg-' + (code - 100 + 8);
+  return '';
+}
+
+// ansiToHtml converts a pane capture into safe HTML with colour spans. Beyond
+// the basic 16-colour codes, Claude Code's real TUI leans on 256-colour and
+// truecolor SGR sequences (38;5;N / 38;2;r;g;b, and 48;… for background) —
+// those take several numeric parameters together, so codes are walked by
+// index rather than one at a time, unlike the basic codes above.
+function ansiToHtml(raw) {
+  const s = escapeHtml(raw).replace(ANSI_OSC, '');
+  let out = '';
+  let open = 0;
+  let last = 0;
+  let m;
+  const closeAll = () => { while (open > 0) { out += '</span>'; open--; } };
+  const openSpan = (styleOrClass, isStyle) => {
+    out += isStyle ? '<span style="' + styleOrClass + '">' : '<span class="' + styleOrClass + '">';
+    open++;
+  };
+  // Builds a safe inline colour style: every value here comes from our own
+  // regex-extracted integers, never from unvalidated text, so this can't be
+  // used to inject arbitrary CSS/HTML.
+  const colorStyle = (prop, hex) => prop + ':#' + hex;
+
+  ANSI_SGR.lastIndex = 0;
+  while ((m = ANSI_SGR.exec(s)) !== null) {
+    out += s.slice(last, m.index).replace(ANSI_OTHER_CSI, '');
+    last = ANSI_SGR.lastIndex;
+    // An empty parameter list means SGR 0 (reset).
+    const codes = m[1] === '' ? [0] : m[1].split(';').map(Number);
+    for (let i = 0; i < codes.length; i++) {
+      const code = codes[i];
+      if (!Number.isFinite(code)) continue;
+
+      // Extended 256-colour / truecolor foreground (38;…) or background (48;…).
+      if (code === 38 || code === 48) {
+        const prop = code === 38 ? 'color' : 'background-color';
+        if (codes[i + 1] === 5 && Number.isFinite(codes[i + 2])) {
+          openSpan(colorStyle(prop, xterm256ToHex(codes[i + 2] & 255)), true);
+          i += 2;
+        } else if (codes[i + 1] === 2 && [codes[i + 2], codes[i + 3], codes[i + 4]].every(Number.isFinite)) {
+          const hex = [codes[i + 2], codes[i + 3], codes[i + 4]]
+            .map(v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('');
+          openSpan(colorStyle(prop, hex), true);
+          i += 4;
+        }
+        continue;
+      }
+
+      // 0 resets everything; 22/23/24/39/49 turn one attribute off. We don't
+      // track attributes individually, so any "off" code closes the open spans
+      // — slightly coarse, but it can never leak an unclosed tag.
+      if (code === 0 || code === 22 || code === 23 || code === 24 || code === 39 || code === 49) {
+        closeAll();
+        continue;
+      }
+      const cls = ansiClass(code);
+      if (cls) openSpan(cls, false);
+    }
+  }
+  out += s.slice(last).replace(ANSI_OTHER_CSI, '');
+  closeAll();
+  return out;
 }

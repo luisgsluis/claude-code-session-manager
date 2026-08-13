@@ -1456,3 +1456,97 @@ func TestFileBirthTime(t *testing.T) {
 		t.Errorf("fileBirthTime(missing) = %d, want 0", bt)
 	}
 }
+
+// TestSessionPaneColor: the colour flag is opt-in. Without it the behaviour is
+// the historical one (ANSI stripped, no -e); with it the SGR codes survive and
+// capture-pane is asked for them with -e — both are required, since capture-pane
+// omits escape sequences unless -e is given.
+func TestSessionPaneColor(t *testing.T) {
+	const raw = "\x1b[31mred\x1b[0m plain"
+	argsFile := filepath.Join(t.TempDir(), "capture-args.txt")
+	h := fakeHost(t, map[string]string{
+		"FAKE_TMUX_HIST":         raw,
+		"FAKE_TMUX_CAPTURE_ARGS": argsFile,
+	})
+
+	t.Run("plain: ANSI stripped, no -e", func(t *testing.T) {
+		out, err := h.sessionPane("3", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out["content"] != "red plain" {
+			t.Errorf("content = %q, want ANSI stripped", out["content"])
+		}
+		last := lastCaptureArgs(t, argsFile)
+		if strings.Contains(last, " -e") {
+			t.Errorf("plain capture-pane passed -e: %q", last)
+		}
+	})
+
+	t.Run("color: ANSI preserved and -e passed", func(t *testing.T) {
+		out, err := h.sessionPane("3", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out["content"] != raw {
+			t.Errorf("content = %q, want the raw ANSI %q", out["content"], raw)
+		}
+		last := lastCaptureArgs(t, argsFile)
+		if !strings.Contains(last, " -e") {
+			t.Errorf("colour capture-pane did not pass -e: %q", last)
+		}
+	})
+}
+
+// lastCaptureArgs returns the last recorded capture-pane invocation.
+func lastCaptureArgs(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read capture args: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	return lines[len(lines)-1]
+}
+
+// TestExecSessionPaneColorArg: the colour flag reaches sessionPane through the
+// generic args map, so it works in both deployment modes without any change to
+// the agent protocol.
+func TestExecSessionPaneColorArg(t *testing.T) {
+	const raw = "\x1b[32mgreen\x1b[0m"
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_HIST": raw})
+
+	data, err := h.Exec("session-pane", map[string]string{"name": "3", "color": "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := data.(map[string]string)["content"]; got != raw {
+		t.Errorf("color=1 content = %q, want raw ANSI", got)
+	}
+
+	data, err = h.Exec("session-pane", map[string]string{"name": "3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := data.(map[string]string)["content"]; got != "green" {
+		t.Errorf("default content = %q, want stripped", got)
+	}
+}
+
+// TestSessionSendCtrlO: ctrl-o is whitelisted so a client can trigger Claude
+// Code's own collapse/expand of verbose output in the pane.
+func TestSessionSendCtrlO(t *testing.T) {
+	sendkeys := filepath.Join(t.TempDir(), "sendkeys.txt")
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_SENDKEYS": sendkeys})
+
+	if _, err := h.sessionSend("3", "", "ctrl-o"); err != nil {
+		t.Fatalf("sessionSend ctrl-o: %v", err)
+	}
+	data, _ := os.ReadFile(sendkeys)
+	if !strings.Contains(string(data), "C-o") {
+		t.Errorf("C-o not sent to the pane: %q", string(data))
+	}
+	if _, err := h.sessionSend("3", "", "ctrl-x"); err == nil {
+		t.Error("expected an unknown key to still be rejected")
+	}
+}

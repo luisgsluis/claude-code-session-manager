@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Claude Sessions</title>
 <link rel="stylesheet" href="/static/css/app.css">
+<link rel="stylesheet" href="/static/css/terminal-grid.css">
 <script defer src="/static/js/alpine.min.js"></script>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
 </head>
@@ -144,6 +145,12 @@
       </div>
     </div>
 
+    <!-- Terminal grid: every active session tiled at once -->
+    <button @click="openTermGrid()" :disabled="actionLoading || sessions.items.length === 0"
+      class="px-4 py-2 bg-bg-card border border-gray-700 hover:border-gray-600 rounded-xl text-sm font-medium transition-colors disabled:opacity-50">
+      🖥️ <span x-text="t('term_grid')"></span>
+    </button>
+
     <span x-show="actionLoading" class="text-sm text-fg-muted self-center animate-pulse" x-text="t('working')"></span>
   </div>
 </header>
@@ -240,7 +247,9 @@
           <p class="text-sm font-medium truncate" x-text="c.title ? c.title : (c.preview || t('empty_conv'))"></p>
           <p class="text-xs text-fg-muted truncate" x-show="c.title" x-text="c.preview"></p>
           <div class="flex flex-wrap gap-1 mt-1" x-show="(c.tags || []).length">
-            <span x-for="tag in (c.tags || [])" :key="tag" class="px-1.5 py-0.5 rounded-full text-xs bg-accent/20 text-accent" x-text="tag"></span>
+            <template x-for="tag in (c.tags || [])" :key="tag">
+              <span class="px-1.5 py-0.5 rounded-full text-xs bg-accent/20 text-accent" x-text="tag"></span>
+            </template>
           </div>
           <div class="flex items-center gap-2 mt-2">
             <button @click="resumeSession(c.id)" :disabled="actionLoading" class="text-xs text-accent hover:text-accent-hover font-medium disabled:opacity-50 disabled:cursor-wait" x-text="'▶ ' + t('resume')"></button>
@@ -273,7 +282,9 @@
           <p class="text-sm font-medium truncate" x-show="c.title" x-text="c.title"></p>
           <p class="text-sm flex-1 line-clamp-3" x-text="c.preview || t('empty_conv')"></p>
           <div class="flex flex-wrap gap-1 mt-1" x-show="(c.tags || []).length">
-            <span x-for="tag in (c.tags || [])" :key="tag" class="px-1.5 py-0.5 rounded-full text-xs bg-accent/20 text-accent" x-text="tag"></span>
+            <template x-for="tag in (c.tags || [])" :key="tag">
+              <span class="px-1.5 py-0.5 rounded-full text-xs bg-accent/20 text-accent" x-text="tag"></span>
+            </template>
           </div>
           <div class="flex items-center gap-2 mt-3 pt-3 border-t border-gray-800">
             <button @click="resumeSession(c.id)" :disabled="actionLoading" class="text-xs text-accent hover:text-accent-hover font-medium disabled:opacity-50 disabled:cursor-wait" x-text="'▶ ' + t('resume')"></button>
@@ -706,6 +717,135 @@
     </div>
     <div class="overflow-y-auto p-0" style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
       <pre class="text-sm p-4 leading-relaxed overflow-x-auto" style="tab-size:2;-moz-tab-size:2;white-space:pre-wrap;word-break:break-word"><code x-html="profViewer.html"></code></pre>
+    </div>
+  </div>
+</div>
+
+<!-- Terminal grid: every active session tiled at once.
+     Sits after the live modal in the DOM (same z-95 tier) so it paints above
+     it, but before the toast so toasts stay visible. -->
+<div x-show="grid.open" x-cloak class="fixed inset-0 bg-bg z-[95] flex flex-col"
+  @keydown.escape.window="if (grid.open && grid.zoomed) grid.zoomed = null">
+
+  <!-- Header: title, minimized-tile chips (kept in this bar so they don't eat
+       an extra row of grid space), close button. Wraps if there are many. -->
+  <div class="flex items-center justify-between gap-3 flex-wrap px-4 py-3 border-b border-gray-800 shrink-0">
+    <div class="flex items-center gap-2 flex-wrap">
+      <h3 class="font-semibold shrink-0" x-text="t('term_grid_title', [Object.keys(grid.tiles).length])"></h3>
+      <template x-for="name in minimizedTileNames()" :key="'min-' + name">
+        <button @click="restoreTile(name)" :title="t('term_tile_restore')"
+          class="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-bg-card border border-gray-700 hover:border-gray-600 text-xs transition-colors">
+          <span class="w-2 h-2 rounded-full" :class="tileRcConnected(name) ? 'bg-success' : 'bg-warn'"></span>
+          <span class="font-mono" x-text="name"></span>
+          <span class="text-fg-muted">⤢</span>
+        </button>
+      </template>
+    </div>
+    <button @click="closeTermGrid()" class="text-fg-muted hover:text-fg text-xl leading-none shrink-0">&times;</button>
+  </div>
+
+  <!-- Narrow screens: the mosaic needs width, so offer the single-session view instead -->
+  <div class="tgrid-narrow-only flex-1 flex items-center justify-center p-6 text-center text-fg-muted text-sm"
+    x-text="t('term_grid_narrow')"></div>
+
+  <div class="tgrid-wide-only flex-col flex-1 min-h-0 p-3 gap-3">
+
+    <div x-show="Object.keys(grid.tiles).length === 0" class="flex-1 flex items-center justify-center text-fg-muted text-sm"
+      x-text="t('term_grid_empty')"></div>
+
+    <!-- Tiles packed into near-square rows (tileRows(), see app.js) so an
+         incomplete row never leaves a dead gap. Hidden (not unmounted) while
+         another tile is zoomed, so every stream keeps running and coming back
+         is instant. -->
+    <div class="tgrid flex-1 min-h-0">
+      <template x-for="(row, ri) in tileRows()" :key="'row-' + ri + '-' + row.join(',')">
+        <div class="tgrid-row">
+      <template x-for="name in row" :key="'tile-' + name">
+        <!-- x-if (not x-show): a tile can be removed from grid.tiles (session
+             killed, closeTermGrid) between renders, and unlike x-show the
+             subtree here is not evaluated at all while the guard is false —
+             same reasoning as the choice-picker guard below. -->
+        <template x-if="grid.tiles[name]">
+        <div class="flex flex-col min-h-0 bg-bg-card border border-gray-800 rounded-xl overflow-hidden"
+          :class="grid.zoomed === name ? 'tgrid-zoomed' : (grid.zoomed ? 'tgrid-hidden' : '')">
+
+          <!-- Tile header: kept to this one row (mode/model included) so tiles
+               never grow taller than the icon-button strip; a narrow tile
+               scrolls this row horizontally instead of wrapping to a 2nd line. -->
+          <div class="flex items-center gap-2 px-3 py-2 border-b border-gray-800 shrink-0 overflow-x-auto">
+            <span class="w-2 h-2 rounded-full shrink-0" :class="tileRcConnected(name) ? 'bg-success' : 'bg-warn'"></span>
+            <span class="font-mono text-sm shrink-0" x-text="name"></span>
+            <select @change="setTileMode(name, $event.target.value); $event.target.value=''"
+              :title="t('mode_label')" class="tgrid-select shrink-0">
+              <option value="" selected disabled x-text="t('mode_label')"></option>
+              <template x-for="m in tileModeOptions(name)" :key="m">
+                <option :value="m" :selected="grid.tiles[name].meta && grid.tiles[name].meta.mode === m" x-text="m"></option>
+              </template>
+            </select>
+            <select @change="setTileModel(name, $event.target.value); $event.target.value=''"
+              :title="t('model_label')" class="tgrid-select shrink-0">
+              <option value="" selected disabled x-text="t('model_label')"></option>
+              <template x-for="mo in live.models" :key="mo">
+                <option :value="mo" :selected="grid.tiles[name].meta && grid.tiles[name].meta.model === mo" x-text="mo"></option>
+              </template>
+            </select>
+            <span class="flex-1"></span>
+            <button @click="sendTileKey(name, 'ctrl-o')" :title="t('term_tile_output')"
+              class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors">⌄</button>
+            <button @click="toggleTileZoom(name)" :title="grid.zoomed === name ? t('term_tile_unzoom') : t('term_tile_zoom')"
+              class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors"
+              x-text="grid.zoomed === name ? '⧉' : '⛶'"></button>
+            <button @click="minimizeTile(name)" :title="t('term_tile_minimize')"
+              class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors">–</button>
+          </div>
+
+          <!-- Raw pane, ANSI-coloured. Same look as the single-session Terminal tab. -->
+          <div class="flex-1 overflow-y-auto min-h-0 tgrid-pane" :id="'tile-pane-' + name"
+            style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
+            <div x-show="grid.tiles[name].status" class="px-3 py-2 text-xs text-danger" x-text="grid.tiles[name].status"></div>
+            <pre class="p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words"><code x-html="tileText(name)"></code></pre>
+          </div>
+
+          <!-- Approval / choice: the extra value CCSM adds on top of the raw pane -->
+          <template x-if="grid.tiles[name].meta && grid.tiles[name].meta.waiting === 'choice' && grid.tiles[name].meta.choice">
+            <div class="shrink-0 px-3 py-2 border-t border-gray-800 bg-warn/5">
+              <div class="text-xs text-fg mb-1" x-text="grid.tiles[name].meta.choice.question"></div>
+              <div class="flex flex-wrap gap-1">
+                <template x-for="(opt, i) in grid.tiles[name].meta.choice.options" :key="i">
+                  <span class="text-xs px-2 py-1 rounded border"
+                    :class="i === grid.tiles[name].meta.choice.selected ? 'bg-warn/15 border-warn/40 text-fg' : 'border-gray-700 text-fg-muted'"
+                    x-text="(i === grid.tiles[name].meta.choice.selected ? '❯ ' : '  ') + (i + 1) + '. ' + opt"></span>
+                </template>
+              </div>
+              <div class="flex gap-1 mt-2">
+                <button @click="sendTileKey(name, 'up')" :title="t('chat_choice_up')"
+                  class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors">↑</button>
+                <button @click="sendTileKey(name, 'down')" :title="t('chat_choice_down')"
+                  class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors">↓</button>
+                <button @click="sendTileKey(name, 'enter')" :title="t('chat_choice_title')"
+                  class="px-2 py-1 rounded border border-gray-700 bg-warn/15 text-warn hover:bg-bg-hover text-xs transition-colors">✓ <span x-text="t('chat_approve')"></span></button>
+              </div>
+            </div>
+          </template>
+
+          <!-- Terminal prompt: a real input, not a chat bubble -->
+          <div class="shrink-0 flex items-center gap-2 px-3 py-2 border-t border-gray-800">
+            <span x-show="grid.tiles[name].meta && grid.tiles[name].meta.waiting === 'approval'" class="text-warn text-xs shrink-0">⚠</span>
+            <button x-show="grid.tiles[name].meta && grid.tiles[name].meta.waiting === 'approval'"
+              @click="sendTileKey(name, 'enter')" :title="t('chat_approve_title')"
+              class="shrink-0 px-2 py-1 rounded border border-gray-700 bg-warn/15 text-warn hover:bg-bg-hover text-xs transition-colors">✓ <span x-text="t('chat_approve')"></span></button>
+            <span class="text-accent font-mono text-sm shrink-0">❯</span>
+            <textarea x-model="grid.tiles[name].input" rows="1" :placeholder="t('term_tile_prompt')"
+              @keydown.enter="onTileKeydown($event, name)" :disabled="grid.tiles[name].sending"
+              class="flex-1 min-w-0 font-mono tgrid-input disabled:opacity-50"></textarea>
+            <button @click="sendTileKey(name, 'escape')" :title="t('chat_stop_title')"
+              class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors">⏹</button>
+          </div>
+        </div>
+        </template>
+      </template>
+        </div>
+      </template>
     </div>
   </div>
 </div>

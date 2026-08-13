@@ -1,0 +1,145 @@
+/* Multi-session terminal grid.
+   Hand-written on purpose: app.css is a pre-built, purged Tailwind bundle and
+   the repo has no Tailwind build step, so the classes this view needs (extra
+   breakpoints, grid column counts, the ANSI palette) would not exist there.
+   Keeping them here means app.css is never regenerated and the rest of the UI
+   cannot regress. Everything is prefixed tgrid- to avoid clashing with
+   Tailwind's utilities. */
+
+/* --- Layout: nested flex rows (see tileRows() in app.js), not a fixed CSS
+   grid. A CSS grid with a set column count leaves a dead empty cell whenever
+   the tile count doesn't divide evenly (3 tiles in a 2-column grid = an empty
+   4th cell). Packing tiles into near-square rows, where every row is its own
+   flex line with flex:1 tiles, means a short last row's tiles simply grow to
+   fill it — no gap, no per-tile width math, works for any tile count. --- */
+.tgrid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  position: relative;
+}
+
+.tgrid-row {
+  display: flex;
+  flex: 1;
+  gap: 0.75rem;
+  min-height: 0;
+}
+
+.tgrid-row > * {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A zoomed tile covers the whole grid area. The others stay in the DOM (hidden,
+   not unmounted) so their streams keep running and returning is instant. */
+.tgrid-zoomed {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+}
+
+.tgrid-hidden { display: none !important; }
+
+/* Desktop/tablet only: below 1024px the mosaic is unusable, so the view shows
+   a short notice instead. */
+.tgrid-wide-only { display: none; }
+@media (min-width: 1024px) {
+  .tgrid-wide-only  { display: flex; }
+  .tgrid-narrow-only { display: none !important; }
+}
+
+/* Opacity-modifier utilities Tailwind never compiled into app.css: border-warn/40
+   is used by the pre-existing choice-picker (index.html, single-session modal)
+   and was never generated (the base .border-warn utility isn't emitted either,
+   since nothing uses border-warn without a modifier); bg-warn/5 is used by the
+   grid tile's choice strip. Supplied by hand since app.css isn't rebuilt. */
+.bg-warn\/5     { background-color: rgba(255, 165, 2, 0.05); }
+.border-warn\/40 { border-color: rgba(255, 165, 2, 0.4); }
+
+/* --- Terminal pane --- */
+.tgrid-pane {
+  background: #0b0b12;
+  color: #d8d8e0;
+}
+
+/* Per-tile prompt input. Explicit styling rather than Tailwind's bg-transparent
+   (never used elsewhere in this project, so it isn't in the compiled app.css —
+   without it the browser's default white/large textarea showed through, with
+   light text on it, effectively invisible). Compact by design: one line, small
+   font, no resize handle. */
+.tgrid-input {
+  background: transparent;
+  color: #e0e0e0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  padding: 0.25rem 0;
+  border: 0;
+  resize: none;
+  height: 1.4em;
+}
+.tgrid-input::placeholder { color: #8b8b9e; }
+.tgrid-input:focus { outline: none; }
+
+/* Compact mode/model pickers in the tile header row. Fixed narrow width (not
+   Tailwind's max-w-* utilities, unused elsewhere so absent from app.css) so
+   the two selects plus the icon buttons still fit the single header row the
+   owner asked for, instead of forcing it to wrap onto a second line.
+   box-sizing + line-height match the icon buttons' text-xs/py-1 (0.75rem*1
+   line-height + 0.25rem*2 padding + 1px*2 border = 26px) so both sit at the
+   same height on the row instead of the select looking oversized. */
+.tgrid-select {
+  box-sizing: border-box;
+  width: 3.75rem;
+  padding: 0.25rem 0.3rem;
+  border-radius: 0.375rem;
+  border: 1px solid #374151;
+  background: #17171f;
+  color: #d8d8e0;
+  font-size: 0.65rem;
+  line-height: 1rem;
+}
+.tgrid-select:focus { outline: none; border-color: #6c9cff; }
+
+/* --- ANSI palette (rendered by ansiToHtml). Tuned for the dark terminal
+   background above; bright variants are the 90-97 / 100-107 range. --- */
+.ansi-bold      { font-weight: 700; }
+.ansi-dim       { opacity: 0.65; }
+.ansi-italic    { font-style: italic; }
+.ansi-underline { text-decoration: underline; }
+
+.ansi-fg-0 { color: #5c5c68; } /* black (lifted so it stays readable) */
+.ansi-fg-1 { color: #ff6b6b; }
+.ansi-fg-2 { color: #2ed573; }
+.ansi-fg-3 { color: #ffa502; }
+.ansi-fg-4 { color: #6c9cff; }
+.ansi-fg-5 { color: #e090e0; }
+.ansi-fg-6 { color: #6cd4ff; }
+.ansi-fg-7 { color: #d8d8e0; }
+
+.ansi-fg-8  { color: #7a7a88; }
+.ansi-fg-9  { color: #ff8787; }
+.ansi-fg-10 { color: #6ef2a0; }
+.ansi-fg-11 { color: #ffc75f; }
+.ansi-fg-12 { color: #8fb8ff; }
+.ansi-fg-13 { color: #f0b0f0; }
+.ansi-fg-14 { color: #9ce6ff; }
+.ansi-fg-15 { color: #ffffff; }
+
+.ansi-bg-0 { background-color: #1a1a2e; }
+.ansi-bg-1 { background-color: #7a2020; }
+.ansi-bg-2 { background-color: #1e6b3a; }
+.ansi-bg-3 { background-color: #7a5a10; }
+.ansi-bg-4 { background-color: #24407a; }
+.ansi-bg-5 { background-color: #6b2a6b; }
+.ansi-bg-6 { background-color: #1f5f7a; }
+.ansi-bg-7 { background-color: #4a4a56; }
+
+.ansi-bg-8  { background-color: #2a2a3a; }
+.ansi-bg-9  { background-color: #9c3030; }
+.ansi-bg-10 { background-color: #2a8a4c; }
+.ansi-bg-11 { background-color: #9c7420; }
+.ansi-bg-12 { background-color: #33559c; }
+.ansi-bg-13 { background-color: #8a388a; }
+.ansi-bg-14 { background-color: #2a7a9c; }
+.ansi-bg-15 { background-color: #6a6a78; }

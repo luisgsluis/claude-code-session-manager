@@ -18,6 +18,7 @@ case "$1" in
     printf '%s' "$FAKE_TMUX_LIST"
     exit 0 ;;
   capture-pane)
+    [ -n "$FAKE_TMUX_CAPTURE_ARGS" ] && printf '%s\n' "$*" >> "$FAKE_TMUX_CAPTURE_ARGS"
     [ -n "$FAKE_TMUX_CAPTURE_FAIL" ] && exit 1
     for a in "$@"; do
       [ "$a" = "-S" ] && { printf '%s' "$FAKE_TMUX_HIST"; exit 0; }
@@ -29,6 +30,12 @@ case "$1" in
     if [ -n "$FAKE_TMUX_MODE_WHEEL" ] && [ -n "$FAKE_TMUX_MODE_STATE" ]; then
       idx="$(cat "$FAKE_TMUX_MODE_STATE" 2>/dev/null)"
       [ -z "$idx" ] && idx=0
+      # FAKE_TMUX_MODE_HIDE_UNTIL simulates an unreadable badge (blind-cycle
+      # tests): while idx is below it, print a footer with no mode token.
+      if [ -n "$FAKE_TMUX_MODE_HIDE_UNTIL" ] && [ "$idx" -lt "$FAKE_TMUX_MODE_HIDE_UNTIL" ]; then
+        printf '  ⏵⏵ mode on (shift+tab to cycle) · esc to interrupt · ← for agents\n'
+        exit 0
+      fi
       mode=""; n=0; IFS=,
       for m in $FAKE_TMUX_MODE_WHEEL; do
         [ "$n" = "$idx" ] && { mode="$m"; break; }

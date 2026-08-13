@@ -7,6 +7,21 @@ Prioritized list of features. The "Backlog" holds features deliberately deferred
 - **Configurable mode wheel**: `modeWheel` in `host.go` is the wheel order; if an account
   enables `bypassPermissions` or lacks `auto`, the order changes. Make it configurable.
 
+## Shipped (unreleased)
+
+- **Modo terminal**: a full-screen tiled view of every active session's
+  raw terminal pane at once (top action bar, next to the profile switcher). Each tile
+  reuses the existing `/stream` SSE and `/send` mechanisms — no new backend commands other
+  than an opt-in `color=1` query param on `/stream` (keeps `-e` + skips the server-side ANSI
+  strip only when asked) and one `ctrl-o` entry in the key whitelist, so a tile's "fold
+  output" button just sends Claude Code's own collapse/expand keystroke to the pane. Tiles
+  can be minimized (pulled into a compact rail so the rest grow to fill the space), zoomed
+  fullscreen (tmux `Ctrl+b z` style — the other tiles stay mounted and streaming, hidden
+  only via CSS, so returning is instant), and are interactive (a per-tile terminal-style
+  prompt, plus the existing Approve/Stop/choice-picker controls). Renders real ANSI colour,
+  including 256-colour and truecolor SGR sequences. This closes the "Full terminal view"
+  backlog item.
+
 ## Shipped (1.0.0)
 
 - **Live chat robustness**: the `EventSource` now lets the browser's native retry reconnect
@@ -31,7 +46,6 @@ Prioritized list of features. The "Backlog" holds features deliberately deferred
   without structural changes. After validating user+password, a TOTP code is required before
   issuing the session cookie; the auth middleware checks a `totp_verified` flag.
 - **Mobile app**: native or PWA mobile version
-- **Full terminal view**
 
 ## Release/CI
 

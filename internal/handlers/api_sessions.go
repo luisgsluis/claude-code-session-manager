@@ -93,6 +93,13 @@ func (h *SessionHandler) LiveStream(w http.ResponseWriter, r *http.Request) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
+	// ?color=1 keeps the pane's ANSI colour codes instead of stripping them,
+	// for clients that render them (the multi-session terminal grid).
+	paneArgs := map[string]string{"name": name}
+	if r.URL.Query().Get("color") == "1" {
+		paneArgs["color"] = "1"
+	}
+
 	last := ""
 	heartbeats := 0
 	for {
@@ -102,7 +109,7 @@ func (h *SessionHandler) LiveStream(w http.ResponseWriter, r *http.Request) {
 		case <-ticker.C:
 		}
 
-		resp, err := h.Agent.Exec("session-pane", map[string]string{"name": name})
+		resp, err := h.Agent.Exec("session-pane", paneArgs)
 		if err != nil {
 			fmt.Fprintf(w, "event: error\ndata: %s\n\n", err)
 			flusher.Flush()

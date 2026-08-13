@@ -122,3 +122,51 @@ func TestCachedModeWheelEmptyBeforeCalibration(t *testing.T) {
 		t.Errorf("cached wheel before any probe = %v, want nil", w)
 	}
 }
+
+// TestPaneModeSkipsWrappedRCHint reproduces the real footer wrap: a long
+// status line ("… ctrl+t to hide tasks · ↓ for…") pushes its "/rc" remainder
+// onto its own trailing line, so the mode badge is the second-to-last
+// non-blank line, not the last one. paneMode must still find it.
+func TestPaneModeSkipsWrappedRCHint(t *testing.T) {
+	h := fakeHost(t, map[string]string{
+		"FAKE_TMUX_LINE": "  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ctrl+t to hide tasks · ↓ for…\n/rc",
+	})
+	if got := h.paneMode("3"); got != "auto" {
+		t.Errorf("paneMode with wrapped /rc hint = %q, want %q", got, "auto")
+	}
+}
+
+// TestSessionModeBlindCycleRecoversWithoutBadge exercises the fallback path
+// when the current-mode badge is unreadable at first: sessionMode must press
+// Shift+Tab and re-check the badge after each press (never send /plan) until
+// it lands on the target.
+func TestSessionModeBlindCycleRecoversWithoutBadge(t *testing.T) {
+	sends := filepath.Join(t.TempDir(), "sends")
+	if err := os.WriteFile(sends, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	h, state := newWheelHost(t, "manual,accept-edits,plan,auto")
+	t.Setenv("FAKE_TMUX_MODE_HIDE_UNTIL", "2")
+	t.Setenv("FAKE_TMUX_SENDKEYS", sends)
+
+	resp, err := h.sessionMode("3", "plan")
+	if err != nil {
+		t.Fatalf("sessionMode: %v", err)
+	}
+	if resp["mode"] != "plan" {
+		t.Errorf("mode = %v, want plan", resp["mode"])
+	}
+	if n, _ := resp["pressed"].(int); n != 2 {
+		t.Errorf("pressed = %v, want 2 (blind cycle to index 2)", resp["pressed"])
+	}
+	if idx, _ := os.ReadFile(state); string(idx) != "2" {
+		t.Errorf("wheel state = %q, want 2", idx)
+	}
+	sent, err := os.ReadFile(sends)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(sent), "/plan") {
+		t.Errorf("sessionMode sent /plan as a command, want pure Shift+Tab cycling: %q", sent)
+	}
+}

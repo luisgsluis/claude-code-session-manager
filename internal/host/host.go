@@ -140,7 +140,7 @@ func (h *Host) Exec(cmd string, args map[string]string) (any, error) {
 		if !safeName(name) {
 			return nil, errBad("invalid session name")
 		}
-		return h.sessionPane(name)
+		return h.sessionPane(name, args["color"] == "1")
 	case "session-conv":
 		name := args["name"]
 		if !safeName(name) {
@@ -1689,15 +1689,28 @@ func (h *Host) newSession(extraArgs, name, cwd string) (string, error) {
 // view. -S - grabs the full history; apps that draw the alternate screen
 // (Claude Code, less) keep no scrollback, so for them this is just the
 // current screen.
-func (h *Host) sessionPane(name string) (map[string]string, error) {
+// With color, the SGR sequences are kept so the client can render the pane in
+// colour: capture-pane omits escape sequences unless -e is given, so preserving
+// colour needs both the flag AND skipping stripANSI. Without it the args are
+// exactly the historical ones, so the plain path is unchanged.
+func (h *Host) sessionPane(name string, color bool) (map[string]string, error) {
 	if !h.sessionAlive(name) {
 		return nil, errNotFound("session not found: %s", name)
 	}
-	out, err := exec.Command(h.tmuxBinary, "capture-pane", "-p", "-J", "-S", "-", "-t", h.paneTarget(name)).Output()
+	args := []string{"capture-pane", "-p", "-J"}
+	if color {
+		args = append(args, "-e")
+	}
+	args = append(args, "-S", "-", "-t", h.paneTarget(name))
+	out, err := exec.Command(h.tmuxBinary, args...).Output()
 	if err != nil {
 		return nil, errServer("tmux capture-pane: %v", err)
 	}
-	return map[string]string{"session": name, "content": stripANSI(string(out))}, nil
+	content := string(out)
+	if !color {
+		content = stripANSI(content)
+	}
+	return map[string]string{"session": name, "content": content}, nil
 }
 
 // newUUID returns a random RFC 4122 v4 UUID used to pin a session's
@@ -2334,21 +2347,30 @@ func (h *Host) lastAssistant(name string) (id, text string) {
 	return id, text
 }
 
-// paneMode does a best-effort read of Claude Code's footer (last visible line
-// of the pane) for the current mode token. The default footer has no mode
-// name, so this often returns "" — the chat footer then omits it.
+// paneMode does a best-effort read of Claude Code's footer for the current
+// mode token. The badge line ("⏵⏵ auto mode on · …") isn't always the very
+// last non-blank line: a long footer (many hint tokens, e.g. "· ctrl+t to
+// hide tasks · ↓ for…") wraps, and the wrapped remainder (often just "/rc")
+// lands on its own trailing line, pushing the real badge to the line above.
+// Check the last few non-blank lines, most recent first, instead of only one.
 func (h *Host) paneMode(name string) string {
 	out, err := exec.Command(h.tmuxBinary, "capture-pane", "-p", "-t", h.paneTarget(name)).Output()
 	if err != nil {
 		return ""
 	}
-	last := ""
+	var lines []string
 	for _, l := range strings.Split(string(out), "\n") {
 		if t := strings.TrimSpace(l); t != "" {
-			last = t
+			lines = append(lines, t)
 		}
 	}
-	return modeFromBadge(last)
+	const lookback = 3
+	for i := len(lines) - 1; i >= 0 && i >= len(lines)-lookback; i-- {
+		if m := modeFromBadge(lines[i]); m != "" {
+			return m
+		}
+	}
+	return ""
 }
 
 // paneWaitingWithChoice reports the waiting reason plus, when the pane shows an
@@ -2404,6 +2426,9 @@ var tmuxKeyMap = map[string]string{
 	"tab":    "Tab",
 	"btab":   "BTab",
 	"space":  "Space",
+	// Claude Code's own collapse/expand of verbose output (tool results,
+	// reasoning). Sent to the pane so Claude Code owns that state, not CCSM.
+	"ctrl-o": "C-o",
 }
 
 // sessionSend types a message into a live session (literal text + Enter) or
@@ -2649,46 +2674,44 @@ func (h *Host) restoreMode(name, want string) {
 	}
 }
 
-// sessionMode changes a live session's mode. plan is sent as the /plan slash
-// command (deterministic from anywhere); the rest are reached via the real
-// Shift+Tab wheel (discovered per account), either from the current mode (when
-// the badge is readable) or anchored at plan via /plan when it isn't.
+// sessionMode changes a live session's mode entirely via the real Shift+Tab
+// wheel (discovered per account) — it never sends /plan or any other slash
+// command, which would land as a stray line in the transcript and confuses
+// more than it helps. When the current mode badge is readable it presses
+// Shift+Tab the exact computed distance. When it isn't (pane in a dialog,
+// starting up, footer mid-wrap) it "blind cycles": press Shift+Tab and
+// re-read the badge after each press, stopping as soon as it lands on
+// target, bounded by the wheel length (capped at maxModeCycle) so it always
+// terminates even if the badge never becomes readable.
 func (h *Host) sessionMode(name, target string) (map[string]any, error) {
 	if !h.sessionAlive(name) {
 		return nil, errNotFound("session not found: %s", name)
-	}
-	if target == "plan" {
-		if err := h.sendKeys(name, "/plan"); err != nil {
-			return nil, err
-		}
-		return map[string]any{"session": name, "mode": target, "pressed": 1}, nil
 	}
 	wheel := h.wheelFor(name)
 	if modePosIn(wheel, target) < 0 {
 		return nil, errBad("unsupported mode %s (available: %s)", target, strings.Join(wheel, ", "))
 	}
-	cur := h.paneMode(name)
-	n, ok := distanceIn(wheel, cur, target)
-	if !ok {
-		// Badge unreadable (pane in a dialog, starting up, etc.): anchor at
-		// plan, which /plan always reaches, and count from there. The /plan
-		// itself counts as one more move.
-		if err := h.sendKeys(name, "/plan"); err != nil {
-			return nil, err
+	if n, ok := distanceIn(wheel, h.paneMode(name), target); ok {
+		for i := 0; i < n; i++ {
+			if err := h.rawShiftTab(name); err != nil {
+				return nil, err
+			}
 		}
-		var ok2 bool
-		n, ok2 = distanceIn(wheel, "plan", target)
-		if !ok2 {
-			return nil, errServer("plan is not on the discovered mode wheel: %s", strings.Join(wheel, ", "))
-		}
-		n++
+		return map[string]any{"session": name, "mode": target, "pressed": n}, nil
 	}
-	for i := 0; i < n; i++ {
+	max := len(wheel)
+	if max > maxModeCycle {
+		max = maxModeCycle
+	}
+	for i := 1; i <= max; i++ {
 		if err := h.rawShiftTab(name); err != nil {
 			return nil, err
 		}
+		if h.paneMode(name) == target {
+			return map[string]any{"session": name, "mode": target, "pressed": i}, nil
+		}
 	}
-	return map[string]any{"session": name, "mode": target, "pressed": n}, nil
+	return nil, errServer("can't confirm mode %s after cycling the wheel", target)
 }
 
 // rcPressDelay is the pause between the two /remote-control presses when a
