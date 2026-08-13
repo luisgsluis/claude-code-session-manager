@@ -498,11 +498,12 @@ go test ./...             # unit tests
 cd e2e && npx playwright test   # end-to-end tests (stubbed tmux/claude)
 ```
 
-## Contributing
+## Looking for Contributors
 
-Issues and PRs are welcome — bug reports, feature ideas, or fixes. For anything non-trivial,
-open an issue first so we can align on approach before you put in the work. See `ROADMAP.md`
-for what's deliberately deferred.
+CCSM is a side project I maintain solo, and I'm looking for people to bring into it as
+contributors — not a queue for feature requests. If you want to actually work on something
+(pick an item from `ROADMAP.md`'s backlog, or propose your own), open an issue to introduce
+yourself and what you'd want to tackle.
 
 ## License
 

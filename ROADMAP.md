@@ -3,8 +3,9 @@
 Forward-looking only: what's next and what's deliberately deferred. Shipped work lives in
 `CHANGELOG.md`, not here.
 
-Contributions welcome — pick anything from Backlog, or open an issue to propose something
-not listed here.
+**Looking for contributors** to bring into the project — not requests, actual hands on
+something. Pick anything from Backlog below, or open an issue to propose something else and
+introduce yourself.
 
 ## Next
 
