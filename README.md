@@ -30,7 +30,7 @@ CCSM is a lightweight web app that turns any Linux box you control — a homelab
 - 🎨 **Selectable skins** (Light, Dark, Ocean, Contrast) via a header dropdown, remembered
   in localStorage — see [`docs/skins.md`](docs/skins.md) to add your own
 - 🌐 **Multi-language UI** (ES/EN via a 🌐 dropdown), selectable per user and remembered in localStorage
-- 📱 **Responsive UI**: works on desktop and mobile, with a future mobile-native skin planned
+- 📱 **Responsive UI**: works on desktop, tablet and mobile, with a future mobile-native skin planned
 - 🔒 **Security in depth**: login form + LAN bypass + Unix socket agent + restricted tmux/claude execution
 - 🐳 **Two deployment modes**: container (Alpine image + host agent over Unix socket) **or** plain binary on the host (no container, no agent, in-process execution)
 - 🩺 **Healthcheck**: `/api/health` wired into the image so orchestrators and the homelab updater can verify liveness
