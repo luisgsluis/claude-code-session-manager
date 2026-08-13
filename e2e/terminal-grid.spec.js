@@ -43,7 +43,7 @@ test('terminal grid: tiles, minimize/restore, zoom/unzoom, send — no console e
   await expect(page.getByText(/pane-of-grid-beta/)).toBeVisible();
 
   // Minimize alpha: it becomes a rail chip, beta's tile keeps rendering.
-  const alphaTile = page.locator('.tgrid > div', { hasText: 'grid-alpha' });
+  const alphaTile = page.locator('.tgrid-tile', { hasText: 'grid-alpha' });
   await alphaTile.getByTitle('Minimizar').click();
   await expect(page.locator('.tgrid', { hasText: 'grid-alpha' })).toHaveCount(0);
   const chip = page.getByRole('button', { name: /grid-alpha/ }).filter({ hasText: 'grid-alpha' });
@@ -55,7 +55,7 @@ test('terminal grid: tiles, minimize/restore, zoom/unzoom, send — no console e
 
   // Zoom beta, then un-zoom: alpha's tile must still be present in the DOM
   // throughout (its stream never tears down), just visually hidden.
-  const betaTile = page.locator('.tgrid > div', { hasText: 'grid-beta' });
+  const betaTile = page.locator('.tgrid-tile', { hasText: 'grid-beta' });
   await betaTile.getByTitle('Pantalla completa').click();
   await expect(page.locator('.tgrid-zoomed', { hasText: 'grid-beta' })).toBeVisible();
   await expect(alphaTile).toHaveCount(1); // present (tgrid-hidden), not removed
