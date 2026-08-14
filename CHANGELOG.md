@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Terminal panes could open scrolled to the top instead of the bottom.** Both the mobile
+  grid's tile picker (restoreTile) and the single-session Terminal tab (setLiveView) only
+  mount their pane element when the view actually becomes visible — a mobile tile stays
+  unmounted while minimized, and the Terminal tab is only mounted while selected. Content
+  (pane output, conversation history) kept accumulating in the background regardless, so by
+  the time the pane finally mounted it was often taller than the viewport, but a freshly
+  mounted scrollable element always starts at `scrollTop: 0`. The existing "stay at the
+  bottom as new content streams in" logic only reacts to *new* messages, so it never moved
+  an already-tall, freshly-mounted pane — it stayed pinned at the top until the next stream
+  update. Both now force a scroll to the bottom right after mounting, matching the desktop
+  grid's mosaic (whose tiles are visible — and thus mounted — from the moment they're
+  created, so this never showed up there).
+
 ## [1.4.0] — 2026-08-14
 
 ### Changed

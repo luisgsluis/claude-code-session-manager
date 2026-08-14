@@ -1000,6 +1000,16 @@ function ccsmApp() {
         this.startChatStream();
       }
       this.live.view = v;
+      if (v === 'term') {
+        // The pane mounts fresh (x-if in index.html) with termHist already
+        // in termText — the chat tab fetched it earlier — so it opens at
+        // scrollTop 0, the top, unless forced down once here. Same reasoning
+        // as the grid's restoreTile.
+        this.$nextTick(() => {
+          const el = this.$refs.livePane;
+          if (el) el.scrollTop = el.scrollHeight;
+        });
+      }
     },
 
     atBottom(el) {
@@ -1359,6 +1369,15 @@ function ccsmApp() {
         Object.keys(this.grid.tiles).forEach(n => { if (n !== name) this.grid.minimized[n] = true; });
       }
       delete this.grid.minimized[name];
+      // A minimized tile isn't in the DOM at all (see the x-if guard in
+      // index.html), so it mounts fresh here with whatever content already
+      // streamed in while hidden — at scrollTop 0, i.e. the top, not the
+      // bottom the startTileStream/fetchTileMeta "stick" logic only
+      // maintains once the pane already exists. Force it down once here.
+      this.$nextTick(() => {
+        const el = document.getElementById('tile-pane-' + name);
+        if (el) el.scrollTop = el.scrollHeight;
+      });
     },
 
     // Only one tile can be zoomed, so this is a single field rather than a

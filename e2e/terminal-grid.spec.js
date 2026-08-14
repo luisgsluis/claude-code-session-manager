@@ -123,3 +123,39 @@ test('terminal grid: narrow viewport starts every tile minimized, one at a time'
   await page.locator('.group').filter({ hasText: 'sesión grid-narrow-a' }).getByTitle('Cerrar sesión').click();
   await page.locator('.group').filter({ hasText: 'sesión grid-narrow-b' }).getByTitle('Cerrar sesión').click();
 });
+
+test('terminal grid: restoring a tile opens scrolled to the bottom, not the top', async ({ page }) => {
+  // A minimized tile isn't mounted in the DOM at all, so it can accumulate
+  // pane content in the background with nothing to scroll — restoreTile()
+  // must force it to the bottom once it mounts. The tmux/claude stubs only
+  // ever produce one short line of pane content, so this injects a long one
+  // straight into the Alpine store (the same content shape a real session's
+  // /stream would deliver) to actually overflow the pane and make the bug
+  // observable.
+  page.on('dialog', (d) => d.accept());
+  await page.setViewportSize({ width: 375, height: 700 });
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await createSession(page, 'grid-scroll');
+
+  await page.getByRole('button', { name: /Modo terminal/ }).click();
+  const chip = page.getByRole('button', { name: /grid-scroll/ });
+  await expect(chip).toBeVisible(); // grid.tiles['grid-scroll'] exists once its chip renders
+
+  await page.evaluate((name) => {
+    const data = window.Alpine.$data(document.body);
+    data.grid.tiles[name].content = Array.from({ length: 300 }, (_, i) => 'line ' + i).join('\n');
+  }, 'grid-scroll');
+
+  await chip.click(); // restoreTile()
+  await expect(page.locator('.tgrid-tile', { hasText: 'grid-scroll' })).toBeVisible();
+  await expect(async () => {
+    const atBottom = await page.evaluate(() => {
+      const el = document.getElementById('tile-pane-grid-scroll');
+      return el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+    });
+    expect(atBottom).toBe(true);
+  }).toPass({ timeout: 2000 });
+
+  await page.locator('div[x-show="grid.open"]').getByText('×', { exact: true }).click();
+  await page.locator('.group').filter({ hasText: 'sesión grid-scroll' }).getByTitle('Cerrar sesión').click();
+});
