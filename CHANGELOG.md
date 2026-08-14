@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.4.0] — 2026-08-14
 
 ### Changed
 - **Terminal grid works on mobile.** Below 1024px the mosaic used to be replaced outright by
