@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.4.1] — 2026-08-14
 
 ### Changed
 - **Terminal grid tile header, mobile polish.** The zoom/unzoom button is hidden below
@@ -48,6 +48,18 @@
   update. Both now force a scroll to the bottom right after mounting, matching the desktop
   grid's mosaic (whose tiles are visible — and thus mounted — from the moment they're
   created, so this never showed up there).
+- **A send racing a fresh session's own TUI boot could still merge into the next one**, even
+  with the lock above in place: `sessionSendLock` correctly stops two sends from interleaving
+  their literal text, but a send whose Enter lands before Claude Code's readline is actually
+  reading input doesn't submit anything — the literal just sits in the pty's raw buffer, to be
+  swallowed into whatever's typed next once the readline finally activates and consumes the
+  whole buffer as one line. Reported as `Model 'sonnetHola' not found`: a model switch sent
+  right after creating a session (a project with its own CLAUDE.md, still booting) merged with
+  the very next chat message, confirmed against the conversation transcript — a single
+  `local_command` line, no separate user message ever arrived. `sessionSend`/`sessionMode` now
+  wait (`ensurePaneReady`, bounded, fails open) for the pane to show either a normal mode badge
+  or a recognized dialog before typing into it — free once a session is confirmed interactive,
+  since that's a single `capture-pane` read.
 
 ## [1.4.0] — 2026-08-14
 
