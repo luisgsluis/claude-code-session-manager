@@ -1,4 +1,4 @@
-.PHONY: build agent run test lint clean docker-build docker-run
+.PHONY: build agent deploy-agent run test lint clean docker-build docker-run
 
 BINARY := bin/ccsm
 AGENT  := bin/ccsm-agent
@@ -11,6 +11,12 @@ build:
 agent:
 	mkdir -p bin
 	CGO_ENABLED=0 go build -ldflags="-s -w" -o $(AGENT) ./cmd/ccsm-agent
+
+# Reconstruye e instala ccsm-agent en el host y reinicia el servicio en un
+# solo paso atómico (ver scripts/deploy-agent.sh). Solo tiene sentido en rb,
+# donde vive la unit systemd.
+deploy-agent:
+	./scripts/deploy-agent.sh
 
 run: build
 	./$(BINARY) --config config.yaml
