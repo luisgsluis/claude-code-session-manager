@@ -51,13 +51,12 @@
 
 .tgrid-hidden { display: none !important; }
 
-/* Desktop/tablet only: below 1024px the mosaic is unusable, so the view shows
-   a short notice instead. */
-.tgrid-wide-only { display: none; }
-@media (min-width: 1024px) {
-  .tgrid-wide-only  { display: flex; }
-  .tgrid-narrow-only { display: none !important; }
-}
+/* Below 1024px the mosaic (multiple tiles at once) is unusable, so app.js
+   (grid.narrow, see initGridNarrowTrack) keeps at most one tile unminimized
+   there — tileRows() then always renders a single row with a single tile,
+   which fills the .tgrid area exactly like the desktop mosaic does with one
+   tile open. No layout CSS is needed for that: it's a JS-driven state, not a
+   breakpoint-gated view. */
 
 /* Opacity-modifier utilities Tailwind never compiled into app.css: border-warn/40
    is used by the pre-existing choice-picker (index.html, single-session modal)

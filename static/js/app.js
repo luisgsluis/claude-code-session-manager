@@ -196,7 +196,7 @@ const I18N = {
     term_grid: 'Modo terminal',
     term_grid_title: 'Modo terminal ({0})',
     term_grid_empty: 'Ninguna sesión que mostrar.',
-    term_grid_narrow: 'La vista en mosaico necesita una pantalla m\u00e1s ancha. Abre cada sesi\u00f3n por separado desde la lista.',
+    term_grid_pick: 'Elige una sesi\u00f3n de arriba para abrirla.',
     term_tile_minimize: 'Minimizar',
     term_tile_restore: 'Restaurar',
     term_tile_zoom: 'Pantalla completa',
@@ -431,7 +431,7 @@ const I18N = {
     term_grid: 'Terminal mode',
     term_grid_title: 'Terminal mode ({0})',
     term_grid_empty: 'No sessions to show.',
-    term_grid_narrow: 'The tiled view needs a wider screen. Open each session individually from the list.',
+    term_grid_pick: 'Pick a session above to open it.',
     term_tile_minimize: 'Minimize',
     term_tile_restore: 'Restore',
     term_tile_zoom: 'Full screen',
@@ -518,8 +518,11 @@ function ccsmApp() {
     live: { open: false, name: '', view: 'chat', content: '', status: '', chatStatus: '', es: null, ces: null, timer: null, msgs: [], termHist: '', meta: null, input: '', sending: false, elapsed: '', models: [], maxH: null },
     // Terminal grid: tiles keyed by session name (the same stable identity the
     // session list uses), plus a single `zoomed` name — only one tile can be
-    // zoomed at a time.
-    grid: { open: false, zoomed: null, minimized: {}, tiles: {} },
+    // zoomed at a time. `narrow` mirrors the (max-width: 1023px) media query
+    // (see initGridNarrowTrack): below that width the mosaic layout is
+    // unusable, so tiles default to minimized and only one is ever shown at
+    // a time (openGridTile/restoreTile).
+    grid: { open: false, zoomed: null, minimized: {}, tiles: {}, narrow: window.matchMedia('(max-width: 1023px)').matches },
     rename: { open: false, session: '', tmuxName: '', claudeName: '' },
     profViewer: { open: false, name: '', html: '' },
     toast: { show: false, message: '', type: 'success' },
@@ -566,6 +569,7 @@ function ccsmApp() {
       this.initLang();
       this.initSkin();
       this.initViewportTrack();
+      this.initGridNarrowTrack();
       this.$watch('settings.open', v => this.setBodyLock());
       this.$watch('preview.open', v => this.setBodyLock());
       this.$watch('rename.open', v => this.setBodyLock());
@@ -636,6 +640,15 @@ function ccsmApp() {
       setH();
       if (window.visualViewport) window.visualViewport.addEventListener('resize', setH);
       window.addEventListener('resize', setH);
+    },
+
+    // Keeps grid.narrow in sync with the (max-width: 1023px) breakpoint the
+    // terminal grid uses to decide between the multi-tile mosaic and the
+    // one-tile-at-a-time mobile behaviour (rotating a tablet can cross it
+    // mid-session).
+    initGridNarrowTrack() {
+      const mq = window.matchMedia('(max-width: 1023px)');
+      mq.addEventListener('change', () => { this.grid.narrow = mq.matches; });
     },
 
     // copyToClipboard tries navigator.clipboard, then falls back to execCommand
@@ -1218,6 +1231,9 @@ function ccsmApp() {
         name, content: '', status: '', es: null, termHist: '',
         meta: null, input: '', sending: false,
       };
+      // Narrow screens can't fit a mosaic, so every tile starts minimized —
+      // the user picks one at a time from the header chips (restoreTile).
+      if (this.grid.narrow) this.grid.minimized[name] = true;
       this.startTileStream(name);
       this.fetchTileMeta(name);
     },
@@ -1337,6 +1353,11 @@ function ccsmApp() {
     },
 
     restoreTile(name) {
+      // Narrow: at most one tile visible at a time (there's no room for a
+      // mosaic), so opening one minimizes whichever was open before it.
+      if (this.grid.narrow) {
+        Object.keys(this.grid.tiles).forEach(n => { if (n !== name) this.grid.minimized[n] = true; });
+      }
       delete this.grid.minimized[name];
     },
 

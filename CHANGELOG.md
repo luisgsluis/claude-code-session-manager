@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Changed
+- **Terminal grid works on mobile.** Below 1024px the mosaic used to be replaced outright by
+  a "use the list instead" notice — the multi-tile layout genuinely doesn't fit, but the
+  single full-screen pane it's built from (the same one `zoom` already used) works fine on a
+  phone. Now every tile starts minimized as a header chip there, and opening one shows it
+  full-screen, minimizing whichever was open before — so only one pane is ever on screen at
+  once, no mosaic, no dead breakpoint notice.
 - The LAN-bypass probe the UI issues on every page load (a login POST with empty
   credentials) is no longer written to the audit log. It was already exempt from the rate
   limiter for the same reason it is not a real attempt; leaving it audited put two

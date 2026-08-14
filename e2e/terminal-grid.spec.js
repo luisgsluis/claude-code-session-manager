@@ -32,7 +32,7 @@ test('terminal grid: tiles, minimize/restore, zoom/unzoom, send — no console e
 
   // Open the grid.
   await page.getByRole('button', { name: /Modo terminal/ }).click();
-  const grid = page.locator('div.tgrid-wide-only');
+  const grid = page.locator('div[x-show="grid.open"]');
   await expect(grid).toBeVisible();
 
   // Both tiles render with their session name and pane content.
@@ -84,16 +84,42 @@ test('terminal grid: tiles, minimize/restore, zoom/unzoom, send — no console e
   await expect(page.getByText('No hay sesiones activas')).toBeVisible();
 });
 
-test('terminal grid: narrow viewport shows the fallback notice, not the mosaic', async ({ page }) => {
+test('terminal grid: narrow viewport starts every tile minimized, one at a time', async ({ page }) => {
   page.on('dialog', (d) => d.accept());
   await page.setViewportSize({ width: 375, height: 700 });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
-  await createSession(page, 'grid-narrow');
+  await createSession(page, 'grid-narrow-a');
+  await createSession(page, 'grid-narrow-b');
 
   await page.getByRole('button', { name: /Modo terminal/ }).click();
-  await expect(page.getByText('La vista en mosaico necesita')).toBeVisible();
-  await expect(page.locator('.tgrid')).toBeHidden();
+
+  // Nothing open yet: both sessions show as header chips, and the pick-one
+  // hint fills the body instead of a mosaic (which would be unusable here).
+  await expect(page.getByText('Elige una sesión de arriba')).toBeVisible();
+  await expect(page.locator('.tgrid-tile')).toHaveCount(0);
+  const chipA = page.getByRole('button', { name: /grid-narrow-a/ });
+  const chipB = page.getByRole('button', { name: /grid-narrow-b/ });
+  await expect(chipA).toBeVisible();
+  await expect(chipB).toBeVisible();
+
+  // Opening one tile shows only that one — no mosaic of two.
+  await chipA.click();
+  await expect(page.locator('.tgrid-tile', { hasText: 'grid-narrow-a' })).toBeVisible();
+  await expect(page.locator('.tgrid-tile')).toHaveCount(1);
+  await expect(chipA).toBeHidden();
+
+  // Opening the other tile replaces it, rather than tiling both.
+  await chipB.click();
+  await expect(page.locator('.tgrid-tile', { hasText: 'grid-narrow-b' })).toBeVisible();
+  await expect(page.locator('.tgrid-tile')).toHaveCount(1);
+  await expect(chipA).toBeVisible(); // a is back to being a chip
+
+  // Minimizing the open tile returns to the pick-one hint.
+  await page.locator('.tgrid-tile', { hasText: 'grid-narrow-b' }).getByTitle('Minimizar').click();
+  await expect(page.getByText('Elige una sesión de arriba')).toBeVisible();
+  await expect(page.locator('.tgrid-tile')).toHaveCount(0);
 
   await page.locator('div[x-show="grid.open"]').getByText('×', { exact: true }).click();
-  await page.locator('.group').filter({ hasText: 'sesión grid-narrow' }).getByTitle('Cerrar sesión').click();
+  await page.locator('.group').filter({ hasText: 'sesión grid-narrow-a' }).getByTitle('Cerrar sesión').click();
+  await page.locator('.group').filter({ hasText: 'sesión grid-narrow-b' }).getByTitle('Cerrar sesión').click();
 });

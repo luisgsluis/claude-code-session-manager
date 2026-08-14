@@ -20,7 +20,7 @@ CCSM is a lightweight web app that turns any Linux box you control — a homelab
 ## Features
 
 - 🚀 **One-click sessions**: new Claude session, with profile, or resume a past conversation (top action bar)
-- 🖥️ **Terminal grid**: tile every active session's raw terminal pane at once, in colour — minimize, zoom (tmux-style), and send text/keys per tile without leaving the view
+- 🖥️ **Terminal grid**: tile every active session's raw terminal pane at once, in colour — minimize, zoom (tmux-style), and send text/keys per tile without leaving the view. Below 1024px, where a mosaic wouldn't fit, it becomes a one-session-at-a-time view instead: every tile starts minimized as a header chip and tapping one opens it full-screen, replacing whichever was open before
 - ✏️ **Rename sessions**: rename the tmux session AND set the Claude conversation title — the title is typed as `/rename <title>` into the pane, so punctuation like `!` is fine
 - 🔍 **Search conversations**: full-text search across all your `.jsonl` history, filter by machine origin
 - 👁 **Preview conversations** before resuming

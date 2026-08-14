@@ -814,14 +814,17 @@
     <button @click="closeTermGrid()" class="text-fg-muted hover:text-fg text-xl leading-none shrink-0">&times;</button>
   </div>
 
-  <!-- Narrow screens: the mosaic needs width, so offer the single-session view instead -->
-  <div class="tgrid-narrow-only flex-1 flex items-center justify-center p-6 text-center text-fg-muted text-sm"
-    x-text="t('term_grid_narrow')"></div>
-
-  <div class="tgrid-wide-only flex-col flex-1 min-h-0 p-3 gap-3">
+  <div class="flex flex-col flex-1 min-h-0 p-3 gap-3">
 
     <div x-show="Object.keys(grid.tiles).length === 0" class="flex-1 flex items-center justify-center text-fg-muted text-sm"
       x-text="t('term_grid_empty')"></div>
+
+    <!-- Narrow screens (grid.narrow, see app.js): every tile starts minimized
+         and only one is ever shown at a time, so this hint fills the gap
+         until the user picks one from the header chips. -->
+    <div x-show="grid.narrow && Object.keys(grid.tiles).length > 0 && visibleTileNames().length === 0"
+      class="flex-1 flex items-center justify-center p-6 text-center text-fg-muted text-sm"
+      x-text="t('term_grid_pick')"></div>
 
     <!-- Tiles packed into near-square rows (tileRows(), see app.js) so an
          incomplete row never leaves a dead gap. Hidden (not unmounted) while
