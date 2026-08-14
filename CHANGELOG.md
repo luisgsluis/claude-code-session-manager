@@ -25,6 +25,17 @@
   The card view gets the same sentinel — it previously had no way to reach page 2 at all.
 
 ### Fixed
+- **A model switch (or a mode change) racing the next message could send garbled text to the
+  session** — reported as `Model 'sonnetQuiero que verifiques...' not found` right after
+  picking a model and immediately typing a message. The UI never waits for a model/mode
+  change's own request before letting the next one through, and the host had no lock either:
+  `sessionSend` types literal text then Enter as two separate tmux processes, so two
+  overlapping calls for the same session could interleave their literal text before either
+  Enter landed, submitting one merged line. Mode changes were if anything more exposed — the
+  first time a profile's Shift+Tab wheel gets discovered, it walks the pane over several
+  seconds, a wide window for a concurrent send to land mid-cycle. Both `sessionSend` and
+  `sessionMode` now share one lock per session (`sessionSendLock`), serializing any pane
+  writes for that session without blocking unrelated sessions.
 - **Terminal panes could open scrolled to the top instead of the bottom.** Both the mobile
   grid's tile picker (restoreTile) and the single-session Terminal tab (setLiveView) only
   mount their pane element when the view actually becomes visible — a mobile tile stays

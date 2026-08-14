@@ -58,6 +58,26 @@ type Host struct {
 	// enabled, so a hardcoded order can silently land on the wrong mode).
 	modeWheelCache map[string][]string
 	modeMu         sync.Mutex
+
+	// sendMu holds one *sync.Mutex per session name (lazily created, see
+	// sessionSendLock), serializing sessionSend calls for that session. Each
+	// call is two separate tmux send-keys processes (literal text, then
+	// Enter) with no atomicity between them; two overlapping calls — e.g. the
+	// UI's model-switch request racing the user's next chat message, neither
+	// awaited by the other — can interleave into the pane's input line
+	// before either Enter lands, submitting one garbled line (observed:
+	// "/model sonnet" + "Quiero que..." merged into a single invalid /model
+	// argument). Never cleaned up per session; one idle mutex per session
+	// name ever used is not worth the bookkeeping for a personal tool.
+	sendMu sync.Map
+}
+
+// sessionSendLock returns the (lazily created) mutex serializing sessionSend
+// calls for one session, so per-session locking doesn't block unrelated
+// sessions against each other.
+func (h *Host) sessionSendLock(name string) *sync.Mutex {
+	v, _ := h.sendMu.LoadOrStore(name, &sync.Mutex{})
+	return v.(*sync.Mutex)
 }
 
 // Error carries an HTTP-like status so the web server can return the right
@@ -2433,7 +2453,17 @@ var tmuxKeyMap = map[string]string{
 
 // sessionSend types a message into a live session (literal text + Enter) or
 // sends one whitelisted special key. Mirrors claudeRename's send-keys pattern.
+// Locked per session (sessionSendLock): the literal-text and Enter send-keys
+// below are two separate tmux processes with no atomicity between them, so
+// two overlapping calls for the same session — e.g. the UI's model-switch
+// request racing the next chat message, neither awaited by the other on the
+// client — could otherwise interleave into the pane's input line before
+// either Enter lands, submitting one garbled command.
 func (h *Host) sessionSend(name, text, key string) (map[string]any, error) {
+	mu := h.sessionSendLock(name)
+	mu.Lock()
+	defer mu.Unlock()
+
 	if !h.sessionAlive(name) {
 		return nil, errNotFound("session not found: %s", name)
 	}
@@ -2683,7 +2713,19 @@ func (h *Host) restoreMode(name, want string) {
 // re-read the badge after each press, stopping as soon as it lands on
 // target, bounded by the wheel length (capped at maxModeCycle) so it always
 // terminates even if the badge never becomes readable.
+//
+// Locked per session, same mutex as sessionSend: wheelFor's first call per
+// profile walks the pane over several seconds (discoverModeWheel, up to
+// maxModeCycle presses 500ms apart) and the cycling loop below presses
+// Shift+Tab repeatedly too — either is a wide window for a concurrent
+// sessionSend (a chat message, a model switch) to land its own send-keys
+// calls into the pane mid-sequence. Sharing the lock with sessionSend, not
+// a separate one, is what actually serializes the two against each other.
 func (h *Host) sessionMode(name, target string) (map[string]any, error) {
+	mu := h.sessionSendLock(name)
+	mu.Lock()
+	defer mu.Unlock()
+
 	if !h.sessionAlive(name) {
 		return nil, errNotFound("session not found: %s", name)
 	}

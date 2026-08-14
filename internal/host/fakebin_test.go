@@ -83,6 +83,11 @@ case "$1" in
     exit 0 ;;
   send-keys)
     [ -n "$FAKE_TMUX_SENDKEYS" ] && printf '%s\n' "$*" >> "$FAKE_TMUX_SENDKEYS"
+    # Concurrency tests (TestSessionSendConcurrent): a delay between the
+    # literal-text call and its own Enter widens the window for a second,
+    # unlocked sessionSend to interleave its own literal in between —
+    # exactly the race sessionSendLock exists to close.
+    [ "$4" = "-l" ] && [ -n "$FAKE_TMUX_SENDKEYS_DELAY" ] && sleep "$FAKE_TMUX_SENDKEYS_DELAY"
     # A raw shift-tab (\e[Z, what rawShiftTab sends) advances the mode wheel.
     if [ -n "$FAKE_TMUX_MODE_WHEEL" ] && [ -n "$FAKE_TMUX_MODE_STATE" ]; then
       last=""

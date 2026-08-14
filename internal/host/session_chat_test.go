@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -174,6 +175,63 @@ func TestSessionSend(t *testing.T) {
 			t.Error("expected 404 for dead session")
 		}
 	})
+}
+
+// TestSessionSendConcurrent reproduces the bug reported in production: a
+// model switch (typed as "/model sonnet" through the same text path a chat
+// message uses) racing the user's next message, neither awaited by the
+// other client-side, interleaved their literal send-keys calls into the
+// pane's input line before either Enter landed — submitting one line,
+// "/model sonnetQuiero que verifiques...", which Claude Code rejected as an
+// invalid model name. sessionSendLock (host.go) serializes sessionSend calls
+// per session; this asserts the fake tmux log never shows a literal call
+// from one goroutine followed by the other's literal instead of its own
+// Enter, with the delay (FAKE_TMUX_SENDKEYS_DELAY) making that window wide
+// enough to hit reliably if the lock were ever removed.
+func TestSessionSendConcurrent(t *testing.T) {
+	sendPath := filepath.Join(t.TempDir(), "send.log")
+	h := fakeHost(t, map[string]string{
+		"FAKE_TMUX_SENDKEYS":       sendPath,
+		"FAKE_TMUX_SENDKEYS_DELAY": "0.05",
+	})
+
+	var wg sync.WaitGroup
+	texts := []string{"/model sonnet", "Quiero que verifiques hyperbackup"}
+	for _, text := range texts {
+		wg.Add(1)
+		go func(text string) {
+			defer wg.Done()
+			if _, err := h.Exec("session-send", map[string]string{"name": "x", "text": text}); err != nil {
+				t.Errorf("session-send %q: %v", text, err)
+			}
+		}(text)
+	}
+	wg.Wait()
+
+	b, err := os.ReadFile(sendPath)
+	if err != nil {
+		t.Fatalf("read send log: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("expected 4 send-keys calls (2 × literal+Enter), got %d: %q", len(lines), lines)
+	}
+	// Every literal line must be immediately followed by ITS OWN Enter (same
+	// -t target, "send-keys -t <target> Enter") — never by the other
+	// goroutine's literal, which is exactly what the reported bug looked
+	// like ("/model sonnet" + the next message merged before either Enter
+	// fired).
+	for i := 0; i < len(lines); i += 2 {
+		fields := strings.Fields(lines[i])
+		if len(fields) < 4 || fields[3] != "-l" {
+			t.Fatalf("line %d: expected a literal send-keys, got %q", i, lines[i])
+		}
+		target := fields[2]
+		wantEnter := "send-keys -t " + target + " Enter"
+		if lines[i+1] != wantEnter {
+			t.Errorf("line %d: expected %q right after its own literal (%q), got %q — calls interleaved", i, wantEnter, lines[i], lines[i+1])
+		}
+	}
 }
 
 func TestPanePIDAndProcRead(t *testing.T) {
