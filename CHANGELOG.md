@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Changed
+- **Terminal grid tile header, mobile polish.** The zoom/unzoom button is hidden below
+  1024px: with only one tile ever shown there (see the mobile single-tile behaviour above),
+  there is nothing to zoom out of. In its place, each tile now has scroll-to-top /
+  scroll-to-bottom buttons — the same pair the chat and single-session Terminal views already
+  had — fitted into the same one-row header via tighter gap/padding on narrow screens, so it
+  still doesn't need its own horizontal scroll.
+- **Light skin: terminal panes had poor contrast.** The single-session Terminal tab used a
+  flat `bg-black/40` regardless of skin — on a light background that's a muddy mid-gray box
+  with the skin's normal (dark) text on top, instead of a proper light terminal pane; now it
+  reuses the grid's theme-aware `.tgrid-pane` colors. Separately, several light-skin ANSI
+  colors (7, 8, 10, 11 especially) landed under a 3:1 contrast ratio against the pane
+  background — practically invisible — because they were picked for hue variety, not
+  contrast; every value is now darkened (same hue) to clear 4.5:1. `.ansi-dim`'s opacity
+  compounded this further (fading toward white loses contrast much faster than fading toward
+  black), so light skin now fades less (0.85 instead of 0.65).
+- **Conversations list: no more tap-to-load-more button.** Scrolling near the end of the list
+  now loads the next page on its own (`initConvInfiniteScroll`, an `IntersectionObserver` on
+  a sentinel after the last item), the standard pattern for a touch list. A small "scroll for
+  more ⌄" / "loading more…" hint replaces the button so the behavior is still discoverable.
+  The card view gets the same sentinel — it previously had no way to reach page 2 at all.
+
 ### Fixed
 - **Terminal panes could open scrolled to the top instead of the bottom.** Both the mobile
   grid's tile picker (restoreTile) and the single-session Terminal tab (setLiveView) only

@@ -67,7 +67,8 @@ const I18N = {
     alive: 'sesión viva',
     resume: 'retomar',
     preview: 'preview',
-    load_more: 'cargar más',
+    scroll_for_more: 'desliza para ver más ⌄',
+    loading_more: 'cargando más…',
     preview_title: 'Preview de conversación',
     you: '🧑 Tú',
     claude: '🤖 Claude',
@@ -302,7 +303,8 @@ const I18N = {
     alive: 'live session',
     resume: 'resume',
     preview: 'preview',
-    load_more: 'load more',
+    scroll_for_more: 'scroll for more ⌄',
+    loading_more: 'loading more…',
     preview_title: 'Conversation preview',
     you: '🧑 You',
     claude: '🤖 Claude',
@@ -570,6 +572,7 @@ function ccsmApp() {
       this.initSkin();
       this.initViewportTrack();
       this.initGridNarrowTrack();
+      this.initConvInfiniteScroll();
       this.$watch('settings.open', v => this.setBodyLock());
       this.$watch('preview.open', v => this.setBodyLock());
       this.$watch('rename.open', v => this.setBodyLock());
@@ -863,6 +866,30 @@ function ccsmApp() {
 
     async loadMoreConversations() {
       await this.loadConversations(this.conversations.page + 1);
+    },
+
+    // Replaces a tap-to-load-more button with the standard touch-list
+    // pattern: scrolling near the end of the list loads the next page on
+    // its own. Both sentinels (list and card view) are observed from the
+    // start — only one is ever in the DOM's layout flow at a time (the
+    // other's view is x-show:none, so it never intersects), and hidden
+    // (display:none) sentinels don't fire either, once conversations run
+    // out. rootMargin starts the fetch a bit before the sentinel is
+    // actually on screen so the next page is ready by the time the user
+    // gets there.
+    initConvInfiniteScroll() {
+      const onIntersect = (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting && this.conversations.hasMore && !this.conversations.loading) {
+            this.loadMoreConversations();
+          }
+        }
+      };
+      const observer = new IntersectionObserver(onIntersect, { rootMargin: '200px' });
+      this.$nextTick(() => {
+        if (this.$refs.convSentinelList) observer.observe(this.$refs.convSentinelList);
+        if (this.$refs.convSentinelCards) observer.observe(this.$refs.convSentinelCards);
+      });
     },
 
     async loadProfiles() {
@@ -1385,6 +1412,17 @@ function ccsmApp() {
     toggleTileZoom(name) {
       if (this.grid.minimized[name]) return;
       this.grid.zoomed = this.grid.zoomed === name ? null : name;
+    },
+
+    // Mirrors scrollLive(): dir -1 scrolls up one page, dir 1 goes to the end.
+    scrollTilePane(name, dir) {
+      const el = document.getElementById('tile-pane-' + name);
+      if (!el) return;
+      if (dir > 0) {
+        el.scrollTop = el.scrollHeight;
+      } else {
+        el.scrollTop = Math.max(0, el.scrollTop - el.clientHeight);
+      }
     },
 
     // tileRows packs the visible tiles into near-square rows so an incomplete

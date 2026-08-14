@@ -284,8 +284,11 @@
           </div>
         </div>
       </template>
-      <div x-show="conversations.hasMore" class="text-center">
-        <button @click="loadMoreConversations()" class="text-sm text-accent hover:text-accent-hover py-2" x-text="t('load_more')"></button>
+      <!-- Scrolling near here loads the next page (convInfiniteScroll in
+           app.js) — no tap-to-load-more button on a touch list. -->
+      <div x-show="conversations.hasMore" x-ref="convSentinelList" class="text-center py-3 text-xs text-fg-muted">
+        <span x-show="conversations.loading" class="animate-pulse" x-text="t('loading_more')"></span>
+        <span x-show="!conversations.loading" x-text="t('scroll_for_more')"></span>
       </div>
     </div>
 
@@ -319,6 +322,10 @@
           </div>
         </div>
       </template>
+      <div x-show="conversations.hasMore" x-ref="convSentinelCards" class="col-span-full text-center py-3 text-xs text-fg-muted">
+        <span x-show="conversations.loading" class="animate-pulse" x-text="t('loading_more')"></span>
+        <span x-show="!conversations.loading" x-text="t('scroll_for_more')"></span>
+      </div>
     </div>
   </section>
 </main>
@@ -562,7 +569,7 @@
 
     <!-- Terminal tab -->
     <template x-if="live.view==='term'">
-      <div class="flex-1 overflow-y-auto min-h-0 bg-black/40" x-ref="livePane" style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
+      <div class="flex-1 overflow-y-auto min-h-0 tgrid-pane" x-ref="livePane" style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
         <div x-show="live.status" class="px-3 py-2 text-xs text-danger" x-text="live.status"></div>
         <pre class="p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words" x-text="termText"></pre>
       </div>
@@ -844,8 +851,11 @@
 
           <!-- Tile header: kept to this one row (mode/model included) so tiles
                never grow taller than the icon-button strip; a narrow tile
-               scrolls this row horizontally instead of wrapping to a 2nd line. -->
-          <div class="flex items-center gap-2 px-3 py-2 border-b border-gray-800 shrink-0 overflow-x-auto">
+               scrolls this row horizontally instead of wrapping to a 2nd line.
+               tgrid-tile-header tightens gap/padding below 1024px (terminal-grid.css)
+               so the two scroll buttons + the rest still fit one mobile-width
+               tile without needing that scroll. -->
+          <div class="tgrid-tile-header flex items-center gap-2 px-3 py-2 border-b border-gray-800 shrink-0 overflow-x-auto">
             <span class="w-2 h-2 rounded-full shrink-0" :class="tileRcConnected(name) ? 'bg-success' : 'bg-warn'"></span>
             <span class="font-mono text-sm shrink-0" x-text="name"></span>
             <select @change="setTileMode(name, $event.target.value); $event.target.value=''"
@@ -863,9 +873,16 @@
               </template>
             </select>
             <span class="flex-1"></span>
+            <button @click="scrollTilePane(name, -1)" :title="t('live_scroll_up')"
+              class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors">⏶</button>
+            <button @click="scrollTilePane(name, 1)" :title="t('live_scroll_end')"
+              class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors">⏬</button>
             <button @click="sendTileKey(name, 'ctrl-o')" :title="t('term_tile_output')"
               class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors">⌄</button>
-            <button @click="toggleTileZoom(name)" :title="grid.zoomed === name ? t('term_tile_unzoom') : t('term_tile_zoom')"
+            <!-- Zoom is meaningless when the grid can only ever show one tile
+                 (grid.narrow, see restoreTile in app.js): there's nothing to
+                 zoom OUT of. -->
+            <button x-show="!grid.narrow" @click="toggleTileZoom(name)" :title="grid.zoomed === name ? t('term_tile_unzoom') : t('term_tile_zoom')"
               class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors"
               x-text="grid.zoomed === name ? '⧉' : '⛶'"></button>
             <button @click="minimizeTile(name)" :title="t('term_tile_minimize')"

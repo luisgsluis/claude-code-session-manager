@@ -104,9 +104,29 @@ test('terminal grid: narrow viewport starts every tile minimized, one at a time'
 
   // Opening one tile shows only that one — no mosaic of two.
   await chipA.click();
-  await expect(page.locator('.tgrid-tile', { hasText: 'grid-narrow-a' })).toBeVisible();
+  const tileA = page.locator('.tgrid-tile', { hasText: 'grid-narrow-a' });
+  await expect(tileA).toBeVisible();
   await expect(page.locator('.tgrid-tile')).toHaveCount(1);
   await expect(chipA).toBeHidden();
+
+  // Zoom is meaningless when only one tile can ever be shown — hidden here,
+  // unlike the scroll-up/down controls it's replaced by in the same row
+  // (which the wide-viewport spec above already exercises on desktop).
+  await expect(tileA.getByTitle('Pantalla completa')).toBeHidden();
+  const upBtn = tileA.getByTitle('Subir');
+  const endBtn = tileA.getByTitle('Ir al final');
+  await expect(upBtn).toBeVisible();
+  await expect(endBtn).toBeVisible();
+  await endBtn.click();
+  await upBtn.click(); // just confirms neither throws / is unreachable
+
+  // The header row (name, mode/model selects, scroll/output/minimize
+  // buttons) must fit without needing its own horizontal scroll — that's
+  // the whole point of hiding zoom and tightening tgrid-tile-header's
+  // spacing below 1024px (terminal-grid.css).
+  const header = tileA.locator('.tgrid-tile-header');
+  const overflow = await header.evaluate((el) => el.scrollWidth - el.clientWidth);
+  expect(overflow, 'tile header should not overflow on a phone-width tile').toBeLessThanOrEqual(0);
 
   // Opening the other tile replaces it, rather than tiling both.
   await chipB.click();

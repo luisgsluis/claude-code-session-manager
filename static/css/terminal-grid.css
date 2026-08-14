@@ -58,6 +58,18 @@
    tile open. No layout CSS is needed for that: it's a JS-driven state, not a
    breakpoint-gated view. */
 
+/* Same breakpoint, tile header: on a real phone-width tile the header row
+   (name + mode/model selects + scroll/output/minimize buttons — zoom is
+   hidden there entirely, see the x-show in index.html) measured ~30px wider
+   than the tile itself with the desktop gap/padding, which used to fall back
+   to a horizontal scroll within the row. Tightened spacing here instead, so
+   it fits without one. Desktop keeps the roomier default (Tailwind's
+   gap-2/px-2 in index.html) since it has the width to spare. */
+@media (max-width: 1023px) {
+  .tgrid-tile-header { gap: 0.25rem; }
+  .tgrid-tile-header button { padding-left: 0.375rem; padding-right: 0.375rem; }
+}
+
 /* Opacity-modifier utilities Tailwind never compiled into app.css: border-warn/40
    is used by the pre-existing choice-picker (index.html, single-session modal)
    and was never generated (the base .border-warn utility isn't emitted either,
@@ -144,6 +156,12 @@
 .ansi-italic    { font-style: italic; }
 .ansi-underline { text-decoration: underline; }
 
+/* Fading toward a light background loses contrast far faster than fading
+   toward a dark one — 0.65 pushed several light-skin colors under 3:1, i.e.
+   past "de-emphasized" into "not legible". A lighter fade keeps dim text
+   readable while still visibly secondary. */
+[data-skin="light"] .ansi-dim { opacity: 0.85; }
+
 :root {
   --ansi-fg-0: #5c5c68; /* black (lifted so it stays readable) */
   --ansi-fg-1: #ff6b6b;
@@ -185,23 +203,28 @@
    white" (15) maps to near-black rather than literal white, which would be
    invisible on a light pane — content relying on it for emphasis (common in
    terminal UIs designed for dark backgrounds) still reads as the strongest
-   foreground here, just inverted. */
+   foreground here, just inverted.
+   Every value below is darkened (same hue) until it clears a 4.5:1 contrast
+   ratio against --term-bg (#f7f7f8) — the previous set was picked for hue
+   variety alone and several (7, 8, 10, 11 especially) landed under 3:1,
+   unreadable at a glance against a near-white pane; .ansi-dim's opacity
+   compounds this further (see its own light-skin override below). */
 [data-skin="light"] {
   --ansi-fg-0: #24292e;
-  --ansi-fg-1: #d73a49;
-  --ansi-fg-2: #22863a;
-  --ansi-fg-3: #b08800;
+  --ansi-fg-1: #d42d3d;
+  --ansi-fg-2: #218238;
+  --ansi-fg-3: #8c6c00;
   --ansi-fg-4: #005cc5;
   --ansi-fg-5: #5a32a3;
-  --ansi-fg-6: #0598bc;
-  --ansi-fg-7: #6a737d;
-  --ansi-fg-8: #959da5;
+  --ansi-fg-6: #047c99;
+  --ansi-fg-7: #68707a;
+  --ansi-fg-8: #68727b;
   --ansi-fg-9: #cb2431;
-  --ansi-fg-10: #28a745;
-  --ansi-fg-11: #dbab09;
-  --ansi-fg-12: #2188ff;
-  --ansi-fg-13: #8a63d2;
-  --ansi-fg-14: #3192aa;
+  --ansi-fg-10: #1f8236;
+  --ansi-fg-11: #8d6e06;
+  --ansi-fg-12: #006ce8;
+  --ansi-fg-13: #8157cf;
+  --ansi-fg-14: #297a8e;
   --ansi-fg-15: #1c1c1e;
 
   --ansi-bg-0: #ececee;
