@@ -253,12 +253,16 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	s.cfgMu.RUnlock()
 	if !ok {
 		// The UI probes for the LAN bypass by POSTing empty credentials on
-		// every page load (checkAuth in app.js). That is not an attempt, and
-		// counting it would let a reloading browser lock itself out.
+		// every page load (checkAuth in app.js). That is not an attempt: it is
+		// neither counted (a reloading browser would lock itself out) nor
+		// audited (two entries per page load bury the real failures in a log
+		// that now feeds an external IP blocker). Nothing hides behind this —
+		// an empty username can never match a user, since usernames are
+		// non-empty by validation, so there is no attempt to conceal.
 		if req.Username != "" {
 			s.recordAuthFailure(ip, req.Username)
+			s.auditLogIP("login_failed", req.Username, "invalid credentials", ip)
 		}
-		s.auditLogIP("login_failed", req.Username, "invalid credentials", ip)
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}

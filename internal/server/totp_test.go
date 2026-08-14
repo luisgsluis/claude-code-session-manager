@@ -184,14 +184,41 @@ func TestTOTPStepIsRateLimited(t *testing.T) {
 }
 
 // The UI probes the LAN bypass on every page load by POSTing empty
-// credentials. Counting those would let a reloading browser lock itself out.
-func TestLANProbeDoesNotCountAsFailure(t *testing.T) {
+// credentials. Counting those would let a reloading browser lock itself out,
+// and auditing them buries the real failures under two entries per page load.
+func TestLANProbeIsNeitherCountedNorAudited(t *testing.T) {
 	srv := newAuthServer(t, "")
 	for i := 0; i < auth.DefaultLoginMaxFails*3; i++ {
 		postJSON(srv, "/api/auth/login", `{"username":"","password":""}`, nil)
 	}
 	if w := postJSON(srv, "/api/auth/login", `{"username":"luis","password":"test123"}`, nil); w.Code != 200 {
-		t.Errorf("the LAN probe locked the client out: %d", w.Code)
+		t.Fatalf("the LAN probe locked the client out: %d", w.Code)
+	}
+
+	entries, err := srv.audit.Read(100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Action == "login_failed" {
+			t.Errorf("the probe was audited as a failed login: %+v", e)
+		}
+	}
+
+	// A real failure is still recorded, IP included.
+	postJSON(srv, "/api/auth/login", `{"username":"luis","password":"wrong"}`, nil)
+	entries, err = srv.audit.Read(100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Action == "login_failed" && e.User == "luis" && e.IP == "8.8.8.8" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("a real failed login was not audited with its IP")
 	}
 }
 

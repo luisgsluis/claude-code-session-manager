@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- The LAN-bypass probe the UI issues on every page load (a login POST with empty
+  credentials) is no longer written to the audit log. It was already exempt from the rate
+  limiter for the same reason it is not a real attempt; leaving it audited put two
+  `login_failed` entries per page load into a log that now feeds an external IP blocker,
+  burying the real failures. Nothing hides behind this: usernames are non-empty by
+  validation, so an empty one can never match a user.
+
 ## [1.3.0] — 2026-08-14
 
 ### Added

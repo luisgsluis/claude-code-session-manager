@@ -216,8 +216,10 @@ many buckets). The state is in memory; the durable record is the audit log, whic
 `ip` on authentication events so an external blocker can act on it.
 
 The UI probes the LAN bypass on every page load by POSTing empty credentials, so a failure
-with an empty username is deliberately not counted — otherwise a reloading browser out on
-the internet would lock itself out in five refreshes.
+with an empty username is deliberately neither counted nor audited: counting it would lock a
+reloading browser out in five refreshes, and auditing it buries real failures under two
+entries per page load — in a log that now feeds an external IP blocker. Nothing hides behind
+it: usernames are non-empty by validation, so an empty one can never match a user.
 
 ### Validation
 
