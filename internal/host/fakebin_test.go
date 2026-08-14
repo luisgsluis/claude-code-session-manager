@@ -57,6 +57,20 @@ case "$1" in
       fi
       exit 0
     fi
+    # ensurePaneReady tests: capture-pane returns empty (not ready) for the
+    # first FAKE_TMUX_READY_AFTER-1 calls, then a valid idle badge from then
+    # on — simulating a session whose TUI takes a few reads to render its
+    # first frame.
+    if [ -n "$FAKE_TMUX_READY_AFTER" ] && [ -n "$FAKE_TMUX_READY_COUNTER" ]; then
+      n="$(cat "$FAKE_TMUX_READY_COUNTER" 2>/dev/null)"
+      [ -z "$n" ] && n=0
+      n=$((n + 1))
+      printf '%s' "$n" > "$FAKE_TMUX_READY_COUNTER"
+      if [ "$n" -ge "$FAKE_TMUX_READY_AFTER" ]; then
+        printf '  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents\n'
+      fi
+      exit 0
+    fi
     printf '%s' "$FAKE_TMUX_LINE"
     exit 0 ;;
   has-session)
@@ -156,6 +170,12 @@ func fakeHost(t *testing.T, env map[string]string) *Host {
 		RcSettleSeconds: 0,
 		Home:            base,
 	})
+	// ensurePaneReady's wait is a real-world timing concern (a session's own
+	// TUI booting), not something the fake tmux simulates: its default
+	// capture-pane is empty, which paneReady reads as "not ready" and would
+	// otherwise stall every sessionSend/sessionMode test for paneReadyTimeout.
+	// Tests targeting ensurePaneReady itself set this back explicitly.
+	h.paneReadyTimeout = 0
 	return h
 }
 

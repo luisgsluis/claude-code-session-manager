@@ -70,7 +70,21 @@ type Host struct {
 	// argument). Never cleaned up per session; one idle mutex per session
 	// name ever used is not worth the bookkeeping for a personal tool.
 	sendMu sync.Map
+
+	// paneReadyTimeout bounds ensurePaneReady's wait for a freshly spawned
+	// session's TUI to start reading input. Zero disables the wait outright
+	// (fakeHost sets it to 0 so the stub tmux's default empty capture-pane
+	// never stalls the test suite); production gets a positive default from
+	// New. A dedicated field rather than reusing rcWaitSeconds: that config
+	// bounds a different, unrelated wait (the mobile-app RC bridge over the
+	// network), not the local pty becoming interactive.
+	paneReadyTimeout time.Duration
 }
+
+// defaultPaneReadyTimeout is how long ensurePaneReady waits, in production,
+// for a freshly spawned session's TUI to become interactive before giving up
+// and sending anyway (fail open, matching the rest of this file).
+const defaultPaneReadyTimeout = 10 * time.Second
 
 // sessionSendLock returns the (lazily created) mutex serializing sessionSend
 // calls for one session, so per-session locking doesn't block unrelated
@@ -121,18 +135,19 @@ func New(o Options) *Host {
 		return v
 	}
 	return &Host{
-		profilesPath:    def(o.ProfilesPath, o.Home+"/claude-shared/claude-perfiles"),
-		settingsPath:    def(o.SettingsPath, o.Home+"/.claude/settings.json"),
-		convPath:        def(o.ConvPath, o.Home+"/.claude/projects/-home-admin"),
-		claudeBinary:    def(o.ClaudeBinary, o.Home+"/.local/bin/claude"),
-		tmuxBinary:      def(o.TmuxBinary, "/usr/bin/tmux"),
-		bashBinary:      def(o.BashBinary, "/usr/bin/bash"),
-		rcBootstrap:     def(o.RcBootstrap, "estandar"),
-		rcWaitSeconds:   o.RcWaitSeconds,
-		rcPollSeconds:   o.RcPollSeconds,
-		rcSettleSeconds: o.RcSettleSeconds,
-		home:            o.Home,
-		modeWheelCache:  map[string][]string{},
+		profilesPath:     def(o.ProfilesPath, o.Home+"/claude-shared/claude-perfiles"),
+		settingsPath:     def(o.SettingsPath, o.Home+"/.claude/settings.json"),
+		convPath:         def(o.ConvPath, o.Home+"/.claude/projects/-home-admin"),
+		claudeBinary:     def(o.ClaudeBinary, o.Home+"/.local/bin/claude"),
+		tmuxBinary:       def(o.TmuxBinary, "/usr/bin/tmux"),
+		bashBinary:       def(o.BashBinary, "/usr/bin/bash"),
+		rcBootstrap:      def(o.RcBootstrap, "estandar"),
+		rcWaitSeconds:    o.RcWaitSeconds,
+		rcPollSeconds:    o.RcPollSeconds,
+		rcSettleSeconds:  o.RcSettleSeconds,
+		home:             o.Home,
+		modeWheelCache:   map[string][]string{},
+		paneReadyTimeout: defaultPaneReadyTimeout,
 	}
 }
 
@@ -2451,6 +2466,53 @@ var tmuxKeyMap = map[string]string{
 	"ctrl-o": "C-o",
 }
 
+// paneReadyPoll is how often ensurePaneReady re-checks a not-yet-interactive
+// pane while waiting for Claude Code's own TUI to start reading input.
+const paneReadyPoll = 200 * time.Millisecond
+
+// paneReady reports whether Claude Code's TUI has rendered something coherent
+// in the pane: either the normal mode badge, or a recognized dialog (approval,
+// choice picker). Both mean its input loop is actually reading keystrokes;
+// neither is true during the brief window right after the process spawns,
+// before its first frame renders.
+func (h *Host) paneReady(name string) bool {
+	if h.paneMode(name) != "" {
+		return true
+	}
+	w, _ := h.paneWaitingWithChoice(name)
+	return w != ""
+}
+
+// ensurePaneReady waits (bounded by paneReadyTimeout) for a session's pane to
+// become interactive before the caller types into it. A freshly spawned
+// session takes a moment to boot — longer for a project with a heavy
+// CLAUDE.md/MCP config — and keystrokes sent to tmux before Claude Code's own
+// readline is reading them don't get lost: they sit in the pty's raw input
+// buffer and get consumed as ONE line the moment the readline finally
+// activates. Observed in production: a model switch sent right after session
+// creation, racing the user's first chat message — both correctly serialized
+// by sessionSendLock, neither interleaved with the other's own literal+Enter
+// — still merged into one invalid command ("/model sonnetHola") because the
+// first send's own Enter landed before Claude Code was reading input at all,
+// so it never submitted anything; the second send's literal just piled onto
+// the same unread buffer. Once a session is confirmed ready this returns
+// immediately (a single capture-pane read), so it costs nothing on every send
+// after the first for that session. Fails open past the deadline: proceeds
+// and sends anyway, matching the rest of this file's best-effort philosophy
+// when a pane's state can't be confirmed.
+func (h *Host) ensurePaneReady(name string) {
+	if h.paneReady(name) || h.paneReadyTimeout <= 0 {
+		return
+	}
+	deadline := time.Now().Add(h.paneReadyTimeout)
+	for time.Now().Before(deadline) {
+		time.Sleep(paneReadyPoll)
+		if h.paneReady(name) {
+			return
+		}
+	}
+}
+
 // sessionSend types a message into a live session (literal text + Enter) or
 // sends one whitelisted special key. Mirrors claudeRename's send-keys pattern.
 // Locked per session (sessionSendLock): the literal-text and Enter send-keys
@@ -2467,6 +2529,7 @@ func (h *Host) sessionSend(name, text, key string) (map[string]any, error) {
 	if !h.sessionAlive(name) {
 		return nil, errNotFound("session not found: %s", name)
 	}
+	h.ensurePaneReady(name)
 	if text == "" && key == "" {
 		return nil, errBad("nothing to send")
 	}
@@ -2729,6 +2792,7 @@ func (h *Host) sessionMode(name, target string) (map[string]any, error) {
 	if !h.sessionAlive(name) {
 		return nil, errNotFound("session not found: %s", name)
 	}
+	h.ensurePaneReady(name)
 	wheel := h.wheelFor(name)
 	if modePosIn(wheel, target) < 0 {
 		return nil, errBad("unsupported mode %s (available: %s)", target, strings.Join(wheel, ", "))
