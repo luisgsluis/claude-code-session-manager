@@ -857,7 +857,7 @@
                tile without needing that scroll. -->
           <div class="tgrid-tile-header flex items-center gap-2 px-3 py-2 border-b border-gray-800 shrink-0 overflow-x-auto">
             <span class="w-2 h-2 rounded-full shrink-0" :class="tileRcConnected(name) ? 'bg-success' : 'bg-warn'"></span>
-            <span class="font-mono text-sm shrink-0" x-text="name"></span>
+            <span class="tgrid-tile-name font-mono text-sm shrink-0" x-text="name" :title="name"></span>
             <select @change="setTileMode(name, $event.target.value); $event.target.value=''"
               :title="t('mode_label')" class="tgrid-select shrink-0">
               <option value="" selected disabled x-text="t('mode_label')"></option>
