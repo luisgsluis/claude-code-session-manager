@@ -183,6 +183,18 @@ ExecStart=/usr/local/bin/ccsm-agent \
   --conversations /home/admin/.claude/projects/-home-admin
 User=admin
 Restart=on-failure
+RestartSec=3
+# The agent is polled every few seconds per open session (tmux capture-pane,
+# a process-tree scan, a tail read of the conversation file). Go's runtime
+# doesn't return freed heap to the OS promptly without GOMEMLIMIT, so under
+# sustained polling RSS climbs for hours before leveling off — harmless on a
+# workstation, but enough to push a memory-constrained host (e.g. a
+# Raspberry Pi) into swap. GOMEMLIMIT makes the runtime give memory back
+# proactively; MemoryMax is a hard backstop (systemd kills and
+# Restart=on-failure brings it back) if it's ever exceeded anyway. Tune both
+# to the host's headroom — these values fit a ~4GB Pi.
+Environment=GOMEMLIMIT=256MiB
+MemoryMax=400M
 
 [Install]
 WantedBy=multi-user.target
