@@ -49,10 +49,16 @@ type RcConfig struct {
 	SettleSeconds    int    `yaml:"settle_seconds"` // margin after resume idle+bridge before restoring the target profile
 }
 
-// User defines an authenticated user.
+// User defines an authenticated user. TOTPSecret holds the base32 TOTP secret
+// when the user enrolled a second factor; empty means 2FA is off for them
+// (2FA is opt-in per user). One field rather than a separate enabled flag, so
+// "enabled without a secret" is not a state that can exist. omitempty matters:
+// writeConfig re-serializes the whole Config, and without it every user would
+// grow a `totp_secret: ""` line.
 type User struct {
 	Username     string `yaml:"username"`
 	PasswordHash string `yaml:"password_hash"`
+	TOTPSecret   string `yaml:"totp_secret,omitempty"`
 }
 
 // Validate checks the Config for invalid values. Returns nil if valid,

@@ -14,12 +14,15 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// Session holds authenticated user state.
+// Session holds authenticated user state. TOTPPending marks the half-way
+// state of a two-factor login: the password checked out but the TOTP code has
+// not been verified yet, so the session must not grant access to anything.
 type Session struct {
-	Username  string    `json:"username"`
-	LANBypass bool      `json:"lan_bypass"`
-	CreatedAt time.Time `json:"created_at"`
-	ExpiresAt time.Time `json:"expires_at"`
+	Username    string    `json:"username"`
+	LANBypass   bool      `json:"lan_bypass"`
+	TOTPPending bool      `json:"totp_pending,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
 }
 
 // Store manages active sessions in memory.
@@ -40,19 +43,34 @@ func NewStore(secret string) *Store {
 const (
 	sessionCookie = "ccsm_session"
 	sessionTTL    = 24 * time.Hour
+	// pendingTTL bounds the second step of a 2FA login. Short on purpose: it
+	// is the window in which a stolen half-session is worth anything.
+	pendingTTL = 5 * time.Minute
 )
 
 // CreateSession generates a session token and stores the session.
 func (s *Store) CreateSession(username string, lanBypass bool) (string, *Session) {
+	return s.create(username, lanBypass, false, sessionTTL)
+}
+
+// CreatePendingSession issues a short-lived session that has passed the
+// password check but still owes a TOTP code. The auth middleware rejects it,
+// so it is only good for POST /api/auth/totp.
+func (s *Store) CreatePendingSession(username string) (string, *Session) {
+	return s.create(username, false, true, pendingTTL)
+}
+
+func (s *Store) create(username string, lanBypass, totpPending bool, ttl time.Duration) (string, *Session) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	now := time.Now()
 	sess := &Session{
-		Username:  username,
-		LANBypass: lanBypass,
-		CreatedAt: now,
-		ExpiresAt: now.Add(sessionTTL),
+		Username:    username,
+		LANBypass:   lanBypass,
+		TOTPPending: totpPending,
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(ttl),
 	}
 
 	token := s.generateToken(sess)
@@ -143,4 +161,15 @@ func CheckPassword(users []config.User, username, password string) bool {
 		return bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)) == nil
 	}
 	return false
+}
+
+// TOTPSecretFor returns the enrolled TOTP secret for a user, or "" when the
+// user has no second factor (or does not exist).
+func TOTPSecretFor(users []config.User, username string) string {
+	for _, u := range users {
+		if u.Username == username {
+			return u.TOTPSecret
+		}
+	}
+	return ""
 }

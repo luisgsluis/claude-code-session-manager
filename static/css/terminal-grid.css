@@ -12,6 +12,16 @@
    4th cell). Packing tiles into near-square rows, where every row is its own
    flex line with flex:1 tiles, means a short last row's tiles simply grow to
    fill it — no gap, no per-tile width math, works for any tile count. --- */
+/* Full-screen shell of the terminal view. `fixed inset-0` sizes to the LAYOUT
+   viewport, which on mobile browsers includes the strip under the dynamic
+   toolbar — the last tile's prompt row ends up below the visible edge. 100dvh
+   is the visible height and shrinks/grows with the toolbar. Declared here
+   rather than as a Tailwind arbitrary value: app.css is a pre-built purged
+   bundle with no build step, so `h-[100dvh]` would not exist in it. */
+.tgrid-overlay {
+  height: 100dvh;
+}
+
 .tgrid {
   display: flex;
   flex-direction: column;

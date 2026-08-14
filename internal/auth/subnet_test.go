@@ -65,6 +65,24 @@ func TestIsLANIPv6(t *testing.T) {
 	}
 }
 
+// The rate limiter and the audit log key on the client address, so the
+// ephemeral port has to be off it — otherwise every attempt looks like a
+// different client.
+func TestHostOnly(t *testing.T) {
+	cases := map[string]string{
+		"8.8.8.8:41234":       "8.8.8.8",
+		"8.8.8.8":             "8.8.8.8",
+		"[2001:db8::1]:41234": "2001:db8::1",
+		"2001:db8::1":         "2001:db8::1",
+		"":                    "",
+	}
+	for in, want := range cases {
+		if got := HostOnly(in); got != want {
+			t.Errorf("HostOnly(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestClientIP(t *testing.T) {
 	trusted := []string{"172.24.0.1/32"}
 

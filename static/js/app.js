@@ -75,6 +75,12 @@ const I18N = {
     username: 'Usuario',
     password: 'Contraseña',
     login_button: 'Entrar',
+    login_totp_subtitle: 'Introduce el c\u00f3digo de tu app de autenticaci\u00f3n',
+    login_totp_label: 'C\u00f3digo de 6 d\u00edgitos',
+    login_totp_button: 'Verificar',
+    login_totp_back: 'Volver',
+    login_totp_bad: 'C\u00f3digo incorrecto o caducado',
+    login_blocked: 'Demasiados intentos fallidos. Prueba dentro de un rato.',
     cfg_title: 'Configuración',
     cfg_deploy: 'Despliegue',
     cfg_mode: 'modo',
@@ -135,6 +141,18 @@ const I18N = {
     cfg_user_added: 'Usuario {0} creado.',
     cfg_user_deleted: 'Usuario {0} eliminado.',
     cfg_password_changed: 'Contrase\u00f1a cambiada.',
+    cfg_2fa_on: '2FA',
+    cfg_2fa_enable: 'Activar 2FA',
+    cfg_2fa_disable: 'Desactivar 2FA',
+    cfg_2fa_title: '2FA de {0}',
+    cfg_2fa_help: 'Escanea el QR con Google Authenticator (o Aegis, 1Password\u2026) y escribe el c\u00f3digo que muestre. Hasta que no lo confirmes no se activa nada.',
+    cfg_2fa_noqr: 'No se pudo dibujar el QR: a\u00f1ade la cuenta a mano con el secreto de abajo.',
+    cfg_2fa_secret: 'Secreto (toca para copiar)',
+    cfg_2fa_code: 'C\u00f3digo de la app',
+    cfg_2fa_confirm: 'Confirmar y activar',
+    cfg_2fa_enabled: '2FA activado para {0}.',
+    cfg_2fa_disabled: '2FA desactivado para {0}.',
+    cfg_2fa_confirm_off: '\u00bfDesactivar el 2FA de {0}?',
     cfg_saved: 'Guardado.',
     cfg_close: 'Cerrar',
     audit_title: 'Registro de actividad',
@@ -159,6 +177,11 @@ const I18N = {
     notify_unmuted: 'Notificaciones activadas',
     notify_muted: 'Notificaciones silenciadas',
     notify_action_login: 'Inicio de sesión',
+    notify_action_login_failed: 'Login fallido',
+    notify_action_login_totp_failed: 'C\u00f3digo 2FA incorrecto',
+    notify_action_login_blocked: 'IP bloqueada por intentos',
+    notify_action_totp_enable: '2FA activado',
+    notify_action_totp_disable: '2FA desactivado',
     notify_action_session_new: 'Nueva sesi\u00f3n',
     notify_action_session_kill: 'Sesi\u00f3n cerrada',
     notify_action_session_resume: 'Sesi\u00f3n retomada',
@@ -287,6 +310,12 @@ const I18N = {
     username: 'Username',
     password: 'Password',
     login_button: 'Sign in',
+    login_totp_subtitle: 'Enter the code from your authenticator app',
+    login_totp_label: '6-digit code',
+    login_totp_button: 'Verify',
+    login_totp_back: 'Back',
+    login_totp_bad: 'Wrong or expired code',
+    login_blocked: 'Too many failed attempts. Try again later.',
     cfg_title: 'Settings',
     cfg_deploy: 'Deployment',
     cfg_mode: 'mode',
@@ -347,6 +376,18 @@ const I18N = {
     cfg_user_added: 'User {0} created.',
     cfg_user_deleted: 'User {0} deleted.',
     cfg_password_changed: 'Password changed.',
+    cfg_2fa_on: '2FA',
+    cfg_2fa_enable: 'Enable 2FA',
+    cfg_2fa_disable: 'Disable 2FA',
+    cfg_2fa_title: '2FA for {0}',
+    cfg_2fa_help: 'Scan the QR with Google Authenticator (or Aegis, 1Password\u2026) and type the code it shows. Nothing is enabled until you confirm.',
+    cfg_2fa_noqr: 'The QR could not be drawn: add the account by hand with the secret below.',
+    cfg_2fa_secret: 'Secret (tap to copy)',
+    cfg_2fa_code: 'Code from the app',
+    cfg_2fa_confirm: 'Confirm and enable',
+    cfg_2fa_enabled: '2FA enabled for {0}.',
+    cfg_2fa_disabled: '2FA disabled for {0}.',
+    cfg_2fa_confirm_off: 'Disable 2FA for {0}?',
     cfg_saved: 'Saved.',
     cfg_close: 'Close',
     audit_title: 'Activity log',
@@ -371,6 +412,11 @@ const I18N = {
     notify_unmuted: 'Notifications enabled',
     notify_muted: 'Notifications muted',
     notify_action_login: 'Login',
+    notify_action_login_failed: 'Failed login',
+    notify_action_login_totp_failed: 'Wrong 2FA code',
+    notify_action_login_blocked: 'IP blocked for repeated failures',
+    notify_action_totp_enable: '2FA enabled',
+    notify_action_totp_disable: '2FA disabled',
     notify_action_session_new: 'New session',
     notify_action_session_kill: 'Session closed',
     notify_action_session_resume: 'Session resumed',
@@ -440,6 +486,11 @@ function ccsmApp() {
     loginUser: '',
     loginPass: '',
     loginError: '',
+    // Second step of a 2FA login: shown instead of the password form once the
+    // server answers `totp_required`.
+    totpStep: false,
+    totpCode: '',
+    totpError: '',
 
     // Data
     sessions: { loading: false, items: [], error: '' },
@@ -460,6 +511,7 @@ function ccsmApp() {
     preview: { open: false, messages: [], date: '', origin: '', id: '', title: '', is_alive: false, tags: '', notes: '', saving: false },
     settings: { open: false, loading: false, groups: [], editing: null, editValue: '', users: [] },
     userModal: { open: false, mode: 'add', username: '', password: '', error: '' },
+    totpModal: { open: false, username: '', secret: '', uri: '', qr: '', code: '', error: '', busy: false },
     audit: { open: false, loading: false, q: '', entries: [] },
     metrics: { open: false, loading: false, data: null, model: '' },
     notify: { supported: false, permission: 'default', muted: false, es: null },
@@ -519,6 +571,8 @@ function ccsmApp() {
       this.$watch('rename.open', v => this.setBodyLock());
       this.$watch('profViewer.open', v => this.setBodyLock());
       this.$watch('userModal.open', v => this.setBodyLock());
+      this.$watch('totpModal.open', v => this.setBodyLock());
+      this.$watch('live.open', v => this.setBodyLock());
       this.$watch('grid.open', v => this.setBodyLock());
       await this.checkAuth();
       if (this.authenticated) {
@@ -528,10 +582,48 @@ function ccsmApp() {
       }
     },
 
+    // Freezes the page behind a full-screen overlay.
+    //
+    // `body { overflow: hidden }` alone is NOT enough: WebKit on iOS/iPadOS
+    // ignores it and keeps scrolling the document, so a swipe that reaches the
+    // end of a scrollable pane inside the overlay chains to the page and drags
+    // the whole thing — the overlay's header slides off the top and the panel
+    // underneath shows through. Pinning the body with `position: fixed` is what
+    // actually stops it there; the saved offset is restored on unlock so
+    // closing a modal doesn't jump the user back to the top of the page.
     setBodyLock() {
-      document.body.style.overflow =
-        (this.settings.open || this.preview.open || this.rename.open || this.profViewer.open || this.userModal.open || this.grid.open) ? 'hidden' : '';
+      const lock = this.settings.open || this.preview.open || this.rename.open ||
+        this.profViewer.open || this.userModal.open || this.totpModal.open ||
+        this.live.open || this.grid.open;
+
+      if (lock) {
+        if (this.scrollLock !== null) return;   // already locked by another overlay
+        this.scrollLock = window.scrollY || window.pageYOffset || 0;
+        document.documentElement.style.overflow = 'hidden';
+        document.body.style.overflow = 'hidden';
+        document.body.style.position = 'fixed';
+        document.body.style.top = '-' + this.scrollLock + 'px';
+        document.body.style.left = '0';
+        document.body.style.right = '0';
+        document.body.style.width = '100%';
+        return;
+      }
+
+      if (this.scrollLock === null) return;
+      const y = this.scrollLock;
+      this.scrollLock = null;
+      document.documentElement.style.overflow = '';
+      document.body.style.overflow = '';
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.left = '';
+      document.body.style.right = '';
+      document.body.style.width = '';
+      window.scrollTo(0, y);
     },
+
+    // Page offset saved while an overlay holds the scroll lock; null = unlocked.
+    scrollLock: null,
 
     // Follows the visualViewport: when the mobile keyboard opens/closes, limit
     // the modal height (live.maxH) so it never leaves the visible area.
@@ -578,6 +670,13 @@ function ccsmApp() {
         this.lanBypass = data.lan_bypass || false;
         this.userLabel = data.username || '';
 
+        // A reload with a half-finished 2FA login resumes at the code step:
+        // the password was already accepted, asking for it again is noise.
+        if (!this.authenticated && data.totp_required) {
+          this.totpStep = true;
+          return;
+        }
+
         // If on LAN, auto-login
         if (!this.authenticated) {
           try {
@@ -609,12 +708,17 @@ function ccsmApp() {
         });
         const data = await resp.json();
         if (data.ok) {
-          this.authenticated = true;
-          this.showLogin = false;
-          this.userLabel = this.loginUser;
           this.loginPass = '';
-          this.loadAll();
-          this.initNotify();
+          this.enterApp(this.loginUser);
+        } else if (data.totp_required) {
+          // Password accepted; the server issued a pending cookie and now
+          // wants the code. Drop the password from memory either way.
+          this.loginPass = '';
+          this.totpCode = '';
+          this.totpError = '';
+          this.totpStep = true;
+        } else if (resp.status === 429) {
+          this.loginError = this.t('login_blocked');
         } else {
           this.loginError = this.t('toast_error_auth');
         }
@@ -623,10 +727,52 @@ function ccsmApp() {
       }
     },
 
+    async doTotp() {
+      this.totpError = '';
+      try {
+        const resp = await fetch('/api/auth/totp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: this.totpCode }),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          this.totpCode = '';
+          this.totpStep = false;
+          this.enterApp(this.loginUser);
+        } else if (resp.status === 429) {
+          this.totpError = this.t('login_blocked');
+        } else {
+          this.totpError = this.t('login_totp_bad');
+        }
+      } catch (e) {
+        this.totpError = this.t('toast_error_conn_login');
+      }
+    },
+
+    // Shared tail of both login paths (one-step and 2FA).
+    enterApp(username) {
+      this.authenticated = true;
+      this.showLogin = false;
+      this.userLabel = username;
+      this.loadAll();
+      this.initNotify();
+    },
+
+    // Back from the code step to the password form (wrong account, or the
+    // phone isn't at hand).
+    cancelTotp() {
+      this.totpStep = false;
+      this.totpCode = '';
+      this.totpError = '';
+      fetch('/api/auth/logout', { method: 'POST' });
+    },
+
     async logout() {
       await fetch('/api/auth/logout', { method: 'POST' });
       this.authenticated = false;
       this.showLogin = true;
+      this.totpStep = false;
       this.userLabel = '';
       if (this.pollInterval) clearInterval(this.pollInterval);
       this.stopNotify();
@@ -1442,9 +1588,9 @@ function ccsmApp() {
     },
 
     auditBadge(action) {
-      if (action === 'login_failed') return 'bg-danger/15 text-danger';
+      if (action === 'login_failed' || action === 'login_totp_failed' || action === 'login_blocked') return 'bg-danger/15 text-danger';
       if (action.startsWith('session_')) return 'bg-accent/15 text-accent';
-      if (action.startsWith('user_') || action === 'config_update') return 'bg-warn/15 text-warn';
+      if (action.startsWith('user_') || action.startsWith('totp_') || action === 'config_update') return 'bg-warn/15 text-warn';
       return 'bg-success/15 text-success';
     },
 
@@ -1587,11 +1733,7 @@ function ccsmApp() {
         if (data.ok) {
           this.toastMsg(this.t('cfg_user_added', [this.userModal.username]), 'success');
           this.userModal.open = false;
-          // Reload users
-          try {
-            const r = await fetch('/api/config/users');
-            if (r.ok) this.settings.users = await r.json();
-          } catch(e) {}
+          await this.reloadUsers();
         } else {
           this.userModal.error = data.error || 'Error';
         }
@@ -1629,16 +1771,106 @@ function ccsmApp() {
         const data = await resp.json();
         if (data.ok) {
           this.toastMsg(this.t('cfg_user_deleted', [username]), 'success');
-          try {
-            const r = await fetch('/api/config/users');
-            if (r.ok) this.settings.users = await r.json();
-          } catch(e) {}
+          await this.reloadUsers();
         } else {
           this.toastMsg(data.error || 'Error', 'error');
         }
       } catch (e) {
         this.toastMsg(this.t('toast_error_conn', [e.message]), 'error');
       }
+    },
+
+    // --- Two-factor authentication (TOTP) ---
+
+    // The QR encoder is ~55 KB and only ever needed while enrolling, so it is
+    // fetched on demand instead of loading on every page view. Same-origin, so
+    // the CSP's script-src 'self' allows the injected tag.
+    loadQrLib() {
+      if (window.qrcode) return Promise.resolve(true);
+      if (!this._qrLib) {
+        this._qrLib = new Promise((resolve) => {
+          const s = document.createElement('script');
+          s.src = '/static/js/qrcode.js';
+          s.onload = () => resolve(true);
+          s.onerror = () => resolve(false);   // fall back to the printed secret
+          document.head.appendChild(s);
+        });
+      }
+      return this._qrLib;
+    },
+
+    async openTotpEnroll(username) {
+      this.totpModal = { open: true, username, secret: '', uri: '', qr: '', code: '', error: '', busy: false };
+      try {
+        const resp = await fetch('/api/config/users/' + encodeURIComponent(username) + '/totp', { method: 'POST' });
+        const data = await resp.json();
+        if (!resp.ok) {
+          this.totpModal.error = data.error || 'Error';
+          return;
+        }
+        this.totpModal.secret = data.secret;
+        this.totpModal.uri = data.uri;
+        if (await this.loadQrLib()) {
+          // Type 0 = pick the smallest version that fits; L is plenty for a
+          // screen-to-camera scan. SVG, not the img/data-URL variant: the CSP
+          // has no img-src, so a data: URL would be blocked by default-src.
+          // NOT scalable:true — that drops width/height and the <svg> collapses
+          // to a zero-size box inside the flex container.
+          const qr = window.qrcode(0, 'L');
+          qr.addData(data.uri);
+          qr.make();
+          this.totpModal.qr = qr.createSvgTag({ cellSize: 4, margin: 2 });
+        }
+      } catch (e) {
+        this.totpModal.error = this.t('toast_error_conn', [e.message]);
+      }
+    },
+
+    async confirmTotp() {
+      this.totpModal.error = '';
+      if (!this.totpModal.code) return;
+      this.totpModal.busy = true;
+      try {
+        const resp = await fetch('/api/config/users/' + encodeURIComponent(this.totpModal.username) + '/totp', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: this.totpModal.code }),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          this.totpModal.open = false;
+          this.toastMsg(this.t('cfg_2fa_enabled', [this.totpModal.username]), 'success');
+          await this.reloadUsers();
+        } else {
+          this.totpModal.error = data.error || 'Error';
+        }
+      } catch (e) {
+        this.totpModal.error = this.t('toast_error_conn', [e.message]);
+      }
+      this.totpModal.busy = false;
+    },
+
+    async disableTotp(username) {
+      if (!confirm(this.t('cfg_2fa_confirm_off', [username]))) return;
+      try {
+        const resp = await fetch('/api/config/users/' + encodeURIComponent(username) + '/totp', { method: 'DELETE' });
+        const data = await resp.json();
+        if (data.ok) {
+          this.toastMsg(this.t('cfg_2fa_disabled', [username]), 'success');
+          await this.reloadUsers();
+        } else {
+          this.toastMsg(data.error || 'Error', 'error');
+        }
+      } catch (e) {
+        this.toastMsg(this.t('toast_error_conn', [e.message]), 'error');
+      }
+    },
+
+    async reloadUsers() {
+      try {
+        const r = await fetch('/api/config/users');
+        if (r.ok) this.settings.users = await r.json();
+      } catch (e) { /* the panel keeps the previous list */ }
     },
 
     async copyText(text) {

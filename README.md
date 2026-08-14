@@ -2,14 +2,16 @@
 
 **Run [Claude Code](https://claude.ai/code) on your own server, drive it from anywhere.**
 
-CCSM is a lightweight web app that turns any Linux box you control — a homelab server, a VPS, your workstation — into a personal Claude Code hub. Sessions run in `tmux` on that machine; you create, resume, and chat with them from a browser on your phone, tablet, or laptop, even if using your own API connection instead of your claude.ai suscription.
+**You no longer need to be at your server — or hold an SSH session open — to start a Claude Code session in `tmux`.** You start it from a browser, it runs on the host, and it stays alive when you close the tab.
+
+CCSM is a lightweight web app that turns any Linux box you control — a homelab server, a VPS, your workstation — into a personal Claude Code hub. Sessions run in `tmux` on that machine; you create, resume, and chat with them from a browser on your phone, tablet, or laptop, even if using your own API connection instead of your claude.ai subscription.
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ## Why CCSM
 
 - 🖥️ **Remote, effortless session management via `tmux`** — every session is a real `tmux` session on your own server. Close the laptop, lose the connection, come back tomorrow: the session is still there, exactly where you left it, manageable from any device.
-- 📱 **Claude Code Web & App — using your compatible API key while synchronizing wuth you personal claude.ai account** — Remote Control lets the official Claude mobile app and claude.ai/code attach live to sessions that run on **your own API key** (Anthropic or an Anthropic-compatible provider), not a logged-in personal subscription. CCSM's two-phase bootstrap keeps that mobile bridge alive even across profile switches.
+- 📱 **Claude Code Web & App — using your compatible API key while synchronizing with your personal claude.ai account** — Remote Control lets the official Claude mobile app and claude.ai/code attach live to sessions that run on **your own API key** (Anthropic or an Anthropic-compatible provider), not a logged-in personal subscription. CCSM's two-phase bootstrap keeps that mobile bridge alive even across profile switches.
 - ⚙️ **Advanced profile management** — catalog, preview, and hot-swap full `settings.json` profiles (different models, providers, keys) per session, applied atomically with JSON pre-validation so a bad profile can never brick `settings.json`.
 - ♻️ **Session recovery on the server** — every conversation is a real Claude Code transcript stored on the host; browse, search, and resume any past session from any device, even after a crash or a reboot.
 - 💬🖥️ **Chat mode and Terminal mode** — a clean chat view for quick back-and-forth with live SSE updates, or drop into the raw terminal pane when you need the full TUI — approvals, dialogs, everything.
@@ -26,18 +28,19 @@ CCSM is a lightweight web app that turns any Linux box you control — a homelab
 - 📄 **Profile viewer**: inspect a profile's JSON with syntax highlighting before applying it
 - ⚙️ **Editable settings**: the ☰ menu edits hot-reloadable settings in place (no restart), persisted atomically to `config.yaml`; restart-only settings are left untouched
 - 👥 **User management**: add / delete users and change passwords from the UI — min 8-char passwords, bcrypt-hashed, hashes never exposed
+- 🔐 **Two-factor authentication (TOTP)**: opt-in per user, enrolled by scanning a QR with Google Authenticator (Aegis, 1Password, any RFC 6238 app). LAN clients keep bypassing login; the second factor guards internet access
 - 🔧 **Active settings viewer**: see the CURRENTLY APPLIED `settings.json` (distinct from the saved profile files) with syntax highlighting
 - 🎨 **Selectable skins** (Light, Dark, Ocean, Contrast) via a header dropdown, remembered
   in localStorage — see [`docs/skins.md`](docs/skins.md) to add your own
 - 🌐 **Multi-language UI** (ES/EN via a 🌐 dropdown), selectable per user and remembered in localStorage
 - 📱 **Responsive UI**: works on desktop, tablet and mobile, with a future mobile-native skin planned
-- 🔒 **Security in depth**: login form + LAN bypass + Unix socket agent + restricted tmux/claude execution
+- 🔒 **Security in depth**: login form (optional TOTP) + per-IP rate limiting + LAN bypass + Unix socket agent + restricted tmux/claude execution
 - 🐳 **Two deployment modes**: container (Alpine image + host agent over Unix socket) **or** plain binary on the host (no container, no agent, in-process execution)
 - 🩺 **Healthcheck**: `/api/health` wired into the image so orchestrators and the homelab updater can verify liveness
 
 ## Requirements
 
-**Stack**: Go + Alpine.js + Tailwind CSS | **Image**: ~15 MB (Alpine) | **RAM**: ~10-15 MB | **Version**: 1.2.0
+**Stack**: Go + Alpine.js + Tailwind CSS | **Image**: ~15 MB (Alpine) | **RAM**: ~10-15 MB | **Version**: 1.3.0
 
 - **Host**: Linux with `tmux` and `claude` (Claude Code CLI) installed
 - **Container mode**: Docker or Podman
@@ -254,8 +257,11 @@ All settings can be set in `config.yaml` or overridden via environment variables
 | `port` | `CCSM_PORT` | `8080` | HTTP listen port |
 | `session_secret` | `CCSM_SESSION_SECRET` | — | HMAC secret for session cookies |
 | `lan_subnets` | `CCSM_LAN_SUBNETS` | — | CIDRs that bypass login (comma-separated in env) |
+| `trusted_proxies` | — | — | CIDRs of reverse proxies whose `X-Forwarded-For` is believed. Required behind a proxy, or every client looks like the proxy — see [Security Model](#security-model) |
 | `users[].username` | — | — | Login username |
 | `users[].password_hash` | — | — | bcrypt hash (`ccsm --hash-password`) |
+| `users[].totp_secret` | — | — | base32 TOTP secret; empty/absent = no 2FA for that user. Written by the enrollment flow, not by hand |
+| `audit_path` | `CCSM_AUDIT_PATH` | `auto` | JSONL audit log; `auto` → `$HOME/.ccsm/audit.jsonl` |
 | `agent_socket` | `CCSM_AGENT_SOCKET` | `/run/ccsm/agent.sock` | Unix socket to ccsm-agent; `""` = direct/package mode |
 | `agent_secret` | `CCSM_AGENT_SECRET` | — | Shared secret for agent auth (container mode) |
 | `host_attach_addr` | `CCSM_HOST_ATTACH_ADDR` | `localhost` | Shown in UI as `ssh <addr> -t tmux a -t N` |
@@ -323,14 +329,25 @@ used by the container healthcheck.
 **Config & users**
 - `GET /api/config` — non-secret deployment info for the ☰ menu
 - `PATCH /api/config` — edit hot-reloadable settings, persisted atomically
-- `GET /api/config/users` — list usernames
+- `GET /api/config/users` — list users as `[{"username": "...", "totp": bool}]` (never the hash or the TOTP secret)
 - `POST /api/config/users` — add a user
 - `DELETE /api/config/users/{username}` — delete a user
 - `POST /api/config/users/{username}/password` — change a password
+- `POST /api/config/users/{username}/totp` — start 2FA enrollment: returns `{"secret", "uri"}` **once**, held in memory and not yet persisted
+- `PUT /api/config/users/{username}/totp` — confirm enrollment with `{"code": "123456"}`; only now is the secret written to `config.yaml`
+- `DELETE /api/config/users/{username}/totp` — disable 2FA for that user
 - `GET /api/settings` — content of the CURRENTLY APPLIED `settings.json` (the active profile; may differ from the profile files)
 
 **Auth**
 - `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/status`
+- `POST /api/auth/totp` — second step of a 2FA login, `{"code": "123456"}`. Public like
+  `/login`: the short-lived cookie issued by the first step is what identifies the caller.
+- When the user has 2FA enrolled, `POST /api/auth/login` answers `{"ok": false,
+  "totp_required": true}` and sets a **pending** cookie that opens nothing — every protected
+  route returns `401 {"error": "totp required"}` until `/api/auth/totp` succeeds.
+  `GET /api/auth/status` reports the same state, so a page reload resumes at the code step.
+- Failed attempts are rate-limited **per client IP**, shared between the password and the
+  TOTP step: 5 failures in 15 minutes → `429` for 15 minutes.
 
 ### PATCH /api/config semantics
 
@@ -344,6 +361,13 @@ used by the container healthcheck.
 - Passwords are hashed with **bcrypt (cost 10)**; the API returns usernames only — hashes and passwords never leave the server.
 - Password minimum is **8 characters**, enforced on both client and server.
 - You **cannot delete the last remaining user** (`400`).
+- **2FA is opt-in per user.** Enroll from the ☰ menu: the panel shows a QR (and the secret in
+  text, for manual entry) and asks for a code from the app. The secret is only written to
+  `config.yaml` once that code verifies — a scan that silently failed can therefore never
+  lock anyone out. It is returned exactly once, at enrollment, and never again.
+- **There are no recovery codes.** Two ways back in if the phone is lost: log in from a
+  `lan_subnets` address (the bypass never asks for a code), or delete that user's
+  `totp_secret` line from `config.yaml` on the host and restart.
 
 ### Validation patterns
 
@@ -402,7 +426,9 @@ already answering, and cleans up a stale socket left by a crash. See
 |-------|-----------|
 | **Network** | Publish only on LAN (`127.0.0.1:8080:8080` or use reverse proxy with TLS) |
 | **Authentication** | Login form with bcrypt password hashing (cost 10). LAN IPs bypass login automatically |
-| **User management** | Passwords min 8 chars (client + server); API exposes usernames only — hashes never leave the server; cannot delete the last user |
+| **Two-factor (TOTP)** | Opt-in per user (RFC 6238, 6 digits, 30 s, ±1 step for clock drift). Verified **before** the session cookie is issued; a code cannot be replayed inside its own window. LAN bypass never reaches it |
+| **Rate limiting** | 5 failed attempts per client IP in 15 min → `429` for 15 min, shared between the password and the TOTP step. The real IP (see `trusted_proxies`) is recorded in the audit log, so an external blocker can act on it |
+| **User management** | Passwords min 8 chars (client + server); API exposes usernames only — hashes and TOTP secrets never leave the server; cannot delete the last user |
 | **Session** | Encrypted cookie (HMAC-SHA256), `HttpOnly`, `SameSite=Lax`, 24h TTL |
 | **Agent auth** | Shared secret sent in every request to ccsm-agent |
 | **Agent execution** | Argument validation with closed regex patterns, no shell interpolation |
@@ -414,8 +440,15 @@ already answering, and cleans up a stale socket left by a crash. See
 ```
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
-Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'
+Referrer-Policy: no-referrer
+Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
+Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'
 ```
+
+`'unsafe-eval'` is required by Alpine.js, which compiles `x-data` expressions with
+`new Function`. Everything else is `'self'`: no inline scripts (an inline `<script>` **will**
+be blocked — that is how the skin-persistence script silently broke in 1.2.0) and no external
+origins, which is why the QR encoder is vendored in `static/js/` rather than loaded from a CDN.
 
 ### ⚠️ IMPORTANT: Never put API keys in profiles or settings
 
@@ -457,6 +490,20 @@ systemctl status ccsm-agent
 - Verify `session_secret` is set (not empty)
 - Check that `users[].password_hash` was generated with `ccsm --hash-password`, not raw text
 - From LAN: check that your subnet is in `lan_subnets`
+- Behind a reverse proxy: check `trusted_proxies`. Every proxied request arrives from the same
+  peer, so without it the real client IP is never read and both the LAN bypass and the rate
+  limiter see one single client
+- `429 too many failed attempts`: the per-IP limiter tripped. It clears itself after 15 minutes,
+  or immediately on a restart (the counters are in memory)
+
+### The 2FA code is always rejected
+- **Check the server's clock.** TOTP is a function of time; CCSM accepts ±1 step (±30 s) and
+  nothing more, so a drifting host rejects every code from a correct app. `timedatectl` /
+  `chronyc tracking` on the host.
+- Codes cannot be reused: entering the same one twice within its 30-second window fails the
+  second time by design.
+- Locked out for good? Delete that user's `totp_secret` from `config.yaml` and restart, or log
+  in from a `lan_subnets` address, which never asks for a code.
 
 ### Renaming the Claude title fails with "can't find pane"
 This is the tmux `send-keys` target issue. tmux accepts the `=` prefix only for
@@ -499,6 +546,11 @@ go build ./...            # build the web server and agent
 go test ./...             # unit tests
 cd e2e && npx playwright test   # end-to-end tests (stubbed tmux/claude)
 ```
+
+The e2e suite starts **two** servers: `run-e2e.sh` (:8799) with `127.0.0.0/8` in
+`lan_subnets`, so every spec runs under the LAN bypass and never sees the login form; and
+`run-e2e-auth.sh` (:8798) with the bypass off and a 2FA user, which is what `auth.spec.js`
+drives. Both use the stub `tmux`/`claude` in `e2e/stubs/`.
 
 Adding a UI skin: [`docs/skins.md`](docs/skins.md).
 

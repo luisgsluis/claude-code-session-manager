@@ -42,6 +42,12 @@ type Server struct {
 	auditPath  string
 	events     *eventHub
 
+	// Authentication extras
+	loginRL    *auth.RateLimiter // shared by the password and the TOTP step
+	totpReplay *auth.ReplayGuard
+	enrollMu   sync.Mutex
+	enroll     map[string]pendingEnrollment // secrets generated but not confirmed yet
+
 	// Handlers
 	sessionHdlr      *handlers.SessionHandler
 	profileHdlr      *handlers.ProfileHandler
@@ -61,6 +67,9 @@ func New(cfg *config.Config, staticPath, configPath string) *Server {
 		events:     newEventHub(),
 		sessions:   auth.NewStore(cfg.SessionSecret),
 		staticPath: staticPath,
+		loginRL:    auth.NewLoginRateLimiter(),
+		totpReplay: auth.NewReplayGuard(),
+		enroll:     make(map[string]pendingEnrollment),
 	}
 
 	auditPath := cfg.AuditPath
@@ -130,6 +139,7 @@ func (s *Server) registerRoutes() {
 
 	// Auth
 	s.mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	s.mux.HandleFunc("POST /api/auth/totp", s.handleTOTP)
 	s.mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
 	s.mux.HandleFunc("GET /api/auth/status", s.handleAuthStatus)
 
@@ -185,6 +195,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/config/users", s.auth(s.handleAddUser))
 	s.mux.HandleFunc("DELETE /api/config/users/{username}", s.auth(s.handleDeleteUser))
 	s.mux.HandleFunc("POST /api/config/users/{username}/password", s.auth(s.handleChangePassword))
+	s.mux.HandleFunc("POST /api/config/users/{username}/totp", s.auth(s.handleTOTPEnrollStart))
+	s.mux.HandleFunc("PUT /api/config/users/{username}/totp", s.auth(s.handleTOTPEnrollConfirm))
+	s.mux.HandleFunc("DELETE /api/config/users/{username}/totp", s.auth(s.handleTOTPDisable))
 
 	// Settings content (protected): raw settings.json for profile viewer
 	s.mux.HandleFunc("GET /api/settings", s.auth(s.handleGetSettings))
@@ -219,8 +232,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if s.isLANRequest(r) {
 		token, _ := s.sessions.CreateSession("[lan]", true)
 		auth.SetCookie(w, token, isHTTPS(r))
-		s.auditLog("login", "[lan]", "lan bypass")
+		s.auditLogIP("login", "[lan]", "lan bypass", s.clientIP(r))
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "lan_bypass": true})
+		return
+	}
+
+	ip := s.clientIP(r)
+	if s.rateLimited(w, ip) {
 		return
 	}
 
@@ -231,17 +249,114 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	s.cfgMu.RLock()
 	ok := auth.CheckPassword(s.cfg.Users, req.Username, req.Password)
+	secret := auth.TOTPSecretFor(s.cfg.Users, req.Username)
 	s.cfgMu.RUnlock()
 	if !ok {
-		s.auditLog("login_failed", req.Username, "invalid credentials")
+		// The UI probes for the LAN bypass by POSTing empty credentials on
+		// every page load (checkAuth in app.js). That is not an attempt, and
+		// counting it would let a reloading browser lock itself out.
+		if req.Username != "" {
+			s.recordAuthFailure(ip, req.Username)
+		}
+		s.auditLogIP("login_failed", req.Username, "invalid credentials", ip)
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
 
+	// Second factor: hand out a pending session instead of a real one. The
+	// auth middleware rejects it, so nothing is reachable until the code is in.
+	if secret != "" {
+		token, _ := s.sessions.CreatePendingSession(req.Username)
+		auth.SetCookie(w, token, isHTTPS(r))
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "totp_required": true})
+		return
+	}
+
+	s.loginRL.Reset(ip)
 	token, _ := s.sessions.CreateSession(req.Username, false)
 	auth.SetCookie(w, token, isHTTPS(r))
-	s.auditLog("login", req.Username, "")
+	s.auditLogIP("login", req.Username, "", ip)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+type totpRequest struct {
+	Code string `json:"code"`
+}
+
+// handleTOTP is the second step of a two-factor login: it upgrades the pending
+// session issued by handleLogin into a full one. Public like /login — the
+// pending cookie is what identifies the caller.
+func (s *Server) handleTOTP(w http.ResponseWriter, r *http.Request) {
+	ip := s.clientIP(r)
+
+	sess := s.sessions.GetSession(auth.GetToken(r))
+	if sess == nil || !sess.TOTPPending {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "no pending login"})
+		return
+	}
+	// Checked after the pending-session lookup so a blocked IP still gets a
+	// clear 429 rather than a misleading "no pending login".
+	if s.rateLimited(w, ip) {
+		return
+	}
+
+	var req totpRequest
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	s.cfgMu.RLock()
+	secret := auth.TOTPSecretFor(s.cfg.Users, sess.Username)
+	s.cfgMu.RUnlock()
+
+	step, ok := auth.VerifyTOTP(secret, req.Code, time.Now())
+	// A code is valid for its whole 30 s window, so accepting it twice would
+	// make a captured code replayable.
+	if ok && !s.totpReplay.Use(sess.Username, step) {
+		ok = false
+	}
+	if !ok {
+		s.recordAuthFailure(ip, sess.Username)
+		s.auditLogIP("login_totp_failed", sess.Username, "invalid code", ip)
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid code"})
+		return
+	}
+
+	s.sessions.DeleteSession(auth.GetToken(r))
+	s.loginRL.Reset(ip)
+	token, _ := s.sessions.CreateSession(sess.Username, false)
+	auth.SetCookie(w, token, isHTTPS(r))
+	s.auditLogIP("login", sess.Username, "2fa", ip)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+// clientIP is the real client address without its port: the peer, or
+// X-Forwarded-For when the peer is a trusted proxy. Same rule the LAN bypass
+// uses, so a proxied client cannot forge it. The port must go — it is the
+// identity of a connection, not of a client, and keeping it would give every
+// attempt its own rate-limit bucket.
+func (s *Server) clientIP(r *http.Request) string {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return auth.HostOnly(auth.ClientIP(r, s.cfg.TrustedProxies))
+}
+
+// rateLimited answers a blocked client with 429 and reports whether it did.
+func (s *Server) rateLimited(w http.ResponseWriter, ip string) bool {
+	if !s.loginRL.Blocked(ip) {
+		return false
+	}
+	writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many failed attempts, try again later"})
+	return true
+}
+
+// recordAuthFailure counts one failed attempt and audits the block exactly
+// once, on the transition — not once per attempt, which would flood the log
+// with the very traffic it is meant to make readable.
+func (s *Server) recordAuthFailure(ip, user string) {
+	if s.loginRL.Fail(ip) {
+		s.auditLogIP("login_blocked", user, "too many failed attempts", ip)
+	}
 }
 
 // isHTTPS reports whether the request reached CCSM over TLS, either directly
@@ -254,8 +369,14 @@ func isHTTPS(r *http.Request) bool {
 }
 
 func (s *Server) auditLog(action, user, detail string) {
+	s.auditLogIP(action, user, detail, "")
+}
+
+// auditLogIP is auditLog for authentication events, which record the client
+// address so an external blocker (the homelab ipban job) can act on them.
+func (s *Server) auditLogIP(action, user, detail, ip string) {
 	if s.audit != nil {
-		s.audit.Log(action, user, detail)
+		s.audit.LogWithIP(action, user, detail, ip)
 	}
 	s.events.broadcast(action, user, detail)
 }
@@ -269,7 +390,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		s.sessions.DeleteSession(token)
 	}
 	auth.ClearCookie(w)
-	s.auditLog("logout", user, "")
+	s.auditLogIP("logout", user, "", s.clientIP(r))
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 
@@ -283,6 +404,12 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	sess := s.sessions.GetSession(token)
 	if sess == nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"authenticated": false})
+		return
+	}
+	// A reload mid-2FA must land back on the code step, not on the password
+	// form — the password has already been accepted.
+	if sess.TOTPPending {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"authenticated": false, "totp_required": true})
 		return
 	}
 
@@ -322,6 +449,12 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "session expired"})
 			return
 		}
+		// Half-way through a 2FA login: password accepted, code still owed.
+		// This single guard covers every protected route.
+		if sess.TOTPPending {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "totp required"})
+			return
+		}
 
 		next(w, handlers.WithUser(r, sess.Username))
 	}
@@ -346,7 +479,7 @@ type configInfo struct {
 	AgentSocket    string            `json:"agent_socket"`
 	HostAttachAddr string            `json:"host_attach_addr"`
 	LANSubnets     []string          `json:"lan_subnets"`
-	Users          []string          `json:"users"`
+	Users          []userInfo        `json:"users"`
 	Paths          map[string]string `json:"paths"`
 	RC             map[string]any    `json:"rc"`
 }
@@ -358,9 +491,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.cfgMu.RLock()
-	users := make([]string, 0, len(s.cfg.Users))
+	users := make([]userInfo, 0, len(s.cfg.Users))
 	for _, u := range s.cfg.Users {
-		users = append(users, u.Username)
+		users = append(users, userInfo{Username: u.Username, TOTP: u.TOTPSecret != ""})
 	}
 	info := configInfo{
 		Port:           s.cfg.Port,
@@ -533,14 +666,21 @@ type changePasswordRequest struct {
 
 var usernamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 
+// userInfo is what the API exposes about a user: the name and whether a second
+// factor is enrolled. Never the password hash, never the TOTP secret.
+type userInfo struct {
+	Username string `json:"username"`
+	TOTP     bool   `json:"totp"`
+}
+
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	s.cfgMu.RLock()
-	names := make([]string, 0, len(s.cfg.Users))
+	users := make([]userInfo, 0, len(s.cfg.Users))
 	for _, u := range s.cfg.Users {
-		names = append(names, u.Username)
+		users = append(users, userInfo{Username: u.Username, TOTP: u.TOTPSecret != ""})
 	}
 	s.cfgMu.RUnlock()
-	writeJSON(w, http.StatusOK, names)
+	writeJSON(w, http.StatusOK, users)
 }
 
 func (s *Server) handleAddUser(w http.ResponseWriter, r *http.Request) {
@@ -660,6 +800,151 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	s.auditLog("user_password", handlers.UserFrom(r), "user="+username)
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "password changed for " + username})
+}
+
+// --- Two-factor authentication (TOTP) ---
+
+// pendingEnrollment is a secret handed to the browser but not yet written to
+// config.yaml. It only becomes the user's real secret once they prove they can
+// generate a code from it — persisting on generation instead would lock out
+// anyone whose scan silently failed.
+type pendingEnrollment struct {
+	secret  string
+	created time.Time
+}
+
+// enrollTTL bounds how long a generated-but-unconfirmed secret stays usable.
+const enrollTTL = 10 * time.Minute
+
+// handleTOTPEnrollStart generates a secret and returns it, once, together with
+// the otpauth:// URI the UI renders as a QR.
+func (s *Server) handleTOTPEnrollStart(w http.ResponseWriter, r *http.Request) {
+	username := r.PathValue("username")
+	if !s.userExists(username) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found: " + username})
+		return
+	}
+
+	secret, err := auth.GenerateTOTPSecret()
+	if err != nil {
+		log.Printf("totp secret: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to generate secret"})
+		return
+	}
+
+	s.enrollMu.Lock()
+	s.enroll[username] = pendingEnrollment{secret: secret, created: time.Now()}
+	s.enrollMu.Unlock()
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"secret": secret,
+		"uri":    auth.TOTPURI(username, secret),
+	})
+}
+
+// handleTOTPEnrollConfirm verifies a code against the pending secret and only
+// then persists it.
+func (s *Server) handleTOTPEnrollConfirm(w http.ResponseWriter, r *http.Request) {
+	username := r.PathValue("username")
+	var req totpRequest
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	s.enrollMu.Lock()
+	pending, ok := s.enroll[username]
+	if ok && time.Since(pending.created) > enrollTTL {
+		delete(s.enroll, username)
+		ok = false
+	}
+	s.enrollMu.Unlock()
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no pending enrollment, start again"})
+		return
+	}
+
+	step, valid := auth.VerifyTOTP(pending.secret, req.Code, time.Now())
+	if !valid {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid code"})
+		return
+	}
+
+	s.cfgMu.Lock()
+	found := -1
+	for i, u := range s.cfg.Users {
+		if u.Username == username {
+			found = i
+			break
+		}
+	}
+	if found < 0 {
+		s.cfgMu.Unlock()
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found: " + username})
+		return
+	}
+	s.cfg.Users[found].TOTPSecret = pending.secret
+	err := writeConfig(s.configPath, s.cfg)
+	s.cfgMu.Unlock()
+	if err != nil {
+		log.Printf("write config: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist config"})
+		return
+	}
+
+	s.enrollMu.Lock()
+	delete(s.enroll, username)
+	s.enrollMu.Unlock()
+	// The confirming code must not be reusable to log in with.
+	s.totpReplay.Use(username, step)
+
+	s.auditLog("totp_enable", handlers.UserFrom(r), "user="+username)
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "2FA enabled for " + username})
+}
+
+// handleTOTPDisable removes a user's second factor.
+func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
+	username := r.PathValue("username")
+
+	s.cfgMu.Lock()
+	found := -1
+	for i, u := range s.cfg.Users {
+		if u.Username == username {
+			found = i
+			break
+		}
+	}
+	if found < 0 {
+		s.cfgMu.Unlock()
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found: " + username})
+		return
+	}
+	s.cfg.Users[found].TOTPSecret = ""
+	err := writeConfig(s.configPath, s.cfg)
+	s.cfgMu.Unlock()
+	if err != nil {
+		log.Printf("write config: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist config"})
+		return
+	}
+
+	s.enrollMu.Lock()
+	delete(s.enroll, username)
+	s.enrollMu.Unlock()
+	s.totpReplay.Forget(username)
+
+	s.auditLog("totp_disable", handlers.UserFrom(r), "user="+username)
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "2FA disabled for " + username})
+}
+
+func (s *Server) userExists(username string) bool {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	for _, u := range s.cfg.Users {
+		if u.Username == username {
+			return true
+		}
+	}
+	return false
 }
 
 // handleAudit returns the most recent audit entries, most recent first.

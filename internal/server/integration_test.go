@@ -113,6 +113,7 @@ func newIntegrationServer(t *testing.T, m *mockAgent, staticPath string) *Server
 	cfg := config.Defaults()
 	cfg.SessionSecret = "test-secret"
 	cfg.LANSubnets = []string{} // auth required for all
+	cfg.AuditPath = t.TempDir() + "/audit.jsonl"
 	cfg.AgentSocket = m.sock
 	cfg.AgentSecret = "secret"
 	cfg.HostAttachAddr = "admin@rb.lan"
@@ -453,6 +454,7 @@ func TestE2EAgentDown(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.SessionSecret = "test-secret"
 	cfg.LANSubnets = []string{}
+	cfg.AuditPath = t.TempDir() + "/audit.jsonl"
 	cfg.AgentSocket = "/nonexistent/socket.sock"
 	srv := New(cfg, "", "")
 	token, _ := srv.sessions.CreateSession("luis", false)

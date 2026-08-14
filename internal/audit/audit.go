@@ -13,12 +13,16 @@ import (
 	"time"
 )
 
-// Entry is one recorded action.
+// Entry is one recorded action. IP is only filled for authentication events
+// (login, login_failed, login_totp_failed, login_blocked, logout): it is what
+// lets an external fail2ban-style job block an abusive source, and there is no
+// reason to record a client address on every session action.
 type Entry struct {
 	Time   time.Time `json:"time"`
 	Action string    `json:"action"`
 	User   string    `json:"user,omitempty"`
 	Detail string    `json:"detail,omitempty"`
+	IP     string    `json:"ip,omitempty"`
 }
 
 // Logger appends JSONL entries to a file.
@@ -44,12 +48,17 @@ func Open(path string) (*Logger, error) {
 
 // Log appends one entry. A nil Logger is a no-op.
 func (l *Logger) Log(action, user, detail string) error {
+	return l.LogWithIP(action, user, detail, "")
+}
+
+// LogWithIP is Log with the client address recorded. A nil Logger is a no-op.
+func (l *Logger) LogWithIP(action, user, detail, ip string) error {
 	if l == nil {
 		return nil
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	line, err := json.Marshal(Entry{Time: time.Now(), Action: action, User: user, Detail: detail})
+	line, err := json.Marshal(Entry{Time: time.Now(), Action: action, User: user, Detail: detail, IP: ip})
 	if err != nil {
 		return err
 	}

@@ -366,12 +366,18 @@
     <div class="mb-5">
       <h4 class="text-xs font-semibold uppercase tracking-wider text-accent mb-2" x-text="t('cfg_users')"></h4>
       <div class="bg-bg rounded-xl border border-gray-800 divide-y divide-gray-800">
-        <template x-for="u in settings.users" :key="u">
+        <template x-for="u in settings.users" :key="u.username">
           <div class="flex items-center justify-between gap-3 px-4 py-2.5">
-            <span class="text-sm text-fg" x-text="u"></span>
+            <span class="text-sm text-fg flex items-center gap-2">
+              <span x-text="u.username"></span>
+              <span x-show="u.totp" class="text-[0.65rem] px-1.5 py-0.5 rounded bg-success/15 text-success" x-text="t('cfg_2fa_on')"></span>
+            </span>
             <div class="flex items-center gap-1">
-              <button @click="openChangePassword(u)" class="text-xs text-fg-muted hover:text-fg px-2 py-1" :title="t('cfg_chg_pass')">🔑</button>
-              <button x-show="settings.users.length > 1" @click="deleteUser(u)" class="text-xs text-fg-muted hover:text-danger px-2 py-1" :title="t('cfg_del_user')">🗑️</button>
+              <button @click="u.totp ? disableTotp(u.username) : openTotpEnroll(u.username)"
+                class="text-xs text-fg-muted hover:text-fg px-2 py-1"
+                :title="u.totp ? t('cfg_2fa_disable') : t('cfg_2fa_enable')" x-text="u.totp ? '🔓' : '🔐'"></button>
+              <button @click="openChangePassword(u.username)" class="text-xs text-fg-muted hover:text-fg px-2 py-1" :title="t('cfg_chg_pass')">🔑</button>
+              <button x-show="settings.users.length > 1" @click="deleteUser(u.username)" class="text-xs text-fg-muted hover:text-danger px-2 py-1" :title="t('cfg_del_user')">🗑️</button>
             </div>
           </div>
         </template>
@@ -680,19 +686,59 @@
     </div>
     <div class="overflow-y-auto p-6 space-y-4" style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
       <div x-show="userModal.mode === 'add'">
-        <label class="block text-xs text-fg-muted mb-1" x-text="t('username')"></label>
-        <input type="text" x-model="userModal.username" placeholder="a-z, 0-9, _-"
+        <label for="user-modal-name" class="block text-xs text-fg-muted mb-1" x-text="t('username')"></label>
+        <input id="user-modal-name" type="text" x-model="userModal.username" placeholder="a-z, 0-9, _-"
           class="w-full bg-bg border border-gray-700 rounded-xl px-3 py-2 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors">
       </div>
       <div>
-        <label class="block text-xs text-fg-muted mb-1" x-text="t('cfg_password_label')"></label>
-        <input type="password" x-model="userModal.password" minlength="8"
+        <label for="user-modal-pass" class="block text-xs text-fg-muted mb-1" x-text="t('cfg_password_label')"></label>
+        <input id="user-modal-pass" type="password" x-model="userModal.password" minlength="8"
           class="w-full bg-bg border border-gray-700 rounded-xl px-3 py-2 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors">
       </div>
       <p x-show="userModal.error" class="text-sm text-danger" x-text="userModal.error"></p>
       <button @click="userModal.mode === 'add' ? doAddUser() : doChangePassword()"
         class="w-full py-2.5 bg-accent hover:bg-accent-hover text-white rounded-xl text-sm font-medium transition-colors"
         x-text="userModal.mode === 'add' ? t('cfg_add_user_title') : t('cfg_save')"></button>
+    </div>
+  </div>
+</div>
+
+
+<!-- 2FA enrollment modal: QR + secret, then the confirmation code. The secret
+     is only persisted once a code proves the app really has it. -->
+<div x-show="totpModal.open" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-[100] p-4" @click.self="totpModal.open = false">
+  <div class="flex flex-col w-full max-w-sm max-h-[90vh] bg-bg-card border border-gray-700 rounded-2xl">
+    <div class="flex items-center justify-between p-4 border-b border-gray-800 shrink-0">
+      <h3 class="font-semibold" x-text="t('cfg_2fa_title', [totpModal.username])"></h3>
+      <button @click="totpModal.open = false" class="text-fg-muted hover:text-fg text-xl leading-none">&times;</button>
+    </div>
+    <div class="overflow-y-auto p-6 space-y-4" style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
+      <p class="text-xs text-fg-muted" x-text="t('cfg_2fa_help')"></p>
+
+      <!-- White plate behind the QR: the code must stay scannable on every skin -->
+      <div x-show="totpModal.qr" class="flex justify-center">
+        <div class="bg-white p-2 rounded-xl" style="max-width:100%" x-html="totpModal.qr"></div>
+      </div>
+      <div x-show="!totpModal.qr && totpModal.secret" class="text-xs text-fg-muted" x-text="t('cfg_2fa_noqr')"></div>
+
+      <div x-show="totpModal.secret">
+        <label class="block text-xs text-fg-muted mb-1" x-text="t('cfg_2fa_secret')"></label>
+        <button @click="copyText(totpModal.secret)"
+          class="w-full text-left font-mono text-xs break-all bg-bg border border-gray-700 rounded-xl px-3 py-2 text-fg hover:border-accent transition-colors"
+          x-text="totpModal.secret"></button>
+      </div>
+
+      <div>
+        <label for="enroll-totp" class="block text-xs text-fg-muted mb-1" x-text="t('cfg_2fa_code')"></label>
+        <input id="enroll-totp" type="text" x-model="totpModal.code" inputmode="numeric" autocomplete="one-time-code"
+          maxlength="6" placeholder="123456" @keydown.enter="confirmTotp()"
+          class="w-full bg-bg border border-gray-700 rounded-xl px-3 py-2 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors font-mono tracking-widest">
+      </div>
+
+      <p x-show="totpModal.error" class="text-sm text-danger" x-text="totpModal.error"></p>
+      <button @click="confirmTotp()" :disabled="totpModal.busy"
+        class="w-full py-2.5 bg-accent hover:bg-accent-hover text-white rounded-xl text-sm font-medium transition-colors disabled:opacity-50"
+        x-text="t('cfg_2fa_confirm')"></button>
     </div>
   </div>
 </div>
@@ -748,7 +794,7 @@
 <!-- Terminal grid: every active session tiled at once.
      Sits after the live modal in the DOM (same z-95 tier) so it paints above
      it, but before the toast so toasts stay visible. -->
-<div x-show="grid.open" x-cloak class="fixed inset-0 bg-bg z-[95] flex flex-col"
+<div x-show="grid.open" x-cloak class="fixed inset-0 bg-bg z-[95] flex flex-col tgrid-overlay"
   @keydown.escape.window="if (grid.open && grid.zoomed) grid.zoomed = null">
 
   <!-- Header: title, minimized-tile chips (kept in this bar so they don't eat
@@ -886,21 +932,37 @@
     <div class="text-center mb-6">
       <span class="text-4xl">🤖</span>
       <h1 class="text-xl font-semibold mt-3">Claude Sessions</h1>
-      <p class="text-sm text-fg-muted mt-1" x-text="t('login_subtitle')"></p>
+      <p class="text-sm text-fg-muted mt-1" x-text="totpStep ? t('login_totp_subtitle') : t('login_subtitle')"></p>
     </div>
-    <form @submit.prevent="doLogin" class="space-y-4">
+
+    <!-- Step 1: credentials -->
+    <form x-show="!totpStep" @submit.prevent="doLogin" class="space-y-4">
       <div>
-        <label class="block text-sm text-fg-muted mb-1" x-text="t('username')"></label>
-        <input type="text" x-model="loginUser" required
+        <label for="login-user" class="block text-sm text-fg-muted mb-1" x-text="t('username')"></label>
+        <input id="login-user" type="text" x-model="loginUser" required autocomplete="username"
           class="w-full bg-bg border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-fg focus:outline-none focus:border-accent transition-colors">
       </div>
       <div>
-        <label class="block text-sm text-fg-muted mb-1" x-text="t('password')"></label>
-        <input type="password" x-model="loginPass" required
+        <label for="login-pass" class="block text-sm text-fg-muted mb-1" x-text="t('password')"></label>
+        <input id="login-pass" type="password" x-model="loginPass" required autocomplete="current-password"
           class="w-full bg-bg border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-fg focus:outline-none focus:border-accent transition-colors">
       </div>
       <p x-show="loginError" class="text-sm text-danger" x-text="loginError"></p>
       <button type="submit" class="w-full py-2.5 bg-accent hover:bg-accent-hover text-white rounded-xl text-sm font-medium transition-colors" x-text="t('login_button')"></button>
+    </form>
+
+    <!-- Step 2: TOTP code. autocomplete=one-time-code lets iOS/Android offer
+         the code straight from the notification / password manager. -->
+    <form x-show="totpStep" @submit.prevent="doTotp" class="space-y-4">
+      <div>
+        <label for="login-totp" class="block text-sm text-fg-muted mb-1" x-text="t('login_totp_label')"></label>
+        <input id="login-totp" type="text" x-model="totpCode" required inputmode="numeric" autocomplete="one-time-code"
+          maxlength="6" placeholder="123456"
+          class="w-full bg-bg border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors font-mono tracking-widest">
+      </div>
+      <p x-show="totpError" class="text-sm text-danger" x-text="totpError"></p>
+      <button type="submit" class="w-full py-2.5 bg-accent hover:bg-accent-hover text-white rounded-xl text-sm font-medium transition-colors" x-text="t('login_totp_button')"></button>
+      <button type="button" @click="cancelTotp()" class="w-full text-xs text-fg-muted hover:text-fg transition-colors" x-text="t('login_totp_back')"></button>
     </form>
   </div>
 </div>

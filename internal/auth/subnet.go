@@ -36,6 +36,19 @@ func ClientIP(r *http.Request, trusted []string) string {
 	return strings.TrimSpace(xff)
 }
 
+// HostOnly strips the port from an address, if any. ClientIP may return the
+// raw RemoteAddr ("8.8.8.8:41234"), which is fine for the subnet checks (they
+// split it themselves) but not for anything that uses the address as an
+// identity: rate limiting keyed on host:port would count each connection
+// separately and never trigger, and the audit log would record a useless
+// ephemeral port.
+func HostOnly(addr string) string {
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
+}
+
 func inSubnets(remoteAddr string, subnets []string) bool {
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {

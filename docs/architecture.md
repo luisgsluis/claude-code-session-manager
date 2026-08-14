@@ -54,7 +54,8 @@ deployment per host even if systemd restarts race.
 
 1. User clicks "New session" in the browser
 2. Browser sends `POST /api/sessions/new` to CCSM
-3. Auth middleware checks cookie or LAN bypass
+3. Auth middleware checks cookie or LAN bypass (a session still owing a TOTP code is
+   rejected here)
 4. Handler serializes the request and sends it to the executor (direct in-process, or agent over the Unix socket)
 5. Agent (if any) validates the shared secret
 6. The executor validates arguments against closed regex patterns
@@ -66,13 +67,17 @@ deployment per host even if systemd restarts race.
 ## API Design
 
 REST JSON API. All endpoints live under `/api`; every one is auth-protected
-(cookie or LAN bypass) except `health`, `login`, `logout` and `status`.
+(cookie or LAN bypass) except `health`, `login`, `totp`, `logout` and `status`.
 
 ### Endpoints
 
 ```
 GET  /api/health                             public; used by the Docker healthcheck
-POST /api/auth/login                         login (password, or LAN bypass)
+POST /api/auth/login                         login (password, or LAN bypass). With 2FA
+                                             enrolled: {"ok":false,"totp_required":true}
+                                             plus a PENDING cookie that opens nothing
+POST /api/auth/totp                          second factor; body {"code"} — swaps the
+                                             pending session for a real one
 POST /api/auth/logout
 GET  /api/auth/status
 GET  /api/sessions                           list tmux sessions (each may carry `project`)
@@ -101,10 +106,13 @@ GET  /api/conversations                      search conversations
 GET  /api/conversations/{id}                 single-conversation preview
 GET  /api/config                             non-secret deployment info (☰ menu)
 PATCH /api/config                            hot-reload settings; atomic write to config.yaml
-GET  /api/config/users                       list usernames
+GET  /api/config/users                       list users: [{"username","totp"}]
 POST /api/config/users                       add a user; body {"username","password"}
 DELETE /api/config/users/{username}          delete a user
 POST /api/config/users/{username}/password   change password; body {"password"}
+POST /api/config/users/{username}/totp       start 2FA enrollment → {"secret","uri"} once
+PUT  /api/config/users/{username}/totp       confirm with {"code"}; only now persisted
+DELETE /api/config/users/{username}/totp     disable 2FA
 GET  /api/settings                           content of the CURRENTLY APPLIED settings.json
 ```
 
@@ -127,7 +135,8 @@ name, and project tagging (`set-option`) uses the bare name too.
 
 `GET /api/config` (protected) feeds the settings ☰ menu. It returns the **non-secret**
 subset of the running config: mode (`direct`/`agent`), port, agent socket, host attach
-address, LAN subnets, usernames, the resolved paths and the RC bootstrap values.
+address, LAN subnets, users (name + whether 2FA is on), the resolved paths and the RC
+bootstrap values.
 
 This endpoint only reports the deployment subset. The rest of the ☰ panel is backed
 by the other config endpoints above: `GET /api/settings` (active settings.json),
@@ -141,7 +150,7 @@ by the other config endpoints above: `GET /api/settings` (active settings.json),
   "agent_socket": "/run/ccsm/agent.sock",
   "host_attach_addr": "admin@192.168.1.175",
   "lan_subnets": ["192.168.1.0/24"],
-  "users": ["admin"],
+  "users": [{"username": "admin", "totp": false}],
   "paths": { "conversations": "…", "profiles": "…", "settings": "…", "claude_binary": "…", "tmux_binary": "…", "bash_binary": "…" },
   "rc": { "bootstrap_profile": "estandar", "wait_seconds": 25, "poll_seconds": 2 }
 }
@@ -171,10 +180,44 @@ value returns `400 {"error": "..."}` and nothing is written.
 ### User management
 
 Users live in `config.yaml` as bcrypt hashes (cost 10). The API only ever returns
-usernames — hashes never leave the server. Passwords must be at least 8 characters.
-`POST /api/config/users` creates a user, `DELETE /api/config/users/{username}`
-removes one (the last user cannot be deleted), and
+usernames and a 2FA flag — hashes and TOTP secrets never leave the server. Passwords
+must be at least 8 characters. `POST /api/config/users` creates a user,
+`DELETE /api/config/users/{username}` removes one (the last user cannot be deleted), and
 `POST /api/config/users/{username}/password` changes a password.
+
+### Two-factor authentication
+
+Opt-in per user, stored as `users[].totp_secret`. RFC 6238 (HMAC-SHA1, 6 digits, 30 s,
+±1 step for clock drift) implemented over the standard library in `internal/auth/totp.go`
+— the module keeps only `x/crypto` and `yaml` as dependencies.
+
+Login becomes two steps. `handleLogin` checks the password and, if the user has a secret,
+issues a **pending** session (`TOTPPending`, 5 min) instead of a real one; the single auth
+middleware every protected route goes through rejects it, so nothing is reachable until
+`POST /api/auth/totp` verifies a code and swaps it for a full session. A `ReplayGuard`
+records the last step consumed per user, because a code is valid for its whole window and
+would otherwise be replayable within 30 seconds.
+
+Enrollment is two steps for the same reason lockouts matter: `POST` generates the secret
+and holds it **in memory** (10 min), `PUT` verifies a code from the app and only then
+writes it to `config.yaml`. A scan that silently failed therefore cannot lock anyone out.
+
+The LAN bypass short-circuits both `handleLogin` and the middleware before any credential
+logic, so a `lan_subnets` client never sees either step — which is also the documented way
+back in if a phone is lost (the other being deleting `totp_secret` on the host).
+
+### Login rate limiting
+
+`internal/auth/ratelimit.go`: 5 failed attempts per client IP within 15 minutes block that
+IP for 15 minutes (`429`). The password step and the TOTP step share one counter —
+separate ones would leave six digits as an open window. The key is the real client IP
+(`auth.ClientIP` + `auth.HostOnly`, so the ephemeral port never splits one client into
+many buckets). The state is in memory; the durable record is the audit log, which carries
+`ip` on authentication events so an external blocker can act on it.
+
+The UI probes the LAN bypass on every page load by POSTing empty credentials, so a failure
+with an empty username is deliberately not counted — otherwise a reloading browser out on
+the internet would lock itself out in five refreshes.
 
 ### Validation
 

@@ -36,3 +36,8 @@ CLAUDE.md
 # Binaries (build artifacts)
 /ccsm
 /ccsm-agent
+
+# e2e auth server (second instance)
+e2e/state-auth/
+e2e/ccsm-e2e-auth
+e2e/config-auth.yaml

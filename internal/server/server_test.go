@@ -301,7 +301,11 @@ func TestConfigEndpoint(t *testing.T) {
 			t.Errorf("mode: %v", body["mode"])
 		}
 		users := body["users"].([]interface{})
-		if len(users) != 1 || users[0] != "luis" {
+		if len(users) != 1 {
+			t.Fatalf("users: %v", users)
+		}
+		u := users[0].(map[string]interface{})
+		if u["username"] != "luis" || u["totp"] != false {
 			t.Errorf("users: %v", users)
 		}
 		if _, hasSecret := body["session_secret"]; hasSecret {
@@ -321,6 +325,7 @@ func TestLoginSuccessWithValidUser(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.SessionSecret = "test-secret"
 	cfg.LANSubnets = []string{}
+	cfg.AuditPath = t.TempDir() + "/audit.jsonl"
 	// Use a real bcrypt hash for "test123"
 	hash := "$2a$10$H/SC9MUlyPBtcbU1Y8/EMu1vClnnTOUf8gK3jQ7WDv.8.5pwwTQ4W"
 	cfg.Users = []config.User{{Username: "luis", PasswordHash: hash}}
@@ -343,6 +348,7 @@ func TestLoginSuccessWithValidUser(t *testing.T) {
 func TestSPARootWithStaticPath(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.SessionSecret = "test"
+	cfg.AuditPath = t.TempDir() + "/audit.jsonl"
 	tmpDir := t.TempDir()
 	os.WriteFile(tmpDir+"/index.html", []byte("<html>test</html>"), 0644)
 	srv := New(cfg, tmpDir, "")
@@ -428,6 +434,7 @@ func TestAuthMiddlewareEmptyToken(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.SessionSecret = "test-secret"
 	cfg.LANSubnets = []string{} // no LAN bypass
+	cfg.AuditPath = t.TempDir() + "/audit.jsonl"
 	srv := New(cfg, "", "")
 
 	req := httptest.NewRequest("GET", "/api/sessions", nil)

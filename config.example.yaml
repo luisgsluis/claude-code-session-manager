@@ -42,10 +42,15 @@ lan_subnets:
 trusted_proxies:
   - "172.24.0.1/32"
 
-# User accounts (password hash generated with: ccsm --hash-password)
+# User accounts (password hash generated with: ccsm --hash-password).
+# 2FA is opt-in per user and enrolled from the UI (☰ menu → users → 🔐): that flow
+# writes `totp_secret` here once a code from the authenticator app confirms it. Empty or
+# absent = no second factor for that user. To lock someone out of 2FA (lost phone), delete
+# their totp_secret line and restart.
 users:
   - username: "admin"
     password_hash: ""
+    # totp_secret: ""
 
 # Agent connection (Unix socket on the host). Empty = package mode (no agent).
 agent_socket: "/run/ccsm/agent.sock"

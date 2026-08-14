@@ -18,8 +18,10 @@ CCSM follows a defense-in-depth model. Compromising any single layer should not 
 - **Session cookie**: HMAC-SHA256(token, secret) plus a random nonce, HttpOnly, SameSite=Lax, `Secure` when the request reached CCSM over TLS (directly or via a reverse proxy's `X-Forwarded-Proto`), 24h TTL
 - **`session_secret` is required**: `Config.Validate()` refuses to start if it's empty or under 16 characters — an empty secret would make the HMAC key public knowledge, letting anyone forge a session cookie
 - **LAN bypass**: requests from configured CIDRs skip login. This relies on network security (your LAN is trusted)
-- **2FA-ready**: the session architecture supports adding TOTP verification before cookie issuance — no structural changes needed
-- **User management**: users are managed through the API (`GET`/`POST /api/config/users`, `DELETE /api/config/users/{username}`, `POST /api/config/users/{username}/password`). Passwords are hashed with bcrypt (`DefaultCost = 10`) and must be at least 8 characters — enforced client-side **and** server-side. The API returns usernames only: password hashes and passwords never leave the server, are never logged, and are never serialized. Deleting the last remaining user returns `400`, which prevents lockout
+- **2FA (TOTP)**, opt-in per user: after the password checks out, a user with `totp_secret` gets a **pending** session (5 min TTL, `TOTPPending`) instead of a real one. The auth middleware rejects it on every protected route, so nothing is reachable until `POST /api/auth/totp` verifies a code and swaps it for a full session. RFC 6238 over the standard library (HMAC-SHA1, 6 digits, 30 s step, ±1 step for clock drift), constant-time comparison, and a per-user replay guard — a code is valid for its whole window, so accepting it twice would make a captured one replayable
+- **No recovery codes, on purpose**: the two ways back in are a `lan_subnets` address (the bypass never asks for a code) and deleting `totp_secret` from `config.yaml` on the host. Both require access someone attacking the public endpoint does not have, and neither is a secret to steal
+- **Login rate limiting**: 5 failed attempts per client IP within 15 minutes block that IP for 15 minutes (`429`). The password step and the TOTP step share one counter — separate counters would leave six digits as an open window. The counters are in memory; the durable record is the audit log, which now carries the client IP on authentication events so an external blocker (fail2ban, a CrowdSec bridge) can act on it. The LAN-bypass probe the UI issues on every page load (empty credentials) is deliberately not counted, or a reloading browser would lock itself out
+- **User management**: users are managed through the API (`GET`/`POST /api/config/users`, `DELETE /api/config/users/{username}`, `POST /api/config/users/{username}/password`, and `POST`/`PUT`/`DELETE /api/config/users/{username}/totp` for the second factor). Passwords are hashed with bcrypt (`DefaultCost = 10`) and must be at least 8 characters — enforced client-side **and** server-side. The API returns usernames and a 2FA on/off flag: password hashes, passwords and TOTP secrets never leave the server, are never logged, and are never serialized. The one exception is by design and bounded — enrollment returns the fresh TOTP secret exactly once, to the authenticated browser doing the enrolling, and it is held in memory (10 min TTL) until a valid code confirms it; confirming is what writes it to `config.yaml`, so a scan that silently failed cannot lock the user out. Deleting the last remaining user returns `400`, which prevents lockout
 - **Config surface**: the settings/config endpoints (`PATCH /api/config`, `GET /api/settings`, and the user-management routes above) sit behind the same `auth` middleware as every other route — a valid login cookie or a LAN-bypass request
 
 ### 3. Agent Authentication
@@ -84,11 +86,10 @@ In package mode the same permissions apply to the user running `ccsm`.
 
 | Threat | Risk | Mitigation in future version |
 |--------|------|------------------------------|
-| Brute force on login | Low (LAN-only) | Rate limiting (v0.3.0) |
-| CSRF on login form | Low (no state-changing GETs, SameSite cookies) | CSRF tokens (v0.3.0) |
+| CSRF on login form | Low (no state-changing GETs, SameSite cookies) | CSRF tokens |
 | Container escape | Medium (Docker isolation) | Read-only rootfs, non-root user, seccomp profile |
 | Agent secret leak via env | Low (container only) | Secrets file with restricted permissions |
-| Session hijacking via cookie theft | Medium (if host compromised) | Token binding to IP / user-agent (v0.3.0) |
+| Session hijacking via cookie theft | Medium (if host compromised) | Token binding to IP / user-agent |
 
 ## API Key Handling
 

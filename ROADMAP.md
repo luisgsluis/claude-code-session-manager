@@ -15,11 +15,9 @@ Nothing prioritized right now — see Backlog below.
 
 Deliberately deferred; pick up if/when there's a concrete need.
 
-- **Security: 2FA via TOTP** — the session-cookie architecture allows adding TOTP
-  verification without structural changes. After validating user+password, a TOTP code
-  would be required before issuing the session cookie; the auth middleware would check a
-  `totp_verified` flag.
 - **Mobile app**: native or PWA mobile version.
+- **CSRF tokens** and **session-cookie binding** (to IP or user-agent) — the two entries
+  still open in the threat table of `docs/security.md`.
 
 ## Release process
 

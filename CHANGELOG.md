@@ -1,5 +1,49 @@
 # Changelog
 
+## [1.3.0] — 2026-08-14
+
+### Added
+- **Two-factor authentication (TOTP)**, opt-in per user. Enroll from the ☰ menu: the panel
+  shows a QR to scan with Google Authenticator (Aegis, 1Password — any RFC 6238 app) plus
+  the secret in text for manual entry, and asks for a code to confirm. The secret only
+  reaches `config.yaml` once that code verifies, so a scan that silently failed cannot lock
+  anyone out. Login becomes two steps: the password yields a short-lived *pending* session
+  that every protected route rejects, and `POST /api/auth/totp` swaps it for a real one.
+  RFC 6238 is implemented over the standard library — no new Go dependency — with a ±1 step
+  window for clock drift, constant-time comparison and a replay guard so a code cannot be
+  used twice inside its 30-second window. The LAN bypass is untouched: from `lan_subnets`
+  there is no login and therefore no code.
+- **Login rate limiting**: 5 failed attempts per client IP in 15 minutes block that IP for
+  15 minutes (`429`). The password step and the TOTP step share one counter — separate ones
+  would leave six digits as an open window. The LAN-bypass probe the UI issues on every page
+  load (empty credentials) is not counted, or a reloading browser would lock itself out.
+- The audit log records the **client IP** on authentication events (`login`, `login_failed`,
+  `login_totp_failed`, `login_blocked`, `logout`) as a new `ip` field. Other actions keep no
+  address. This is what lets an external blocker (fail2ban, a CrowdSec bridge) act on abuse.
+- e2e: a second server (`e2e/run-e2e-auth.sh`, port 8798) with the LAN bypass off and a 2FA
+  user, plus `e2e/auth.spec.js` driving the two-step form. Until now every spec ran under
+  the bypass, so the login UI had no browser coverage at all.
+
+### Changed
+- `GET /api/config/users` and the `users` field of `GET /api/config` now return
+  `[{"username": "...", "totp": bool}]` instead of a list of names. Secrets are still never
+  exposed.
+
+### Fixed
+- **The page scrolled underneath full-screen overlays on iPadOS/iOS.** Scrolling inside a
+  terminal-grid tile (or the chat/terminal modal) dragged the whole page: the overlay's
+  header slid off the top and the panel underneath showed through, leaving controls out of
+  reach. `body { overflow: hidden }` is simply ignored by WebKit for scroll locking — the
+  document keeps scrolling — so the lock now also pins the body with `position: fixed` and
+  restores the saved offset on close. The chat/terminal modal (`live.open`) was not even in
+  the list of overlays that take the lock; it is now, along with the 2FA modal.
+- The terminal grid uses `100dvh` instead of relying on `inset-0` alone, so a mobile
+  browser's dynamic toolbar no longer pushes the last tile's prompt row below the edge.
+- The client IP could carry the source port (`8.8.8.8:41234`). Harmless for the subnet
+  checks, which split it themselves, but as the new rate-limiter key it would have given
+  every connection its own bucket and never triggered.
+- Several server tests wrote to the real `$HOME/.ccsm/audit.jsonl` instead of a temp file.
+
 ## [1.2.0] — 2026-08-13
 
 ### Added
