@@ -30,7 +30,7 @@ test('auto-login LAN, create session and close it', async ({ page }) => {
   await expect(card).toBeVisible();
 
   // Close it: the confirm() is accepted and the list becomes empty.
-  await card.getByTitle('Cerrar sesión').click();
+  await card.getByTitle('Archivar sesión').click();
   await expect(page.getByText('No hay sesiones activas')).toBeVisible();
 });
 
@@ -73,6 +73,6 @@ test('advanced session with project: starts in the project and shows the badge',
   await expect(card.getByText('demo')).toHaveAttribute('title', 'projects/demo');
 
   // Close it and return to the empty state.
-  await card.getByTitle('Cerrar sesión').click();
+  await card.getByTitle('Archivar sesión').click();
   await expect(page.getByText('No hay sesiones activas')).toBeVisible();
 });

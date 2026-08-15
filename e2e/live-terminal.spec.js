@@ -33,5 +33,5 @@ test('live terminal tab opens scrolled to the bottom, not the top', async ({ pag
   }).toPass({ timeout: 2000 });
 
   await liveModal.click({ position: { x: 5, y: 5 } }); // close via backdrop
-  await page.locator('.group').filter({ hasText: 'sesión term-scroll' }).getByTitle('Cerrar sesión').click();
+  await page.locator('.group').filter({ hasText: 'sesión term-scroll' }).getByTitle('Archivar sesión').click();
 });

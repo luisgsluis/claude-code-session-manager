@@ -79,8 +79,8 @@ test('terminal grid: tiles, minimize/restore, zoom/unzoom, send — no console e
   expect(relevant, 'unexpected console/page errors while using the grid').toEqual([]);
 
   // Cleanup: close both sessions so the run ends in the empty state.
-  await page.locator('.group').filter({ hasText: 'sesión grid-alpha' }).getByTitle('Cerrar sesión').click();
-  await page.locator('.group').filter({ hasText: 'sesión grid-beta' }).getByTitle('Cerrar sesión').click();
+  await page.locator('.group').filter({ hasText: 'sesión grid-alpha' }).getByTitle('Archivar sesión').click();
+  await page.locator('.group').filter({ hasText: 'sesión grid-beta' }).getByTitle('Archivar sesión').click();
   await expect(page.getByText('No hay sesiones activas')).toBeVisible();
 });
 
@@ -140,8 +140,8 @@ test('terminal grid: narrow viewport starts every tile minimized, one at a time'
   await expect(page.locator('.tgrid-tile')).toHaveCount(0);
 
   await page.locator('div[x-show="grid.open"]').getByText('×', { exact: true }).click();
-  await page.locator('.group').filter({ hasText: 'sesión grid-narrow-a' }).getByTitle('Cerrar sesión').click();
-  await page.locator('.group').filter({ hasText: 'sesión grid-narrow-b' }).getByTitle('Cerrar sesión').click();
+  await page.locator('.group').filter({ hasText: 'sesión grid-narrow-a' }).getByTitle('Archivar sesión').click();
+  await page.locator('.group').filter({ hasText: 'sesión grid-narrow-b' }).getByTitle('Archivar sesión').click();
 });
 
 test('terminal grid: restoring a tile opens scrolled to the bottom, not the top', async ({ page }) => {
@@ -177,5 +177,5 @@ test('terminal grid: restoring a tile opens scrolled to the bottom, not the top'
   }).toPass({ timeout: 2000 });
 
   await page.locator('div[x-show="grid.open"]').getByText('×', { exact: true }).click();
-  await page.locator('.group').filter({ hasText: 'sesión grid-scroll' }).getByTitle('Cerrar sesión').click();
+  await page.locator('.group').filter({ hasText: 'sesión grid-scroll' }).getByTitle('Archivar sesión').click();
 });
