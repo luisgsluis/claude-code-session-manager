@@ -2681,7 +2681,17 @@ func (h *Host) sessionSend(name, text, key string) (map[string]any, error) {
 	if !ok {
 		return nil, errBad("unsupported key: %s", key)
 	}
-	if err := exec.Command(h.tmuxBinary, "send-keys", "-t", h.paneTarget(name), tmuxKey).Run(); err != nil {
+	// "enter" as a raw literal byte (\r), not tmux's named "Enter": reported in
+	// production as needing two presses to dismiss an approval/choice dialog.
+	// Same class of issue as rawShiftTab below — tmux's named key sometimes
+	// doesn't reach Claude's input loop, only the literal byte reliably does.
+	args := []string{"send-keys", "-t", h.paneTarget(name)}
+	if key == "enter" {
+		args = append(args, "-l", "\r")
+	} else {
+		args = append(args, tmuxKey)
+	}
+	if err := exec.Command(h.tmuxBinary, args...).Run(); err != nil {
 		return nil, errServer("tmux send-keys: %v", err)
 	}
 	return map[string]any{"session": name, "sent": key}, nil

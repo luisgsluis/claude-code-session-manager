@@ -1575,3 +1575,25 @@ func TestSessionSendCtrlO(t *testing.T) {
 		t.Error("expected an unknown key to still be rejected")
 	}
 }
+
+// TestSessionSendEnterIsLiteral: "enter" must reach the pane as the raw byte
+// \r (send-keys -l), not tmux's named "Enter" key — reported in production as
+// needing two presses to dismiss an approval/choice dialog. Same class of fix
+// as rawShiftTab (\x1b[Z): the named key doesn't always reach Claude's input
+// loop, only the literal byte reliably does.
+func TestSessionSendEnterIsLiteral(t *testing.T) {
+	sendkeys := filepath.Join(t.TempDir(), "sendkeys.txt")
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_SENDKEYS": sendkeys})
+
+	if _, err := h.sessionSend("3", "", "enter"); err != nil {
+		t.Fatalf("sessionSend enter: %v", err)
+	}
+	data, _ := os.ReadFile(sendkeys)
+	got := string(data) // don't trim: the literal \r itself is the thing under test
+	if !strings.Contains(got, "-l") || !strings.Contains(got, "\r") {
+		t.Errorf("enter not sent as a literal \\r byte: %q", got)
+	}
+	if strings.Contains(got, "Enter") {
+		t.Errorf("enter must not be sent as the named tmux key: %q", got)
+	}
+}
