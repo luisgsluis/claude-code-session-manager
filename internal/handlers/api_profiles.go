@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 // ProfileHandler handles /api/profiles endpoints.
@@ -50,7 +51,7 @@ func (h *ProfileHandler) ApplyProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := h.Agent.Exec("claude-perfil", map[string]string{
+	resp, err := h.Agent.Exec("claude-perfil", map[string]string{
 		"profile": req.Profile,
 	})
 	if err != nil {
@@ -58,8 +59,23 @@ func (h *ProfileHandler) ApplyProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	audit(h.Audit, "profile_apply", UserFrom(r), "profile="+req.Profile)
-	writeJSON(w, http.StatusOK, map[string]string{"ok": "profile " + req.Profile + " applied"})
+	var data struct {
+		Relaunched []string `json:"relaunched"`
+	}
+	json.Unmarshal(resp.Data, &data)
+
+	detail := "profile=" + req.Profile
+	msg := "profile " + req.Profile + " applied"
+	if len(data.Relaunched) > 0 {
+		// The outgoing profile carried alternate credentials the new one
+		// doesn't match, so live sessions were killed and resumed rather than
+		// left to hot-reload stale auth (see claudeProfile).
+		relaunchedList := strings.Join(data.Relaunched, ", ")
+		detail += ", relaunched=" + relaunchedList
+		msg += "; relaunched sessions to apply new credentials: " + relaunchedList
+	}
+	audit(h.Audit, "profile_apply", UserFrom(r), detail)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": msg, "relaunched": data.Relaunched})
 }
 
 // GetProfileContent returns the raw content of a profile file.

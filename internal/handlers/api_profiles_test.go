@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -112,6 +113,33 @@ func TestApplyProfileSuccess(t *testing.T) {
 
 	if w.Code != 200 {
 		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestApplyProfileRelaunchedSessions(t *testing.T) {
+	sockPath, cleanup := mockAgentServer(t, mockAgentOK(`{"relaunched":["5","7"]}`))
+	defer cleanup()
+
+	h := &ProfileHandler{Agent: requireAgent(t, sockPath)}
+	body := `{"profile":"estandar"}`
+	req := httptest.NewRequest("POST", "/api/profiles/apply", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ApplyProfile(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var data struct {
+		Relaunched []string `json:"relaunched"`
+		OK         string   `json:"ok"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &data)
+	if len(data.Relaunched) != 2 || data.Relaunched[0] != "5" || data.Relaunched[1] != "7" {
+		t.Errorf("relaunched: %v", data.Relaunched)
+	}
+	if !strings.Contains(data.OK, "5") || !strings.Contains(data.OK, "7") {
+		t.Errorf("ok message should mention relaunched sessions: %q", data.OK)
 	}
 }
 

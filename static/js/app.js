@@ -106,6 +106,7 @@ const I18N = {
     toast_session_resumed: 'Sesión {0} retomada',
     toast_session_killed: 'Sesión {0} archivada',
     toast_profile_applied: 'Perfil {0} aplicado',
+    toast_profile_applied_relaunched: 'Perfil {0} aplicado; sesiones relanzadas para aplicar las nuevas credenciales: {1}',
     toast_attach_copied: 'Comando copiado: {0}',
     toast_attach_fallback: 'Comando: {0}',
     toast_error_meta: 'Error al guardar etiquetas/notas',
@@ -345,6 +346,7 @@ const I18N = {
     toast_session_resumed: 'Session {0} resumed',
     toast_session_killed: 'Session {0} archived',
     toast_profile_applied: 'Profile {0} applied',
+    toast_profile_applied_relaunched: 'Profile {0} applied; sessions relaunched to pick up the new credentials: {1}',
     toast_attach_copied: 'Command copied: {0}',
     toast_attach_fallback: 'Command: {0}',
     toast_error_meta: 'Error saving tags/notes',
@@ -2094,7 +2096,13 @@ function ccsmApp() {
           body: JSON.stringify({ profile: name }),
         });
         if (resp.ok) {
-          this.toastMsg(this.t('toast_profile_applied', [name]), 'success');
+          const data = await resp.json();
+          if (data.relaunched && data.relaunched.length) {
+            this.toastMsg(this.t('toast_profile_applied_relaunched', [name, data.relaunched.join(', ')]), 'success');
+            await this.loadSessions();
+          } else {
+            this.toastMsg(this.t('toast_profile_applied', [name]), 'success');
+          }
           await this.loadProfiles();
         } else {
           const data = await resp.json();

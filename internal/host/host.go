@@ -244,7 +244,7 @@ func (h *Host) Exec(cmd string, args map[string]string) (any, error) {
 		if !safeProfileName(name) {
 			return nil, errBad("invalid profile name")
 		}
-		return nil, h.claudeProfile(name)
+		return h.claudeProfile(name)
 	case "profiles-ls":
 		return h.profilesList()
 	case "projects-ls":
@@ -644,11 +644,76 @@ func (h *Host) waitRCBridgeSettled(session string) string {
 	return "ok"
 }
 
-func (h *Host) claudeProfile(name string) error {
-	if err := h.applyProfile(name); err != nil {
-		return err
+// claudeProfile applies a catalog profile and, if the outgoing profile carried
+// alternate credentials the new one doesn't match, relaunches every live
+// session so none is left running on stale auth (see relaunchLiveSessions).
+func (h *Host) claudeProfile(name string) (map[string]any, error) {
+	oldData, _ := os.ReadFile(h.settingsPath) // best effort; unreadable/missing = nothing to carry over
+	newData, err := os.ReadFile(h.profilesPath + "/" + name + ".json")
+	if err != nil {
+		return nil, errNotFound("profile not found: %s", name)
 	}
-	return nil
+
+	if err := h.applyProfile(name); err != nil {
+		return nil, err
+	}
+
+	old := parseAuthFields(oldData)
+	if !old.altAuth() || old.equal(parseAuthFields(newData)) {
+		return map[string]any{"relaunched": []string{}}, nil
+	}
+
+	// The previous profile resolved credentials via apiKeyHelper, a static
+	// key/token, or a non-Anthropic base URL — and the new one doesn't match
+	// it. Claude Code hot-reloads the model/endpoint from settings.json on the
+	// next turn, but a live process keeps whatever credentials it already
+	// resolved: it goes on sending the stale key to the new endpoint and gets
+	// stuck retrying 401 forever (visto 2026-08-15, sesión 0 tras deepseek →
+	// estandar en caliente). There is no in-process way to force it to
+	// re-resolve credentials, so the only reliable fix is the one already used
+	// for a dropped Remote Control bridge: kill the session and resume the
+	// conversation, which boots a fresh process reading the settings.json just
+	// written.
+	return map[string]any{"relaunched": h.relaunchLiveSessions()}, nil
+}
+
+// relaunchLiveSessions kills and resumes every live session that isn't
+// mid-generation, so each boots a fresh process under the profile now in
+// settings.json. A session that's currently working is left alone rather than
+// killed mid-turn — best-effort, not a guarantee every session survives a
+// profile switch; skipped sessions still show the stale-auth symptom next
+// time they're used and need a manual "RC: re-register"/relaunch.
+func (h *Host) relaunchLiveSessions() []string {
+	sessions, err := h.tmuxList()
+	if err != nil {
+		return nil
+	}
+	relaunched := []string{}
+	for _, s := range sessions {
+		name, _ := s["name"].(string)
+		if name == "" || h.paneWorking(name) {
+			continue
+		}
+		conv := h.convIDForSession(name)
+		if conv == "" {
+			continue
+		}
+		if err := h.tmuxKill(name); err != nil {
+			continue
+		}
+		resumed, err := h.claudeResume(conv)
+		if err != nil {
+			continue
+		}
+		// Report the session's new name — a kill+resume doesn't keep the old
+		// tmux name, and that's what the caller needs to attach to now.
+		newName := resumed["session"]
+		if newName == "" {
+			newName = name
+		}
+		relaunched = append(relaunched, newName)
+	}
+	return relaunched
 }
 
 // applyProfile copies the named catalog profile over Claude Code's
@@ -670,14 +735,23 @@ func (h *Host) applyProfile(name string) error {
 	return nil
 }
 
-// perfilSinRC reports whether a profile disables Remote Control at startup.
-// apiKeyHelper, an API key or auth token in env, or a non-Anthropic base URL
-// all make Claude Code skip RC (matches olivetin-cmd's perfil_sin_rc).
-func perfilSinRC(profilePath string) bool {
-	data, err := os.ReadFile(profilePath)
-	if err != nil {
-		return false
-	}
+// authFields are the settings.json fields that select which credentials
+// Claude Code authenticates with: a dynamic apiKeyHelper, a static API key or
+// auth token in env, or a non-Anthropic base URL implying its own auth
+// scheme. Shared by perfilSinRC (does this profile disable RC?) and
+// claudeProfile (did switching profiles change which credentials are live?).
+type authFields struct {
+	APIKeyHelper json.RawMessage
+	APIKey       json.RawMessage
+	AuthToken    json.RawMessage
+	BaseURL      string
+}
+
+// parseAuthFields reads the auth-relevant fields out of a settings.json /
+// profile document. Invalid or unreadable JSON yields the zero value (no alt
+// auth) rather than an error: callers treat "can't tell" as "nothing to carry
+// over", the safe default on both sides of a profile switch.
+func parseAuthFields(data []byte) authFields {
 	var doc struct {
 		APIKeyHelper json.RawMessage `json:"apiKeyHelper"`
 		Env          struct {
@@ -686,18 +760,39 @@ func perfilSinRC(profilePath string) bool {
 			ANTHROPIC_BASE_URL   string          `json:"ANTHROPIC_BASE_URL"`
 		} `json:"env"`
 	}
-	if err := json.Unmarshal(data, &doc); err != nil {
-		return false
-	}
-	has := func(r json.RawMessage) bool { return len(r) > 0 && string(r) != "null" }
-	if has(doc.APIKeyHelper) || has(doc.Env.ANTHROPIC_API_KEY) || has(doc.Env.ANTHROPIC_AUTH_TOKEN) {
+	_ = json.Unmarshal(data, &doc)
+	return authFields{doc.APIKeyHelper, doc.Env.ANTHROPIC_API_KEY, doc.Env.ANTHROPIC_AUTH_TOKEN, doc.Env.ANTHROPIC_BASE_URL}
+}
+
+var anthropicHostPattern = regexp.MustCompile(`^(https?://)?(api\.)?anthropic\.com($|/)`)
+
+func hasRawJSON(r json.RawMessage) bool { return len(r) > 0 && string(r) != "null" }
+
+// altAuth reports whether these fields select credentials other than the
+// account's own Anthropic OAuth login.
+func (a authFields) altAuth() bool {
+	if hasRawJSON(a.APIKeyHelper) || hasRawJSON(a.APIKey) || hasRawJSON(a.AuthToken) {
 		return true
 	}
-	if doc.Env.ANTHROPIC_BASE_URL == "" {
+	return a.BaseURL != "" && !anthropicHostPattern.MatchString(a.BaseURL)
+}
+
+// equal reports whether two profiles resolve credentials the same way.
+func (a authFields) equal(b authFields) bool {
+	return string(a.APIKeyHelper) == string(b.APIKeyHelper) &&
+		string(a.APIKey) == string(b.APIKey) &&
+		string(a.AuthToken) == string(b.AuthToken) &&
+		a.BaseURL == b.BaseURL
+}
+
+// perfilSinRC reports whether a profile disables Remote Control at startup
+// (matches olivetin-cmd's perfil_sin_rc): any alternate credential source.
+func perfilSinRC(profilePath string) bool {
+	data, err := os.ReadFile(profilePath)
+	if err != nil {
 		return false
 	}
-	anthropicHost := regexp.MustCompile(`^(https?://)?(api\.)?anthropic\.com($|/)`)
-	return !anthropicHost.MatchString(doc.Env.ANTHROPIC_BASE_URL)
+	return parseAuthFields(data).altAuth()
 }
 
 // activeProfileName returns the catalog profile whose content matches the
