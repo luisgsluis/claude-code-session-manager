@@ -2563,11 +2563,30 @@ func paneWaitingReason(pane string) string {
 	if strings.Contains(pane, "Enter to select") || strings.Contains(pane, "to navigate") {
 		return "choice"
 	}
-	// Approval dialogs: command permission ("Do you want to proceed"), the generic
-	// "requires approval" line, the file-edit dialog ("Do you want to make this
-	// edit to <file>?"), and — as a catch-all — the shared footer "Esc to cancel ·
-	// Tab to amend". The normal running footer ("⏵⏵ auto mode on (shift+tab to
-	// cycle) · ← for agents") never contains it.
+	// Claude Code's own "auto mode environment setup" onboarding wizard — a
+	// checkbox form ("Also scan shell history [ ]", a "Continue" line), not a
+	// Y/N approval. A blind Enter toggles whichever checkbox is focused
+	// instead of confirming, so it must not be driven the same way as
+	// "approval" (verified empirically 2026-08-15: repeated Enter only
+	// flipped the checkbox; Escape dismissed it). Detected by its footer,
+	// distinct from both the approval and AskUserQuestion footers.
+	if strings.Contains(pane, "to change usage") || strings.Contains(pane, "Set up auto mode for your environment") {
+		return "setup"
+	}
+	// Any other dialog rendering Claude Code's numbered-option picker with the
+	// "❯" cursor is a permission prompt — command execution, file edit, Fetch,
+	// WebSearch, a custom MCP tool, or any future tool that asks for input.
+	// The cursor glyph is unique to this TUI picker and never appears in
+	// generated prose, so matching on it — instead of each tool's question
+	// wording, which differs per tool and changes across Claude Code versions
+	// — detects any of them without hardcoding one per tool.
+	if cursorOptionRe.MatchString(pane) {
+		return "approval"
+	}
+	// Fallback for approval dialogs that, for whatever reason, don't parse as
+	// a numbered cursor list: the known command-permission wording and the
+	// shared footer "Esc to cancel · Tab to amend". The normal running footer
+	// ("⏵⏵ auto mode on (shift+tab to cycle) · ← for agents") never contains it.
 	if strings.Contains(pane, "Do you want to proceed") ||
 		strings.Contains(pane, "requires approval") ||
 		strings.Contains(pane, "Do you want to make this edit") ||
@@ -2576,6 +2595,11 @@ func paneWaitingReason(pane string) string {
 	}
 	return ""
 }
+
+// cursorOptionRe matches a numbered option line with the picker's cursor
+// ("❯ 1. Yes"), the generic signal that the pane holds an interactive
+// permission/choice dialog regardless of which tool or wording triggered it.
+var cursorOptionRe = regexp.MustCompile(`(?m)^\s*❯\s*\d+\.\s+\S`)
 
 // paneChoice extracts an AskUserQuestion option picker from the pane text:
 // the question line, the option labels in order, and the currently highlighted

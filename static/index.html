@@ -618,6 +618,7 @@
           <span x-show="live.meta && !live.meta.is_alive" class="text-danger">● <span x-text="t('chat_status_off')"></span></span>
           <span x-show="live.meta && live.meta.waiting === 'approval'" class="text-warn font-medium">⚠ <span x-text="t('chat_status_waiting')"></span></span>
           <span x-show="live.meta && live.meta.waiting === 'choice'" class="text-warn font-medium">⚠ <span x-text="t('chat_status_choice')"></span></span>
+          <span x-show="live.meta && live.meta.waiting === 'setup'" class="text-warn font-medium">⚠ <span x-text="t('chat_status_setup')"></span></span>
           <span x-show="live.meta && live.meta.mode" x-text="live.meta && live.meta.mode ? t('chat_status_mode', [live.meta.mode]) : ''"></span>
           <span x-show="live.meta && live.meta.model" x-text="live.meta && live.meta.model ? t('chat_status_model', [live.meta.model]) : ''"></span>
           <span x-show="live.meta && live.meta.created" x-text="t('chat_status_elapsed', [live.elapsed])"></span>
@@ -639,6 +640,11 @@
           <button x-show="live.meta && live.meta.is_alive && live.meta.waiting === 'approval'" @click="sendKey('enter')"
             class="shrink-0 px-2 py-1 rounded border border-gray-700 bg-warn/15 text-warn hover:bg-bg-hover transition-colors"
             :title="t('chat_approve_title')">✓ <span x-text="t('chat_approve')"></span></button>
+          <!-- Auto-mode setup wizard: Enter only toggles its focused checkbox,
+               it never confirms, so the only working dismissal is Escape. -->
+          <button x-show="live.meta && live.meta.is_alive && live.meta.waiting === 'setup'" @click="sendKey('escape')"
+            class="shrink-0 px-2 py-1 rounded border border-gray-700 bg-warn/15 text-warn hover:bg-bg-hover transition-colors"
+            :title="t('chat_skip_title')">⏭ <span x-text="t('chat_skip')"></span></button>
           <!-- Stop: sends Escape, which always works (interrupts generation and
                cancels dialogs/permissions). Bottom bar, right of re-register. -->
           <button x-show="live.meta && live.meta.is_alive" @click="sendKey('escape')"
@@ -924,6 +930,12 @@
             <button x-show="grid.tiles[name].meta && grid.tiles[name].meta.waiting === 'approval'"
               @click="sendTileKey(name, 'enter')" :title="t('chat_approve_title')"
               class="shrink-0 px-2 py-1 rounded border border-gray-700 bg-warn/15 text-warn hover:bg-bg-hover text-xs transition-colors">✓ <span x-text="t('chat_approve')"></span></button>
+            <!-- Auto-mode setup wizard: Enter only toggles its focused checkbox,
+                 it never confirms, so the only working dismissal is Escape. -->
+            <span x-show="grid.tiles[name].meta && grid.tiles[name].meta.waiting === 'setup'" class="text-warn text-xs shrink-0">⚠</span>
+            <button x-show="grid.tiles[name].meta && grid.tiles[name].meta.waiting === 'setup'"
+              @click="sendTileKey(name, 'escape')" :title="t('chat_skip_title')"
+              class="shrink-0 px-2 py-1 rounded border border-gray-700 bg-warn/15 text-warn hover:bg-bg-hover text-xs transition-colors">⏭ <span x-text="t('chat_skip')"></span></button>
             <span class="text-accent font-mono text-sm shrink-0">❯</span>
             <textarea x-model="grid.tiles[name].input" rows="1" :placeholder="t('term_tile_prompt')"
               @keydown.enter="onTileKeydown($event, name)" :disabled="grid.tiles[name].sending"

@@ -1309,6 +1309,31 @@ func TestPaneWaitingReason(t *testing.T) {
 	if got := paneWaitingReason("  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents"); got != "" {
 		t.Errorf("paneWaitingReason(footer normal) = %q, want empty", got)
 	}
+	// Tool-permission dialogs whose wording isn't hardcoded anywhere (Fetch,
+	// and a made-up future tool) must still be detected generically via the
+	// cursor picker, not by matching each tool's question text.
+	fetch := " Fetch\n\n   url: \"https://example.com\",\n   Claude wants to fetch content from example.com\n\n" +
+		" Do you want to allow Claude to fetch this content?\n" +
+		" ❯ 1. Yes\n   2. Yes, and don't ask again for example.com\n   3. No, and tell Claude what to do differently (esc)"
+	if got := paneWaitingReason(fetch); got != "approval" {
+		t.Errorf("paneWaitingReason(fetch dialog) = %q, want approval", got)
+	}
+	futureTool := " Do you want to let Claude use SomeFutureTool?\n ❯ 1. Yes\n   2. No"
+	if got := paneWaitingReason(futureTool); got != "approval" {
+		t.Errorf("paneWaitingReason(generic future-tool dialog) = %q, want approval", got)
+	}
+	// Auto-mode environment setup wizard: a checkbox form, not a Y/N approval.
+	// Must NOT be classified as "approval" (a blind Enter would toggle the
+	// focused checkbox instead of dismissing it).
+	setup := " Set up auto mode for your environment?\n\n" +
+		" How you use Claude here    ◄ Mixed ►\n" +
+		" › Also scan shell history   [✓]\n" +
+		"   Also scan your other repos [ ]\n\n" +
+		"   Continue\n\n" +
+		" ←/→ to change usage · Enter to continue · Esc to cancel"
+	if got := paneWaitingReason(setup); got != "setup" {
+		t.Errorf("paneWaitingReason(setup wizard) = %q, want setup", got)
+	}
 }
 
 func TestPaneChoice(t *testing.T) {
