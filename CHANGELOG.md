@@ -1,5 +1,46 @@
 # Changelog
 
+## [1.5.1] — 2026-08-15
+
+### Fixed
+- **Approval/choice dialogs sometimes needed a second Enter to resolve.** `sessionSend` sent
+  the `enter` key by tmux's named key (`send-keys ... Enter`), which tmux translates depending
+  on the keyboard mode the app negotiated; that translation didn't always reach Claude Code's
+  input loop, so an Approve or a choice "Select" occasionally sat there until pressed again.
+  Same class of bug `rawShiftTab` already worked around for Shift+Tab: send the raw literal
+  byte (`-l` with `\r`) instead of the named key, bypassing tmux's key-name translation
+  entirely.
+- **The chat SSE stream could leave a stale approval/choice panel in the UI.** `ChatStream`
+  only re-emitted when `ready`/`status`/`mode`/`updated`/`size` changed, but a dialog opening
+  or resolving doesn't necessarily touch any of those: the question text itself is never
+  written to the transcript, only the eventual answer is, and that answer can land in the same
+  poll window as the pane already clearing. `waiting` and `choice` are now part of the dedup
+  fingerprint, so a dialog's state changes are never silently swallowed and the client can no
+  longer show a choice/approval panel the pane has already resolved.
+- **A profile switch that dropped a live session's credentials left it stuck retrying 401s.**
+  Applying a profile that removes the outgoing one's `apiKeyHelper`/API key/non-Anthropic base
+  URL only rewrote `settings.json`: Claude Code hot-reloads the model/endpoint on the next
+  turn but keeps whatever credentials the process already resolved. `claudeProfile` now
+  detects that transition and kills+resumes the affected idle sessions, the same recovery path
+  already used for a dropped Remote Control bridge. A session mid-generation is left alone.
+- **Automatic kill+resume recovery renumbered the session for no reason.** `sessionRc`'s
+  auto-recover and `claudeProfile`'s relaunch-on-stale-credentials both kill the live session
+  and resume its conversation, but always let tmux auto-assign a new name — every automatic
+  recovery silently renumbered the session even though nothing else about it changed.
+  `claudeResumeAs` now requests the same tmux name back after the kill, falling back to
+  auto-naming only if that name is somehow still taken.
+- **A freshly (re)launched session's task showed the raw hostname instead of "(no task)".**
+  `tmuxList` hid a fresh pane's default `pane_title` (tmux sets it to the hostname until Claude
+  Code overwrites it with a real task summary) by comparing it against
+  `os.Getenv("HOSTNAME")` — empty under `ccsm-agent`, since systemd services don't get that env
+  var set. The comparison never matched. Resolved once via `os.Hostname()` in `New()` instead.
+- **Session list: the confirm dialog and the toast/notification after killing a session still
+  said "close"/"closed"**, leftover wording from before the close icon became an archive icon
+  (v1.5.0).
+
+### Changed
+- **README**: note that Anthropic's own Claude Code now has a remote-control feature too.
+
 ## [1.5.0] — 2026-08-15
 
 ### Added
