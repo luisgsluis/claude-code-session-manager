@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.5.0] — 2026-08-15
+
+### Added
+- **Approval dialogs are now detected generically**, not by hardcoding each tool's question
+  wording. `paneWaitingReason` matches the numbered-option picker's own cursor glyph
+  (`❯ 1. ...`), which every permission dialog shares — command execution, file edits, Fetch,
+  WebSearch, a custom MCP tool, or any future tool — instead of a growing list of per-tool
+  strings that only covered the ones seen so far. The old wording checks stay as a fallback
+  for dialogs that don't parse as a numbered list.
+- **Claude Code's "auto mode environment setup" wizard is now handled correctly.** It's a
+  checkbox form, not a Y/N approval, and a blind Enter (which works for a real approval) only
+  toggled the focused checkbox instead of dismissing it. It's now its own `setup` state, with
+  a dedicated "Skip" action (sends Escape) in both the chat view and the terminal grid tile.
+
+### Changed
+- **Session list: the ❌ "close" button is now an archive icon.** Killing a tmux session
+  doesn't delete its conversation transcript — it stays browsable and resumable from disk —
+  so "close" was the wrong mental model; icon and tooltip now read as archive.
+- **README**: the intro and the "Claude Code Web & App" bullet now say plainly, near the top,
+  that the official Claude mobile app and claude.ai/code can attach to a CCSM session via
+  Remote Control even though the session runs on your own API key, not your claude.ai
+  subscription. The bullet's previous wording ("synchronizing with your personal claude.ai
+  account" next to "not a logged-in personal subscription") read as self-contradictory.
+
 ## [1.4.1] — 2026-08-14
 
 ### Changed
