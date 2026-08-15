@@ -210,9 +210,16 @@ func (h *SessionHandler) ChatStream(w http.ResponseWriter, r *http.Request) {
 		if err := json.Unmarshal(resp.Data, &payload); err != nil {
 			continue
 		}
-		fp := fmt.Sprintf("%v|%v|%v|%v|%v",
+		// waiting/choice must be in the fingerprint: a dialog opening or
+		// resolving doesn't always touch the transcript (the question text
+		// itself is never written to it — only the eventual answer is), so
+		// ready/status/mode/updated/size can all stay identical across a
+		// dialog's whole lifecycle. Without this the client can be left
+		// showing a choice/approval panel the pane already resolved.
+		fp := fmt.Sprintf("%v|%v|%v|%v|%v|%v|%v",
 			payload["ready"], payload["status"], payload["mode"],
-			payload["updated"], payload["size"])
+			payload["updated"], payload["size"],
+			payload["waiting"], payload["choice"])
 		if fp == lastFP {
 			heartbeats++
 			if heartbeats%30 == 0 && setWriteDeadline(rc) {

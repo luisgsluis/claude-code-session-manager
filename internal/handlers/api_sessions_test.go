@@ -680,3 +680,47 @@ func TestChatStreamEmitsOnlyOnChange(t *testing.T) {
 		t.Errorf("expected error event, got: %q", body)
 	}
 }
+
+// TestChatStreamEmitsOnWaitingChange: a dialog opening or resolving doesn't
+// necessarily touch ready/status/mode/updated/size — the question text is
+// never written to the transcript, only the eventual answer is (and even
+// that can land in the same poll window as the pane already clearing). If
+// waiting/choice aren't in the fingerprint, a client can be left showing a
+// choice/approval panel the pane already resolved. Two payloads differing
+// only in "waiting" must both be emitted, not deduped as identical.
+func TestChatStreamEmitsOnWaitingChange(t *testing.T) {
+	base := `"session":"test","id":"20000000-0000-0000-0000-0000000000aa","ready":true,"status":"rc_connected","mode":"","updated":"2026-08-11T10:00:00Z","size":123,"messages":[]`
+	waiting := `{` + base + `,"waiting":"choice","choice":{"question":"q","options":["A","B"],"selected":0}}`
+	resolved := `{` + base + `,"waiting":""}`
+	calls := 0
+	sock, stop := mockAgentServer(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case calls == 1:
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"ok":true,"data":` + waiting + `}`))
+		case calls == 2:
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"ok":true,"data":` + resolved + `}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"ok":false,"error":"session not found"}`))
+		}
+	})
+	defer stop()
+
+	h := &SessionHandler{Agent: requireAgent(t, sock)}
+	req := httptest.NewRequest("GET", "/api/sessions/test/chat/stream", nil)
+	req.SetPathValue("name", "test")
+	w := httptest.NewRecorder()
+	h.ChatStream(w, req)
+
+	body := w.Body.String()
+	if n := strings.Count(body, "data: {"); n != 2 {
+		t.Errorf("expected 2 data events (waiting change must not be deduped), got %d: %q", n, body)
+	}
+	if !strings.Contains(body, `"waiting":"choice"`) || !strings.Contains(body, `"waiting":""`) {
+		t.Errorf("expected both waiting states in the stream, got: %q", body)
+	}
+}
