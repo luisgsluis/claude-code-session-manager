@@ -217,7 +217,6 @@ func TestTmuxListSortNoiseAndStatus(t *testing.T) {
 		"FAKE_TMUX_LIST": "10\t2024-01-02 11:00:00\tclaude\n3\t2024-01-01 10:00:00\t✳ analizando logs\n",
 		"FAKE_TMUX_LINE": "/rc connected",
 	})
-	t.Setenv("HOSTNAME", "rb")
 
 	data, err := h.Exec("tmux-ls", nil)
 	if err != nil {
@@ -263,7 +262,10 @@ func TestTmuxListHostnameTask(t *testing.T) {
 	h := fakeHost(t, map[string]string{
 		"FAKE_TMUX_LIST": "3\t2024-01-01 10:00:00\trb\n",
 	})
-	t.Setenv("HOSTNAME", "rb")
+	// hostname is resolved via os.Hostname() at construction, not $HOSTNAME
+	// (systemd services don't set that env var) — set it directly, as New()
+	// would have from the real syscall.
+	h.hostname = "rb"
 	data, err := h.Exec("tmux-ls", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -271,6 +273,42 @@ func TestTmuxListHostnameTask(t *testing.T) {
 	sessions := data.([]map[string]any)
 	if sessions[0]["task"] != "(no task)" {
 		t.Errorf("task: %q", sessions[0]["task"])
+	}
+}
+
+// TestTmuxListHostnameIgnoresEnv guards against reintroducing the old
+// os.Getenv("HOSTNAME") read: under ccsm-agent (a systemd service) that env
+// var is unset, so the comparison never matched and the raw hostname leaked
+// into the session list as its task (visto 2026-08-15). $HOSTNAME here is
+// deliberately wrong to prove it plays no part.
+func TestTmuxListHostnameIgnoresEnv(t *testing.T) {
+	h := fakeHost(t, map[string]string{
+		"FAKE_TMUX_LIST": "3\t2024-01-01 10:00:00\tpi\n",
+	})
+	t.Setenv("HOSTNAME", "not-pi")
+	h.hostname = "pi"
+
+	data, err := h.Exec("tmux-ls", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := data.([]map[string]any)
+	if sessions[0]["task"] != "(no task)" {
+		t.Errorf("task: %q, want hidden via h.hostname regardless of $HOSTNAME", sessions[0]["task"])
+	}
+}
+
+// TestNewResolvesHostname confirms New() wires h.hostname from the real
+// os.Hostname() syscall (not $HOSTNAME, which is what production actually
+// runs on — the fake-tmux tests all override the field directly instead).
+func TestNewResolvesHostname(t *testing.T) {
+	want, err := os.Hostname()
+	if err != nil {
+		t.Skip("os.Hostname unavailable in this environment")
+	}
+	h := New(Options{Home: t.TempDir()})
+	if h.hostname != want {
+		t.Errorf("hostname = %q, want %q", h.hostname, want)
 	}
 }
 

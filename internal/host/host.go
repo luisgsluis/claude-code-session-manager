@@ -79,6 +79,17 @@ type Host struct {
 	// bounds a different, unrelated wait (the mobile-app RC bridge over the
 	// network), not the local pty becoming interactive.
 	paneReadyTimeout time.Duration
+
+	// hostname is the machine's own name, used to recognize a fresh pane's
+	// default tmux pane_title (tmux sets it to the hostname until the program
+	// running in the pane — Claude Code — overwrites it with its own task
+	// summary) so tmuxList can hide it instead of showing "rb" as the task.
+	// Resolved once via os.Hostname() at construction, NOT read from $HOSTNAME
+	// per call: systemd services don't get that env var set (only interactive
+	// shells do), so under ccsm-agent it was always "", the comparison never
+	// matched, and the raw hostname leaked into the session list as the task
+	// until Claude Code's own title caught up (visto 2026-08-15).
+	hostname string
 }
 
 // defaultPaneReadyTimeout is how long ensurePaneReady waits, in production,
@@ -148,7 +159,16 @@ func New(o Options) *Host {
 		home:             o.Home,
 		modeWheelCache:   map[string][]string{},
 		paneReadyTimeout: defaultPaneReadyTimeout,
+		hostname:         osHostname(),
 	}
+}
+
+// osHostname wraps os.Hostname(), collapsing an error to "" — tmuxList's
+// hostname comparison already treats "" as "never matches", the same safe
+// default the old os.Getenv("HOSTNAME") had when the env var was unset.
+func osHostname() string {
+	h, _ := os.Hostname()
+	return h
 }
 
 // Exec validates and dispatches a command. It returns the command's data and,
@@ -322,7 +342,7 @@ func (h *Host) tmuxList() ([]map[string]any, error) {
 		return []map[string]any{}, nil
 	}
 
-	hostname := os.Getenv("HOSTNAME")
+	hostname := h.hostname
 	var sessions []map[string]any
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		if line == "" {
