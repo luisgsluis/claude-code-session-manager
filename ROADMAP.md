@@ -16,6 +16,7 @@ Nothing prioritized right now — see Backlog below.
 Deliberately deferred; pick up if/when there's a concrete need.
 
 - **Mobile app**: native or PWA mobile version.
+- **Whisper** mode with STT and prompt rewrite mode.
 - **CSRF tokens** and **session-cookie binding** (to IP or user-agent) — the two entries
   still open in the threat table of `docs/security.md`.
 

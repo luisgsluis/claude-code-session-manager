@@ -1,10 +1,10 @@
 # Claude Code Session Manager (CCSM)
 
-**Run [Claude Code](https://claude.ai/code) on your own server, drive it from anywhere.**
+**Run [Claude Code](https://claude.ai/code) on your own server, drive it from anywhere, even if not using claudeai account.**
 
 **You no longer need to be at your server — or hold an SSH session open — to start a Claude Code session in `tmux`.** You start it from a browser, it runs on the host, and it stays alive when you close the tab.
 
-CCSM is a lightweight web app that turns any Linux box you control — a homelab server, a VPS, your workstation — into a personal Claude Code hub. Sessions run in `tmux` on that machine; you create, resume, and chat with them from a browser on your phone, tablet, or laptop — or attach the official Claude mobile app or claude.ai/code to that same session via Remote Control — even though the session itself runs on your own API key instead of your claude.ai subscription.
+CCSM is a lightweight web app that turns any Linux box you control — a homelab server, a VPS, your workstation — into a personal Claude Code hub. Sessions run in `tmux` on that machine; you create, resume, and chat with them from a browser on your phone, tablet, or laptop — or attach the official Claude mobile app or claude.ai/code to that same session via Remote Control — even though the session itself runs on your own API key instead of your claude.ai subscription. Funnily enough, just two days after releasing this, Claude Code introduced a remote control mode, enabling users to start sessions on their own server remotely.
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
