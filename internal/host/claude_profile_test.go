@@ -73,6 +73,50 @@ func TestClaudeProfileRelaunchesOnAuthLoss(t *testing.T) {
 	}
 }
 
+// TestClaudeProfileRelaunchKeepsSessionName: the relaunched session must keep
+// its tmux name — before this it always jumped to a new auto-assigned number
+// on every profile-triggered relaunch, which is confusing when nothing else
+// about the session changed. FAKE_TMUX_KILL_MARKS_DEAD makes "3" report dead
+// once actually killed, matching a real kill-session, so the request for that
+// name back succeeds.
+func TestClaudeProfileRelaunchKeepsSessionName(t *testing.T) {
+	id := "a1b2c3d4-1111-2222-3333-444455556666"
+	pid := spawnRcSession(t, id)
+	kills := t.TempDir() + "/kills.txt"
+	newArgs := t.TempDir() + "/newargs.txt"
+	h := fakeHost(t, map[string]string{
+		"FAKE_TMUX_LIST":            "3\t2026-01-01 00:00:00\tclaude\n",
+		"FAKE_TMUX_LINE":            "  auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents",
+		"FAKE_TMUX_PANE_SESSION":    "3",
+		"FAKE_TMUX_PANE_PID":        strconv.Itoa(pid),
+		"FAKE_TMUX_KILLS":           kills,
+		"FAKE_TMUX_NEW_ARGS":        newArgs,
+		"FAKE_TMUX_KILL_MARKS_DEAD": "1",
+	})
+	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)
+	h.writeProfile(t, "deepseek", `{"apiKeyHelper":"/x/claude-apikey","env":{"ANTHROPIC_BASE_URL":"https://api.deepseek.com/anthropic"}}`)
+	if err := h.applyProfile("deepseek"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(h.convPath+"/"+id+".jsonl", []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := h.Exec("claude-perfil", map[string]string{"profile": "estandar"})
+	if err != nil {
+		t.Fatalf("claude-perfil: %v", err)
+	}
+	out := data.(map[string]any)
+	relaunched, _ := out["relaunched"].([]string)
+	if len(relaunched) != 1 || relaunched[0] != "3" {
+		t.Errorf("relaunched = %v, want [3] (same name as before)", relaunched)
+	}
+	nargs, _ := os.ReadFile(newArgs)
+	if !strings.Contains(string(nargs), "-s 3") {
+		t.Errorf("new-session should have requested the same name back (-s 3): %q", string(nargs))
+	}
+}
+
 // TestClaudeProfileNoRelaunchSameAuth: switching between two profiles that
 // resolve credentials identically (only cosmetic fields differ) must not
 // touch any live session.

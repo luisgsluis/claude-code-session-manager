@@ -205,13 +205,56 @@ func spawnRcSession(t *testing.T, id string) int {
 // /remote-control, sessionRc relaunches the session: kills it and resumes the
 // conversation, whose two-phase launch does register the bridge. This is the
 // recovery path for a perfilSinRC session that lost its worker role (code 4090).
+// The relaunched session keeps the same tmux name — FAKE_TMUX_KILL_MARKS_DEAD
+// makes "3" report dead once actually killed, matching a real kill-session,
+// so the resume's request for that name back succeeds instead of falling back
+// to a new number.
 func TestSessionRcAutoRecover(t *testing.T) {
 	id := "a1b2c3d4-1111-2222-3333-444455556666"
 	pid := spawnRcSession(t, id)
 	sendkeys := filepath.Join(t.TempDir(), "sendkeys.txt")
 	kills := filepath.Join(t.TempDir(), "kills.txt")
+	newArgs := filepath.Join(t.TempDir(), "newargs.txt")
 	h := fakeHost(t, map[string]string{
-		"FAKE_TMUX_SENDKEYS":     sendkeys,
+		"FAKE_TMUX_SENDKEYS":        sendkeys,
+		"FAKE_TMUX_KILLS":           kills,
+		"FAKE_TMUX_NEW_ARGS":        newArgs,
+		"FAKE_TMUX_PANE_SESSION":    "3",
+		"FAKE_TMUX_PANE_PID":        strconv.Itoa(pid),
+		"FAKE_TMUX_KILL_MARKS_DEAD": "1",
+	})
+	if err := os.WriteFile(filepath.Join(h.convPath, id+".jsonl"), []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := h.sessionRc("3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["recovered"] != true {
+		t.Fatalf("recovered = %v, want true", out["recovered"])
+	}
+	if s, _ := out["session"].(string); s != "3" {
+		t.Errorf("session = %q, want 3 (relaunched under its own name)", s)
+	}
+	kdata, _ := os.ReadFile(kills)
+	if !strings.Contains(string(kdata), "3") {
+		t.Errorf("kill-session of the old session not recorded: %q", string(kdata))
+	}
+	nargs, _ := os.ReadFile(newArgs)
+	if !strings.Contains(string(nargs), "-s 3") {
+		t.Errorf("new-session should have requested the same name back (-s 3): %q", string(nargs))
+	}
+}
+
+// TestSessionRcAutoRecoverNameTaken: if the requested name is somehow still
+// taken (FAKE_TMUX_DEAD unset → has-session reports "3" alive even after the
+// kill), the recovery falls back to auto-naming instead of failing outright.
+func TestSessionRcAutoRecoverNameTaken(t *testing.T) {
+	id := "a1b2c3d4-1111-2222-3333-444455556666"
+	pid := spawnRcSession(t, id)
+	kills := filepath.Join(t.TempDir(), "kills.txt")
+	h := fakeHost(t, map[string]string{
 		"FAKE_TMUX_KILLS":        kills,
 		"FAKE_TMUX_PANE_SESSION": "3",
 		"FAKE_TMUX_PANE_PID":     strconv.Itoa(pid),
@@ -225,15 +268,8 @@ func TestSessionRcAutoRecover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out["recovered"] != true {
-		t.Fatalf("recovered = %v, want true", out["recovered"])
-	}
 	if s, _ := out["session"].(string); s != "5" {
-		t.Errorf("session = %q, want 5 (the relaunched one)", s)
-	}
-	kdata, _ := os.ReadFile(kills)
-	if !strings.Contains(string(kdata), "3") {
-		t.Errorf("kill-session of the old session not recorded: %q", string(kdata))
+		t.Errorf("session = %q, want 5 (fell back to auto-naming)", s)
 	}
 }
 

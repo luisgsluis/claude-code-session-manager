@@ -504,7 +504,23 @@ func (h *Host) claudeNew(args map[string]string) (map[string]string, error) {
 	}, nil
 }
 
+// claudeResume resumes a conversation in a new, auto-named tmux session. Used
+// for a deliberate, user-initiated resume (the "retomar sesión" action): there
+// is no prior live session identity to preserve, so tmux picks the next
+// number.
 func (h *Host) claudeResume(id string) (map[string]string, error) {
+	return h.claudeResumeAs(id, "")
+}
+
+// claudeResumeAs is claudeResume with a requested tmux session name. It's what
+// the kill+resume recovery paths (sessionRc's auto-recover, relaunchLiveSessions)
+// use so a session recovered automatically reappears under the same name
+// instead of silently jumping to a new number — before this, "RC:
+// re-register" and a stale-credentials profile switch each renumbered the
+// session on every recovery (visto 2026-08-15). Best effort: if the name is
+// (still, unexpectedly) taken, falls back to auto-naming rather than failing
+// the whole resume over a cosmetic mismatch.
+func (h *Host) claudeResumeAs(id, name string) (map[string]string, error) {
 	if _, err := os.Stat(h.convFileFor(id)); err != nil {
 		return nil, errNotFound("conversation not found: %s", id)
 	}
@@ -516,14 +532,17 @@ func (h *Host) claudeResume(id string) (map[string]string, error) {
 	if other := h.activeSessionUsingConv(id); other != "" {
 		return nil, errConflict("the conversation is already connected to the mobile app in session %s; resuming it here would disconnect that session (code 4090). Close it or use that session's 'RC: re-register' button to relaunch it", other)
 	}
+	if name != "" && h.sessionAlive(name) {
+		name = ""
+	}
 
 	var session, status string
 	var err error
 	activo := h.activeProfileName()
 	if activo != "" && perfilSinRC(h.profilesPath+"/"+activo+".json") {
-		session, status, err = h.lanzarConStaging(activo, "--resume "+id, "", h.home)
+		session, status, err = h.lanzarConStaging(activo, "--resume "+id, name, h.home)
 	} else {
-		session, err = h.newSession("--resume "+id+" --remote-control", "", h.home)
+		session, err = h.newSession("--resume "+id+" --remote-control", name, h.home)
 		if err == nil {
 			status = h.rcStatus(session)
 		}
@@ -701,12 +720,13 @@ func (h *Host) relaunchLiveSessions() []string {
 		if err := h.tmuxKill(name); err != nil {
 			continue
 		}
-		resumed, err := h.claudeResume(conv)
+		// claudeResumeAs requests the same tmux name back, so the session
+		// keeps showing up where the user already knew it — it only falls
+		// back to a new number if that name is somehow unavailable.
+		resumed, err := h.claudeResumeAs(conv, name)
 		if err != nil {
 			continue
 		}
-		// Report the session's new name — a kill+resume doesn't keep the old
-		// tmux name, and that's what the caller needs to attach to now.
 		newName := resumed["session"]
 		if newName == "" {
 			newName = name
@@ -3024,7 +3044,9 @@ func (h *Host) sessionRc(name string) (map[string]any, error) {
 		if err := h.tmuxKill(name); err != nil {
 			return out, err
 		}
-		resumed, err := h.claudeResume(conv)
+		// claudeResumeAs requests the session back under its own name, so a
+		// recovered session doesn't jump to a new number every time RC drops.
+		resumed, err := h.claudeResumeAs(conv, name)
 		if err != nil {
 			return out, err
 		}

@@ -75,6 +75,13 @@ case "$1" in
     exit 0 ;;
   has-session)
     [ "$3" = "=$FAKE_TMUX_DEAD" ] && exit 1
+    # Opt-in stateful liveness: a name recorded in FAKE_TMUX_KILLS by an
+    # earlier kill-session call reports dead, like a real kill would. Static
+    # FAKE_TMUX_DEAD above still covers tests that want a name dead from the
+    # start, without a kill in between.
+    if [ -n "$FAKE_TMUX_KILL_MARKS_DEAD" ] && [ -n "$FAKE_TMUX_KILLS" ] && [ -f "$FAKE_TMUX_KILLS" ] && grep -qF "$3" "$FAKE_TMUX_KILLS"; then
+      exit 1
+    fi
     exit 0 ;;
   kill-session)
     [ -n "$FAKE_TMUX_KILL_FAIL" ] && { echo "no such session" >&2; exit 1; }
@@ -85,7 +92,17 @@ case "$1" in
     exit 0 ;;
   new-session)
     [ -n "$FAKE_TMUX_NEW_FAIL" ] && { echo "create failed" >&2; exit 1; }
-    printf '%s\n' "${FAKE_TMUX_NEW_NAME:-3}"
+    [ -n "$FAKE_TMUX_NEW_ARGS" ] && printf '%s\n' "$*" >> "$FAKE_TMUX_NEW_ARGS"
+    # Mirrors real tmux: an explicit -s <name> wins and is echoed back via
+    # -P -F '#S'; only an unnamed request falls back to FAKE_TMUX_NEW_NAME
+    # (simulating tmux's own auto-numbering).
+    name="" prev=""
+    for a in "$@"; do
+      [ "$prev" = "-s" ] && { name="$a"; break; }
+      prev="$a"
+    done
+    [ -z "$name" ] && name="${FAKE_TMUX_NEW_NAME:-3}"
+    printf '%s\n' "$name"
     exit 0 ;;
   list-panes)
     [ -n "$FAKE_TMUX_LIST_PANES_FAIL" ] && exit 1
