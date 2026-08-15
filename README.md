@@ -4,14 +4,14 @@
 
 **You no longer need to be at your server — or hold an SSH session open — to start a Claude Code session in `tmux`.** You start it from a browser, it runs on the host, and it stays alive when you close the tab.
 
-CCSM is a lightweight web app that turns any Linux box you control — a homelab server, a VPS, your workstation — into a personal Claude Code hub. Sessions run in `tmux` on that machine; you create, resume, and chat with them from a browser on your phone, tablet, or laptop, even if using your own API connection instead of your claude.ai subscription.
+CCSM is a lightweight web app that turns any Linux box you control — a homelab server, a VPS, your workstation — into a personal Claude Code hub. Sessions run in `tmux` on that machine; you create, resume, and chat with them from a browser on your phone, tablet, or laptop — or attach the official Claude mobile app or claude.ai/code to that same session via Remote Control — even though the session itself runs on your own API key instead of your claude.ai subscription.
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ## Why CCSM
 
 - 🖥️ **Remote, effortless session management via `tmux`** — every session is a real `tmux` session on your own server. Close the laptop, lose the connection, come back tomorrow: the session is still there, exactly where you left it, manageable from any device.
-- 📱 **Claude Code Web & App — using your compatible API key while synchronizing with your personal claude.ai account** — Remote Control lets the official Claude mobile app and claude.ai/code attach live to sessions that run on **your own API key** (Anthropic or an Anthropic-compatible provider), not a logged-in personal subscription. CCSM's two-phase bootstrap keeps that mobile bridge alive even across profile switches.
+- 📱 **Claude Code Web & App, without using your claude.ai subscription** — Remote Control lets the official Claude mobile app and claude.ai/code attach live to sessions that run on **your own API key** (Anthropic or an Anthropic-compatible provider) instead of a logged-in personal subscription. CCSM's two-phase bootstrap keeps that mobile bridge alive even across profile switches.
 - ⚙️ **Advanced profile management** — catalog, preview, and hot-swap full `settings.json` profiles (different models, providers, keys) per session, applied atomically with JSON pre-validation so a bad profile can never brick `settings.json`.
 - ♻️ **Session recovery on the server** — every conversation is a real Claude Code transcript stored on the host; browse, search, and resume any past session from any device, even after a crash or a reboot.
 - 💬🖥️ **Chat mode and Terminal mode** — a clean chat view for quick back-and-forth with live SSE updates, or drop into the raw terminal pane when you need the full TUI — approvals, dialogs, everything.
