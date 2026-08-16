@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1067,6 +1066,32 @@ func extractText(content json.RawMessage) (string, bool) {
 	return strings.Join(parts, " "), true
 }
 
+// forEachLine iterates the lines of a JSONL transcript with NO length limit.
+// bufio.Scanner with a fixed max buffer aborts the whole walk on the first line
+// longer than the buffer (ErrTooLong) and silently drops every later line —
+// which froze the chat/history at the line before a pasted image: a screenshot
+// is stored base64 inside the message content, and one such user line measured
+// 1.6MB against a 1MB scanner ceiling. ReadBytes has no such ceiling; fn gets
+// each line (trailing newline stripped) and returns false to stop early.
+func forEachLine(r io.Reader, fn func(line []byte) bool) error {
+	br := bufio.NewReader(r)
+	for {
+		line, err := br.ReadBytes('\n')
+		if len(line) > 0 {
+			line = bytes.TrimSuffix(line, []byte("\n"))
+			if !fn(line) {
+				return nil
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+	}
+}
+
 // conversationSummary finds the first real user message (no meta, no tool
 // results, no slash commands) in the first 200 lines of a conversation file.
 func conversationSummary(path string) (text, cwd string, ok bool) {
@@ -1075,29 +1100,28 @@ func conversationSummary(path string) (text, cwd string, ok bool) {
 		return "", "", false
 	}
 	defer fh.Close()
-	scanner := bufio.NewScanner(fh)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	n := 0
-	for scanner.Scan() {
+	forEachLine(fh, func(raw []byte) bool {
 		n++
 		if n > 200 {
-			break
+			return false
 		}
 		var line convLine
-		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
-			continue
+		if err := json.Unmarshal(raw, &line); err != nil {
+			return true
 		}
 		if line.Type != "user" || (line.IsMeta != nil && *line.IsMeta) {
-			continue
+			return true
 		}
 		t, okT := extractText(line.Message.Content)
 		t = strings.TrimSpace(t)
 		if !okT || t == "" || strings.HasPrefix(t, "<") {
-			continue
+			return true
 		}
-		return t, line.Cwd, true
-	}
-	return "", "", false
+		text, cwd, ok = t, line.Cwd, true
+		return false
+	})
+	return text, cwd, ok
 }
 
 // conversationTitle returns the latest name of a conversation: the manually set
@@ -1118,16 +1142,14 @@ func conversationTitle(path string) string {
 		}
 	}
 	title := ""
-	scanner := bufio.NewScanner(fh)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
+	forEachLine(fh, func(raw []byte) bool {
 		var line struct {
 			Type        string `json:"type"`
 			AITitle     string `json:"aiTitle"`
 			CustomTitle string `json:"customTitle"`
 		}
-		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
-			continue
+		if err := json.Unmarshal(raw, &line); err != nil {
+			return true
 		}
 		switch line.Type {
 		case "custom-title":
@@ -1141,7 +1163,8 @@ func conversationTitle(path string) string {
 				}
 			}
 		}
-	}
+		return true
+	})
 	if title != "" {
 		return truncateRunes(title, 80)
 	}
@@ -1149,34 +1172,35 @@ func conversationTitle(path string) string {
 	if _, err := fh.Seek(0, 0); err != nil {
 		return ""
 	}
-	scanner = bufio.NewScanner(fh)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	n := 0
-	for scanner.Scan() {
+	forEachLine(fh, func(raw []byte) bool {
 		n++
 		if n > 200 {
-			break
+			return false
 		}
 		var line struct {
 			Type        string `json:"type"`
 			AITitle     string `json:"aiTitle"`
 			CustomTitle string `json:"customTitle"`
 		}
-		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
-			continue
+		if err := json.Unmarshal(raw, &line); err != nil {
+			return true
 		}
 		switch line.Type {
 		case "custom-title":
 			if t := strings.TrimSpace(line.CustomTitle); t != "" {
-				return truncateRunes(t, 80)
+				title = truncateRunes(t, 80)
+				return false
 			}
 		case "ai-title":
 			if t := strings.TrimSpace(line.AITitle); t != "" {
-				return truncateRunes(t, 80)
+				title = truncateRunes(t, 80)
+				return false
 			}
 		}
-	}
-	return ""
+		return true
+	})
+	return title
 }
 
 // cleanText flattens a prompt to a single line, safe for JSON and for display.
@@ -1470,13 +1494,11 @@ func (h *Host) conversationGet(id, linesStr string) (map[string]any, error) {
 	defer fh.Close()
 
 	var cwd string
-	scanner := bufio.NewScanner(fh)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	var entries []chatRawEntry
-	for scanner.Scan() {
+	forEachLine(fh, func(raw []byte) bool {
 		var line convLine
-		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
-			continue
+		if err := json.Unmarshal(raw, &line); err != nil {
+			return true
 		}
 		if line.Cwd != "" {
 			cwd = line.Cwd
@@ -1486,10 +1508,8 @@ func (h *Host) conversationGet(id, linesStr string) (map[string]any, error) {
 			ts, _ := time.Parse(time.RFC3339Nano, line.Timestamp)
 			entries = append(entries, chatRawEntry{role, text, source, line.Message.ID, ts})
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		log.Printf("conversationGet %s: transcript truncated: %v", id, err)
-	}
+		return true
+	})
 	turns := buildChatTurns(entries)
 	var msgs []map[string]any
 	for i, t := range turns {
@@ -1682,25 +1702,24 @@ func (h *Host) metrics(auditPath, modelFilter string) (map[string]any, error) {
 	if auditPath != "" {
 		f, err := os.Open(auditPath)
 		if err == nil {
-			sc := bufio.NewScanner(f)
-			sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-			for sc.Scan() {
+			forEachLine(f, func(raw []byte) bool {
 				var e struct {
 					Time   time.Time `json:"time"`
 					Action string    `json:"action"`
 					Detail string    `json:"detail"`
 				}
-				if json.Unmarshal(sc.Bytes(), &e) != nil {
-					continue
+				if json.Unmarshal(raw, &e) != nil {
+					return true
 				}
 				if e.Action != "session_new" {
-					continue
+					return true
 				}
 				sessPerDay[e.Time.Local().Format("02/01/2006")]++
 				if prof := extractProfile(e.Detail); prof != "" {
 					profiles[prof]++
 				}
-			}
+				return true
+			})
 			f.Close()
 		}
 	}
@@ -1807,26 +1826,24 @@ func (h *Host) aggregateFileUsage(path string, idx map[string]*map[string]any, b
 		return
 	}
 	defer f.Close()
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
+	forEachLine(f, func(raw []byte) bool {
 		var line usageLine
-		if json.Unmarshal(sc.Bytes(), &line) != nil {
-			continue
+		if json.Unmarshal(raw, &line) != nil {
+			return true
 		}
 		if line.Type != "assistant" || line.Message == nil || line.Message.Usage == nil {
-			continue
+			return true
 		}
 		if modelFilter != "" && line.Message.Model != modelFilter {
-			continue
+			return true
 		}
 		ts, err := time.Parse(time.RFC3339Nano, line.Timestamp)
 		if err != nil {
-			continue
+			return true
 		}
 		m, ok := idx[ts.Local().Format("02/01/2006")]
 		if !ok {
-			continue
+			return true
 		}
 		u := line.Message.Usage
 		(*m)["input"] = (*m)["input"].(int) + u.InputTokens
@@ -1846,7 +1863,8 @@ func (h *Host) aggregateFileUsage(path string, idx map[string]*map[string]any, b
 		b.Output += u.OutputTokens
 		b.Cache += u.CacheCreationTokens + u.CacheReadTokens
 		b.Messages++
-	}
+		return true
+	})
 }
 
 func (h *Host) newSession(extraArgs, name, cwd string) (string, error) {
@@ -2400,13 +2418,11 @@ func (h *Host) sessionChat(name string) (map[string]any, error) {
 
 	var cwd string
 	var created int64
-	scanner := bufio.NewScanner(fh)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	var entries []chatRawEntry
-	for scanner.Scan() {
+	forEachLine(fh, func(raw []byte) bool {
 		var line convLine
-		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
-			continue
+		if err := json.Unmarshal(raw, &line); err != nil {
+			return true
 		}
 		if line.Cwd != "" {
 			cwd = line.Cwd
@@ -2424,10 +2440,8 @@ func (h *Host) sessionChat(name string) (map[string]any, error) {
 			ts, _ := time.Parse(time.RFC3339Nano, line.Timestamp)
 			entries = append(entries, chatRawEntry{role, text, source, line.Message.ID, ts})
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		log.Printf("sessionChat %s: transcript truncated: %v", name, err)
-	}
+		return true
+	})
 	turns := buildChatTurns(entries)
 	// Cap to the most recent messages: the chat view is for the live session and
 	// re-emits this payload on every SSE frame, so an unbounded transcript (tens
@@ -2552,17 +2566,15 @@ func (h *Host) lastAssistant(name string) (id, text string) {
 	if _, err := io.ReadFull(f, buf); err != nil && err != io.EOF {
 		return "", ""
 	}
-	scanner := bufio.NewScanner(bytes.NewReader(buf))
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	first := true
-	for scanner.Scan() {
+	forEachLine(bytes.NewReader(buf), func(raw []byte) bool {
 		if first { // the first line may be cut mid-record
 			first = false
-			continue
+			return true
 		}
 		var line convLine
-		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
-			continue
+		if err := json.Unmarshal(raw, &line); err != nil {
+			return true
 		}
 		if line.Type == "assistant" {
 			// Track the id unconditionally: a turn whose final record carries no
@@ -2573,7 +2585,8 @@ func (h *Host) lastAssistant(name string) (id, text string) {
 				text = t
 			}
 		}
-	}
+		return true
+	})
 	return id, text
 }
 

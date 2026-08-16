@@ -1673,3 +1673,51 @@ func TestSessionSendTextEnterIsLiteral(t *testing.T) {
 		t.Errorf("trailing enter must not be sent as the named tmux key: %q", got)
 	}
 }
+
+// TestForEachLineSurvivesOversizedLine is the regression for the frozen-grid
+// bug: a transcript line holding a pasted image (base64 in the message
+// content) measured 1.6MB, and bufio.Scanner with a 1MB ceiling aborts the
+// whole walk on the first such line (ErrTooLong), silently dropping every line
+// after it — the tile's history froze at the image. forEachLine must keep
+// walking past it and the parsers built on it must still see later messages.
+func TestForEachLineSurvivesOversizedLine(t *testing.T) {
+	huge := "{" + `"type":"user","message":{"role":"user","content":[{"type":"image","source":{"data":"` + strings.Repeat("A", 2*1024*1024) + `"}}]}` + "}"
+	var got []string
+	if err := forEachLine(strings.NewReader(
+		`{"type":"user","message":{"role":"user","content":"antes"}}`+"\n"+
+			huge+"\n"+
+			`{"type":"user","message":{"role":"user","content":"despues"}}`),
+		func(line []byte) bool { got = append(got, string(line)); return true }); err != nil {
+		t.Fatalf("forEachLine: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d lines, want 3 (walk aborted on the oversized line?)", len(got))
+	}
+	if !strings.Contains(got[2], "despues") {
+		t.Errorf("line after the oversized one was dropped: %q", got[2])
+	}
+}
+
+// TestConversationReadsSurviveOversizedLine: conversationSummary and
+// conversationTitle also read transcripts line by line; they must not abort
+// when an image line exceeds the old 1MB scanner ceiling either.
+func TestConversationReadsSurviveOversizedLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "conv.jsonl")
+	big := "{" + `"type":"user","message":{"role":"user","content":[{"type":"image","source":{"data":"` + strings.Repeat("A", 2*1024*1024) + `"}}]}` + "}"
+	lines := []string{
+		`{"type":"user","message":{"role":"user","content":"primer mensaje"}}`,
+		big,
+		`{"type":"ai-title","aiTitle":"Titulo Nuevo"}`,
+		`{"type":"user","message":{"role":"user","content":"segundo mensaje"}}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	summary, _, ok := conversationSummary(path)
+	if !ok || summary != "primer mensaje" {
+		t.Errorf("conversationSummary = %q ok=%v, want primer mensaje", summary, ok)
+	}
+	if title := conversationTitle(path); title != "Titulo Nuevo" {
+		t.Errorf("conversationTitle = %q, want Titulo Nuevo (image line aborted the tail scan?)", title)
+	}
+}
