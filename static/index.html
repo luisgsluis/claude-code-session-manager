@@ -652,6 +652,15 @@
             :title="t('chat_stop_title')">⏹</button>
         </div>
 
+        <!-- Processing indicator (chat view only): animated dots + the live
+             status word from the pane (noodling…/pondering…/…) while the
+             assistant works. Waiting dialogs have their own UI, so this stays
+             hidden then. -->
+        <div x-show="chatWorking()" x-transition:enter="transition-opacity duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" class="px-4 pb-2 -mt-1 flex items-center gap-2 text-xs text-fg-muted shrink-0">
+          <span class="thinking-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span x-text="live.meta && live.meta.status_text ? live.meta.status_text : ''"></span>
+        </div>
+
         <!-- Input bar -->
         <div class="p-3 border-t border-gray-800 flex items-end gap-2 shrink-0">
           <textarea x-model="live.input" rows="1" @keydown.enter="onChatKeydown($event)" :placeholder="t('chat_placeholder')"

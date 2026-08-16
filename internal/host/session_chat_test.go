@@ -502,3 +502,53 @@ func TestFindUUIDInTree(t *testing.T) {
 		}
 	})
 }
+
+func TestParsePaneStatusWord(t *testing.T) {
+	cases := []struct {
+		name string
+		pane string
+		want string
+		ok   bool
+	}{
+		{"working status line", "✻ Razzle-dazzling… (4m 39s · ↓ 23.9k tokens)", "Razzle-dazzling…", true},
+		{"noodling", "✻ noodling… (2s · ↓ 0 tokens)", "noodling…", true},
+		{"idle footer only", "  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents\n", "", false},
+		{"input line only", "❯ \n", "", false},
+		{"subagent line without parens", "  ● main\n  ◯ claude-code-guide  Searching… 1m · ↓ 10k tokens\n", "", false},
+		{"choice picker (digit start)", "❯ 1. Execute the command\n  2. Skip\n", "", false},
+		{"last status line wins", "✻ pondering… (1m · ↓ 2k tokens)\n✻ processing… (2m · ↓ 3k tokens)\n", "processing…", true},
+		{"stale status line above idle footer", "✻ searching… (3m · ↓ 4k tokens)\n  ⏵⏵ auto mode on · esc to interrupt\n", "searching…", true},
+		{"word with apostrophe", "✻ don't worry… (2s · ↓ 1k tokens)", "don't worry…", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := parsePaneStatusWord(c.pane)
+			if ok != c.ok || got != c.want {
+				t.Errorf("parsePaneStatusWord(%q) = (%q, %v), want (%q, %v)", c.pane, got, ok, c.want, c.ok)
+			}
+		})
+	}
+}
+
+// TestSessionChatWorking: when the pane shows the generation status line, the
+// chat payload carries working=true plus the status word so the chat view can
+// render a "processing" indicator that follows the live status text.
+func TestSessionChatWorking(t *testing.T) {
+	h := fakeHost(t, map[string]string{
+		"FAKE_TMUX_LINE": "✻ Razzle-dazzling… (4m 39s · ↓ 23.9k tokens)\ninsert /rc connected",
+	})
+	writeConv(t, h, `{"type":"user","timestamp":"2026-08-11T10:00:00Z","cwd":"/home/admin/x","message":{"content":"pregunta"}}
+{"type":"assistant","timestamp":"2026-08-11T10:00:05Z","message":{"model":"opus","content":"respuesta"}}
+`)
+	data, err := h.Exec("session-chat", map[string]string{"name": "x"})
+	if err != nil {
+		t.Fatalf("session-chat: %v", err)
+	}
+	got := data.(map[string]any)
+	if got["working"] != true {
+		t.Errorf("working: %v, want true", got["working"])
+	}
+	if got["status_text"] != "Razzle-dazzling…" {
+		t.Errorf("status_text: %v, want %q", got["status_text"], "Razzle-dazzling…")
+	}
+}

@@ -306,6 +306,62 @@ test('chat box: approval notice with Approve and Stop buttons', async ({ page })
   }
 });
 
+// The processing indicator (chat view only): while the assistant is working
+// (pane carries the live status line) and the last message is the user's, a
+// compact animated row with the status word appears above the input; it
+// disappears when the reply lands or the session stops working.
+test('chat box: processing indicator appears while working and hides when idle', async ({ page }) => {
+  const { server, state } = await startMockServer();
+  const port = server.address().port;
+  try {
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+
+    await page.goto(`http://127.0.0.1:${port}/`);
+    await page.waitForSelector('text=👁️', { timeout: 10000 });
+    await page.click('button[title]:has-text("👁️")');
+    await page.waitForSelector('[x-ref="liveChat"]', { timeout: 10000 });
+
+    const dots = page.locator('.thinking-dots');
+    await expect(dots).toBeHidden();
+
+    // Working: last message is the user's, status line present.
+    state.pushChat(Object.assign({}, state.payload, {
+      working: true,
+      status_text: 'noodling…',
+      messages: [{ index: 1, role: 'user', content: 'pregunta' }],
+    }));
+    await expect(page.getByText('noodling…')).toBeVisible({ timeout: 4000 });
+    await expect(dots).toBeVisible();
+
+    // Reply lands: indicator hides even though the pane is still "working".
+    state.pushChat(Object.assign({}, state.payload, {
+      working: true,
+      status_text: 'noodling…',
+      messages: [
+        { index: 1, role: 'user', content: 'pregunta' },
+        { index: 2, role: 'assistant', content: 'respuesta' },
+      ],
+    }));
+    await expect(dots).toBeHidden();
+
+    // Idle again (no status line): still hidden.
+    state.pushChat(Object.assign({}, state.payload, {
+      working: false,
+      status_text: '',
+      messages: [
+        { index: 1, role: 'user', content: 'pregunta' },
+        { index: 2, role: 'assistant', content: 'respuesta' },
+      ],
+    }));
+    await expect(dots).toBeHidden();
+
+    expect(errors, errors.join('\n')).toEqual([]);
+  } finally {
+    server.close();
+  }
+});
+
 // Regression: every AskUserQuestion option button used to send the same
 // sendKey('enter') regardless of which one was clicked — it confirmed
 // whatever the real pane's cursor already happened to be on, so clicking any

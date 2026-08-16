@@ -2405,6 +2405,7 @@ func (h *Host) sessionChat(name string) (map[string]any, error) {
 	status := rcState(h.rcStatus(name))
 	mode := h.paneMode(name)
 	waiting, choice := h.paneWaitingWithChoice(name)
+	statusWord, working := h.paneStatusWord(name)
 	var model string
 	if id == "" {
 		return map[string]any{
@@ -2487,19 +2488,21 @@ func (h *Host) sessionChat(name string) (map[string]any, error) {
 
 	return map[string]any{
 		"session": name, "id": id, "ready": true,
-		"title":    conversationTitle(path),
-		"origin":   originFor(cwd),
-		"created":  created,
-		"updated":  info.ModTime().Format(time.RFC3339Nano),
-		"size":     info.Size(),
-		"is_alive": true,
-		"status":   status,
-		"mode":     mode,
-		"model":    model,
-		"waiting":  waiting,
-		"choice":   choice,
-		"modes":    h.cachedModeWheel(),
-		"messages": msgs,
+		"title":       conversationTitle(path),
+		"origin":      originFor(cwd),
+		"created":     created,
+		"updated":     info.ModTime().Format(time.RFC3339Nano),
+		"size":        info.Size(),
+		"is_alive":    true,
+		"status":      status,
+		"mode":        mode,
+		"model":       model,
+		"waiting":     waiting,
+		"choice":      choice,
+		"working":     working,
+		"status_text": statusWord,
+		"modes":       h.cachedModeWheel(),
+		"messages":    msgs,
 	}, nil
 }
 
@@ -2637,6 +2640,50 @@ func (h *Host) paneMode(name string) string {
 		}
 	}
 	return ""
+}
+
+// paneStatusWord reads the pane and returns the current generation status word
+// from the Claude Code TUI, plus whether such a line is present. While the
+// model is working the TUI shows a line like
+//
+//	✻ Razzle-dazzling… (4m 39s · ↓ 23.9k tokens)
+//
+// whose word cycles through things like "noodling…", "pondering…",
+// "processing…". When the pane is idle the line is gone, so its presence is
+// itself the working signal — the chat indicator leans on it (see sessionChat)
+// because it is version-independent, unlike the footer-hint heuristics of
+// paneWorking. Best-effort: returns ("", false) on an unreadable pane.
+func (h *Host) paneStatusWord(name string) (string, bool) {
+	out, err := exec.Command(h.tmuxBinary, "capture-pane", "-p", "-t", h.paneTarget(name)).Output()
+	if err != nil {
+		return "", false
+	}
+	return parsePaneStatusWord(string(out))
+}
+
+// statusWordLine matches a TUI status line. The real one always carries the
+// elapsed/token block in parens — "✻ Razzle-dazzling… (4m 39s · ↓ 23.9k
+// tokens)" — which is what distinguishes it from the subagent tree lines
+// ("◯ name  Searching… 1m · ↓ 10k tokens" have the same word+"…" shape but no
+// parens) and from arbitrary response text. The word can't start with a digit
+// (choice-picker lines are "❯ N. …").
+var statusWordLine = regexp.MustCompile(`(?m)^[ \t]*\S[ \t]+([A-Za-z][A-Za-z' -]*…)[ \t]*\(`)
+
+// parsePaneStatusWord is paneStatusWord's pure parsing half (testable against
+// pane-text fixtures). It returns the LAST status line in the visible screen —
+// the current one — ignoring any older line that hasn't scrolled off yet. The
+// caller gates on the transcript (chat only reports working when the last
+// message is the user's), so a stale status line lingering above an idle
+// footer doesn't mislead the indicator.
+func parsePaneStatusWord(pane string) (string, bool) {
+	matches := statusWordLine.FindAllStringSubmatch(pane, -1)
+	for i := len(matches) - 1; i >= 0; i-- {
+		w := matches[i][1]
+		if len(w) <= 40 {
+			return w, true
+		}
+	}
+	return "", false
 }
 
 // paneWaitingWithChoice reports the waiting reason plus, when the pane shows an
