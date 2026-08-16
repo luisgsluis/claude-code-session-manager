@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and help
+    url: https://github.com/luisgsluis/claude-code-session-manager/discussions
+    about: Ask questions or discuss ideas in GitHub Discussions.
