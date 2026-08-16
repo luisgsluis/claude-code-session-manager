@@ -76,6 +76,57 @@ Both modes share `internal/host` as the single source of command logic — the
 container mode wraps it in the Unix-socket agent, package mode in a direct
 in-process executor, so the API, UI and behaviour are identical.
 
+## Profiles & Remote Control
+
+Sessions are launched from a **profile**: a complete Claude Code `settings.json`
+stored in the profiles catalog (`profiles_path`, e.g. `claude-shared/claude-perfiles`).
+Applying a profile copies it over the global `settings.json` — CCSM validates the
+JSON first, so a broken profile can never leave it unparseable. A profile decides
+more than the model and endpoint: it decides **whether the session can be driven
+remotely from the Claude mobile app / claude.ai/code**.
+
+### The profile decides if the remote bridge registers
+
+Claude Code's Remote Control registers a live session into your claude.ai account
+only when it starts under a **clean Anthropic profile**:
+
+- Profiles with `apiKeyHelper`, a static API key/token, or a non-Anthropic
+  `ANTHROPIC_BASE_URL` disable Remote Control at startup (`perfilSinRC`). A
+  session started under one never appears in the mobile app on its own.
+- Clean profiles (no alternate credentials) register the bridge directly: CCSM
+  launches them with `--remote-control` and the session shows up in the app.
+
+For profiles that disable RC, CCSM runs a **two-phase bootstrap** so the mobile
+bridge still registers:
+
+1. Temporarily apply `rc.bootstrap_profile` — a clean, RC-friendly profile
+   (`estandar` by default)
+2. Start the session with `--remote-control`
+3. Wait for the bridge to connect (up to `rc.wait_seconds`)
+4. Hot-apply the target profile — RC survives the switch
+
+### If the bootstrap profile is missing
+
+If `rc.bootstrap_profile` names a profile that doesn't exist, CCSM does **not**
+fail: it skips the staging, launches the session directly (no `--remote-control`)
+and assumes there will be no bridge. The session stays fully usable from the
+CCSM UI, it just won't appear in the mobile app, and `/rc` answers
+`{"presses":0,"status":"fail"}` instead of attempting a recovery.
+
+### Managing profiles for remote sessions
+
+- Keep a clean bootstrap profile (`estandar`): Anthropic endpoint, no
+  `apiKeyHelper`, no alternate base URL.
+- **In container mode the staging profile is set on the agent**, via
+  `--rc-profile` in the `ccsm-agent` unit — editing `rc.bootstrap_profile` in
+  the server's `config.yaml` does not reach the agent.
+- When a session loses its bridge, use **"RC: re-register"**
+  (`POST /api/sessions/{name}/rc`): it re-runs the bootstrap and, if the bridge
+  still doesn't come back, kills and resumes the conversation, whose two-phase
+  launch re-registers it.
+- Sessions you want to drive from the mobile app should use a clean profile (or
+  let CCSM stage them); if you only need the CCSM web UI, any profile works.
+
 ## Quick Start
 
 ### 1. Install the host agent
