@@ -629,12 +629,30 @@ func rcState(staging string) string {
 	}
 }
 
+// stagingAvailable reports whether the RC staging bootstrap profile exists. When
+// it's missing, the two-phase bridge dance is impossible: callers assume Remote
+// Control is unavailable rather than failing the launch.
+func (h *Host) stagingAvailable() bool {
+	_, err := os.Stat(h.profilesPath + "/" + h.rcBootstrap + ".json")
+	return err == nil
+}
+
 // lanzarConStaging is the two-phase start for profiles that disable Remote
 // Control (ported from olivetin-cmd): apply the clean bootstrap profile so RC
 // enables at startup, create the session with --remote-control, wait for the
 // bridge to connect (2 consecutive ok polls), then hot-apply the target
 // profile — RC survives the switch. Returns (session, "ok"|"fail"|"timeout"|"dead").
+//
+// If the bootstrap profile doesn't exist, the staging is skipped: the session
+// is launched directly (no --remote-control) and assumed to have no bridge.
 func (h *Host) lanzarConStaging(destino, extra, name, cwd string) (string, string, error) {
+	if !h.stagingAvailable() {
+		session, err := h.newSession(extra, name, cwd)
+		if err != nil {
+			return "", "", err
+		}
+		return session, "fail", nil
+	}
 	if err := h.applyProfile(h.rcBootstrap); err != nil {
 		return "", "", fmt.Errorf("bootstrap profile: %w", err)
 	}
@@ -3256,6 +3274,12 @@ func (h *Host) sessionRc(name string) (map[string]any, error) {
 
 	activo := h.activeProfileName()
 	staging := activo != "" && perfilSinRC(h.profilesPath+"/"+activo+".json")
+	if staging && !h.stagingAvailable() {
+		// Sin perfil de staging el baile es imposible: una sesión bajo un perfil
+		// sin RC rechaza /remote-control y no hay perfil limpio que aplicar.
+		// Asumimos que no habrá bridge y lo reportamos sin recovery.
+		return map[string]any{"session": name, "presses": 0, "staging": false, "status": "fail"}, nil
+	}
 	if staging {
 		if err := h.applyProfile(h.rcBootstrap); err != nil {
 			return nil, errServer("bootstrap profile: %v", err)

@@ -189,6 +189,68 @@ func TestSessionRcStaging(t *testing.T) {
 	}
 }
 
+// TestLanzarConStagingNoBootstrap: sin el perfil de staging (estandar) el
+// lanzamiento no debe fallar con "bootstrap profile": crea la sesión sin
+// --remote-control y asume que no habrá bridge (status "fail").
+func TestLanzarConStagingNoBootstrap(t *testing.T) {
+	newargs := filepath.Join(t.TempDir(), "newargs.txt")
+	h := fakeHost(t, map[string]string{
+		"FAKE_TMUX_NEW_ARGS": newargs,
+	})
+	// El perfil de staging "estandar" NO se escribe; solo un perfil sin RC.
+	h.writeProfile(t, "deepseek", `{"apiKeyHelper":"/x/claude-apikey"}`)
+
+	session, status, err := h.lanzarConStaging("deepseek", "--session-id xyz", "prueba", h.home)
+	if err != nil {
+		t.Fatalf("lanzarConStaging sin bootstrap falló: %v", err)
+	}
+	if session == "" {
+		t.Error("no se devolvió sesión")
+	}
+	if status != "fail" {
+		t.Errorf("status = %q, want fail (asumir que no hay bridge)", status)
+	}
+	data, _ := os.ReadFile(newargs)
+	if strings.Contains(string(data), "--remote-control") {
+		t.Errorf("se lanzó con --remote-control pese a no haber perfil de staging: %s", data)
+	}
+}
+
+// TestSessionRcNoBootstrap: una sesión bajo un perfil sin RC pero sin el perfil
+// de staging no puede re-registrar el bridge. Debe asumir que no habrá bridge
+// (staging:false, status:"fail") sin enviar /remote-control ni auto-recovery.
+func TestSessionRcNoBootstrap(t *testing.T) {
+	sendkeys := filepath.Join(t.TempDir(), "sendkeys.txt")
+	h := fakeHost(t, map[string]string{
+		"FAKE_TMUX_SENDKEYS":     sendkeys,
+		"FAKE_TMUX_PANE_SESSION": "3",
+		"FAKE_TMUX_LINE":         "/rc connected",
+	})
+	// Perfil sin RC activo, sin perfil de staging "estandar".
+	h.writeProfile(t, "deepseek", `{"apiKeyHelper":"/x/claude-apikey"}`)
+	if err := h.applyProfile("deepseek"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := h.sessionRc("3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["staging"] != false {
+		t.Errorf("staging = %v, want false", out["staging"])
+	}
+	if out["status"] != "fail" {
+		t.Errorf("status = %v, want fail", out["status"])
+	}
+	if presses, _ := out["presses"].(int); presses != 0 {
+		t.Errorf("presses = %v, want 0", out["presses"])
+	}
+	data, _ := os.ReadFile(sendkeys)
+	if strings.Contains(string(data), "/remote-control") {
+		t.Errorf("se envió /remote-control sin perfil de staging: %s", data)
+	}
+}
+
 // spawnRcSession starts a long-running shell whose argv carries --remote-control
 // and a pinned --session-id, as a CCSM-launched Claude does.
 func spawnRcSession(t *testing.T, id string) int {

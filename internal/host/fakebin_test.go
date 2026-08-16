@@ -518,9 +518,13 @@ func TestClaudeNewStagingMissingBootstrap(t *testing.T) {
 	h.rcBootstrap = "nope"
 	h.writeProfile(t, "deepseek", `{"apiKeyHelper":"/x"}`)
 
-	_, err := h.Exec("claude-nueva", map[string]string{"profile": "deepseek"})
-	if status := errStatus(err); status != 500 {
-		t.Errorf("status=%d want 500 (err=%v)", status, err)
+	data, err := h.Exec("claude-nueva", map[string]string{"profile": "deepseek"})
+	if err != nil {
+		t.Fatalf("claude-nueva sin perfil de staging no debe fallar: %v", err)
+	}
+	// Sin perfil de staging se asume que no habrá bridge, no un error.
+	if out := data.(map[string]string); out["status"] != "rc_failed" {
+		t.Errorf("sin perfil de staging se asume no-bridge, got %+v", out)
 	}
 }
 
