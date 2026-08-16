@@ -7,8 +7,9 @@
   The chat view reads the session's live status line from the pane (the TUI's
   "noodling…/pondering…/processing…" word, e.g. `✻ Doodling… (4m · ↓ 23.9k tokens)`) via two
   new fields in `/chat`: `working` (a status line is on screen) and `status_text` (the word
-  itself). While the session is alive, not waiting on a dialog and the last message is the
-  user's, a slim row of bouncing dots + the live word appears above the input — so a sent
+  itself). While the session is alive, not waiting on a dialog and the pane is mid-generation,
+  a slim row of bouncing dots + the live word appears above the input — it stays for the whole
+  turn (thinking, tool loops, streaming) and disappears when the pane goes idle, so a sent
   message is never "dead silence". Chat view only; the terminal view is untouched. The word is
   detected by its `…(elapsed · tokens)` shape, not the footer hints (`paneWorking`), so it
   survives footer format changes.

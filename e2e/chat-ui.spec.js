@@ -307,9 +307,10 @@ test('chat box: approval notice with Approve and Stop buttons', async ({ page })
 });
 
 // The processing indicator (chat view only): while the assistant is working
-// (pane carries the live status line) and the last message is the user's, a
-// compact animated row with the status word appears above the input; it
-// disappears when the reply lands or the session stops working.
+// (the pane carries the live status line) a compact animated row with the
+// status word appears above the input; it stays for the whole turn (even while
+// the reply streams) and disappears when the pane goes idle or a dialog takes
+// over.
 test('chat box: processing indicator appears while working and hides when idle', async ({ page }) => {
   const { server, state } = await startMockServer();
   const port = server.address().port;
@@ -334,18 +335,19 @@ test('chat box: processing indicator appears while working and hides when idle',
     await expect(page.getByText('noodling…')).toBeVisible({ timeout: 4000 });
     await expect(dots).toBeVisible();
 
-    // Reply lands: indicator hides even though the pane is still "working".
+    // Still working while the reply streams: indicator stays for the whole turn.
     state.pushChat(Object.assign({}, state.payload, {
       working: true,
-      status_text: 'noodling…',
+      status_text: 'pondering…',
       messages: [
         { index: 1, role: 'user', content: 'pregunta' },
         { index: 2, role: 'assistant', content: 'respuesta' },
       ],
     }));
-    await expect(dots).toBeHidden();
+    await expect(page.getByText('pondering…')).toBeVisible({ timeout: 4000 });
+    await expect(dots).toBeVisible();
 
-    // Idle again (no status line): still hidden.
+    // Idle (no status line): hidden.
     state.pushChat(Object.assign({}, state.payload, {
       working: false,
       status_text: '',

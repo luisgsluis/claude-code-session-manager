@@ -1175,16 +1175,15 @@ function ccsmApp() {
     },
 
     // The chat shows a "processing" indicator while the assistant is working:
-    // the pane carries the live status line (noodling…/pondering…/…) AND the
-    // transcript's last message is the user's (no reply rendered yet). Both
-    // conditions together — a stale status line lingering above an idle footer,
-    // or a finished turn — hide it. Waiting dialogs show their own UI instead.
+    // the pane carries the live status line (noodling…/pondering…/…), and its
+    // presence IS the working signal — it covers the whole turn (thinking, tool
+    // loops, streaming) and disappears when the pane goes idle, even if a stale
+    // line lingers briefly above the finished output. Waiting dialogs show
+    // their own UI instead, so those hide it.
     chatWorking() {
       const m = this.live.meta;
       if (!m || !m.is_alive || !m.working || m.waiting) return false;
-      const msgs = this.live.msgs;
-      const last = msgs && msgs.length ? msgs[msgs.length - 1] : null;
-      return !last || last.role === 'user';
+      return true;
     },
 
     // Enter sends; Shift+Enter inserts a newline. The .exact modifier is not in

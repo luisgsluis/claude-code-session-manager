@@ -2411,11 +2411,13 @@ func (h *Host) sessionChat(name string) (map[string]any, error) {
 		return map[string]any{
 			"session": name, "id": "", "ready": false,
 			"is_alive": true, "status": status, "mode": mode,
-			"model":    model,
-			"waiting":  waiting,
-			"choice":   choice,
-			"modes":    h.cachedModeWheel(),
-			"messages": []map[string]any{},
+			"model":       model,
+			"waiting":     waiting,
+			"choice":      choice,
+			"working":     working,
+			"status_text": statusWord,
+			"modes":       h.cachedModeWheel(),
+			"messages":    []map[string]any{},
 		}, nil
 	}
 
@@ -2427,11 +2429,13 @@ func (h *Host) sessionChat(name string) (map[string]any, error) {
 		return map[string]any{
 			"session": name, "id": id, "ready": false,
 			"is_alive": true, "status": status, "mode": mode,
-			"model":    model,
-			"waiting":  waiting,
-			"choice":   choice,
-			"modes":    h.cachedModeWheel(),
-			"messages": []map[string]any{},
+			"model":       model,
+			"waiting":     waiting,
+			"choice":      choice,
+			"working":     working,
+			"status_text": statusWord,
+			"modes":       h.cachedModeWheel(),
+			"messages":    []map[string]any{},
 		}, nil
 	}
 	fh, err := os.Open(path)
