@@ -907,10 +907,18 @@
             <div class="shrink-0 px-3 py-2 border-t border-gray-800 bg-warn/5">
               <div class="text-xs text-fg mb-1" x-text="grid.tiles[name].meta.choice.question"></div>
               <div class="flex flex-wrap gap-1">
+                <!-- Options are buttons, not spans: clicking one must post its
+                     own {choice: i} (selectTileChoice) so the host navigates the
+                     real picker there and confirms it — the tile's mirror of
+                     the live modal's selectChoice. Before this, a tile option
+                     had no click handler at all (spans), so "responder con las
+                     opciones" in Modo terminal silently did nothing. -->
                 <template x-for="(opt, i) in grid.tiles[name].meta.choice.options" :key="i">
-                  <span class="text-xs px-2 py-1 rounded border"
-                    :class="i === grid.tiles[name].meta.choice.selected ? 'bg-warn/15 border-warn/40 text-fg' : 'border-gray-700 text-fg-muted'"
-                    x-text="(i === grid.tiles[name].meta.choice.selected ? '❯ ' : '  ') + (i + 1) + '. ' + opt"></span>
+                  <button @click="selectTileChoice(name, i)" :title="t('chat_choice_title')"
+                    class="text-xs px-2 py-1 rounded border transition-colors text-left"
+                    :class="i === grid.tiles[name].meta.choice.selected ? 'bg-warn/15 border-warn/40 text-fg' : 'border-gray-700 text-fg-muted hover:bg-bg-hover hover:text-fg'">
+                    <span x-text="(i === grid.tiles[name].meta.choice.selected ? '❯ ' : '  ') + (i + 1) + '. ' + opt"></span>
+                  </button>
                 </template>
               </div>
               <div class="flex gap-1 mt-2">

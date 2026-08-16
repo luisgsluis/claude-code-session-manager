@@ -343,3 +343,49 @@ test('chat box: choice picker option button posts its own index, not a blind Ent
     server.close();
   }
 });
+
+// Regression: the live modal got the {choice: i} buttons, but the terminal
+// grid tile did not — its options were inert <span>s, so "responder con las
+// opciones" in Modo terminal silently did nothing and the panel (and the real
+// dialog) stayed open. The tile's options must be buttons posting their own
+// index, the exact mirror of the modal's selectChoice.
+test('terminal grid: clicking a tile choice option posts its own index, not a blind Enter', async ({ page }) => {
+  const { server, state } = await startMockServer();
+  const port = server.address().port;
+  try {
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+
+    // Pending AskUserQuestion on the mock session 0, cursor on option 0
+    // ("Pizza") — clicking a DIFFERENT option (index 1, "Ensalada") is the
+    // case that was broken (inert span).
+    state.payload.waiting = 'choice';
+    state.payload.choice = {
+      question: '¿Cuál es la mejor comida?',
+      options: ['Pizza', 'Ensalada', 'Sushi'],
+      selected: 0,
+    };
+    await page.goto(`http://127.0.0.1:${port}/`);
+    await page.waitForSelector('text=👁️', { timeout: 10000 });
+
+    // Open the grid: the tile must render the choice panel from its meta.
+    await page.getByRole('button', { name: /Modo terminal/ }).click();
+    const tile = page.locator('.tgrid-tile');
+    await expect(tile).toBeVisible({ timeout: 10000 });
+
+    const question = page.getByText('¿Cuál es la mejor comida?');
+    await expect(question).toBeVisible({ timeout: 10000 });
+
+    const ensaladaBtn = tile.getByRole('button', { name: /Ensalada/ });
+    await expect(ensaladaBtn).toBeVisible();
+    await ensaladaBtn.click();
+    await page.waitForTimeout(500);
+
+    expect(state.choiceHistory, 'clicking "Ensalada" in a tile should post {choice: 1}').toEqual([1]);
+    expect(state.keyHistory, 'the tile click must not fall back to a blind key press').not.toContain('enter');
+
+    expect(errors, errors.join('\n')).toEqual([]);
+  } finally {
+    server.close();
+  }
+});

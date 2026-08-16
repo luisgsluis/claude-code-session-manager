@@ -1484,6 +1484,15 @@ function ccsmApp() {
       if (await this.postSessionSend(name, { keys: key })) this.fetchTileMeta(name);
     },
 
+    // Tile mirror of selectChoice: clicking an AskUserQuestion option posts
+    // its own index, not a blind Enter — the host navigates the real picker
+    // there and confirms it (host.sessionChoice). The modal had this; the
+    // grid tile's options were inert spans until they were made buttons, so
+    // "responder con las opciones" in Modo terminal did nothing.
+    async selectTileChoice(name, i) {
+      if (await this.postSessionSend(name, { choice: i })) this.fetchTileMeta(name);
+    },
+
     onTileKeydown(e, name) {
       if (e.shiftKey) return;  // Shift+Enter: newline
       e.preventDefault();      // Enter: send
