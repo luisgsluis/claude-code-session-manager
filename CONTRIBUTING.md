@@ -61,6 +61,6 @@ CI runs both on every push (see `.github/workflows/e2e.yml`).
 - Bugs → use the bug report template.
 - Feature ideas → the feature request template.
 - Questions → GitHub Discussions.
-- Security problems → email [luisgsluis@gmail.com](mailto:luisgsluis@gmail.com)
-  directly instead of opening a public issue. CCSM handles credentials and a
-  Unix socket, so please report responsibly.
+- Security problems → report privately via **Security → Report a
+  vulnerability** (see [SECURITY.md](SECURITY.md)). Please don't open a public
+  issue.
