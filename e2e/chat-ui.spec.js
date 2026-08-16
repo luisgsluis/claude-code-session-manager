@@ -107,11 +107,17 @@ function startMockServer() {
       res.writeHead(200, { 'Content-Type': types[path.extname(file)] || 'application/octet-stream' });
       res.end(fs.readFileSync(file));
     });
+    // pushChat lets a test mutate the payload and push it to the open
+    // /chat/stream clients, simulating the dialog arriving AFTER the tile is
+    // already open (the exact case the grid used to miss).
+    state.pushChat = (payload) => {
+      state.payload = payload;
+      const data = 'data: ' + JSON.stringify(payload) + '\n\n';
+      for (const c of sseClients) { try { c.write(data); } catch (e) {} }
+    };
     server.listen(0, '127.0.0.1', () => resolve({ server, state }));
   });
-}
-
-test('live modal: models, manual mode, labels, bubbles and send', async ({ page }) => {
+}test('live modal: models, manual mode, labels, bubbles and send', async ({ page }) => {
   const { server, state } = await startMockServer();
   const port = server.address().port;
   try {
@@ -383,6 +389,51 @@ test('terminal grid: clicking a tile choice option posts its own index, not a bl
 
     expect(state.choiceHistory, 'clicking "Ensalada" in a tile should post {choice: 1}').toEqual([1]);
     expect(state.keyHistory, 'the tile click must not fall back to a blind key press').not.toContain('enter');
+
+    expect(errors, errors.join('\n')).toEqual([]);
+  } finally {
+    server.close();
+  }
+});
+
+// Regression (the reported bug): the grid tile used to refresh its
+// approval/choice/mode state ONLY off the shared /api/events stream, which is
+// created inside initNotify() and only when the Notification API exists (so
+// iOS/Edge has no events at all) — a dialog that opened AFTER the tile was
+// already on screen never surfaced and the pane could only be answered by
+// text. Each tile now opens its OWN /chat/stream (per-session, carries
+// waiting/choice in its fingerprint), exactly like the live modal. Here the
+// mock leaves /api/events closed and pushes the choice only through the tile's
+// chat stream, after the tile is open: the bar must appear and work.
+test('terminal grid: a choice arriving on the tile chat stream (dead /api/events) shows the bar', async ({ page }) => {
+  const { server, state } = await startMockServer();
+  const port = server.address().port;
+  try {
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+
+    // No dialog present when the tile opens.
+    state.payload.waiting = '';
+    await page.goto(`http://127.0.0.1:${port}/`);
+    await page.waitForSelector('text=👁️', { timeout: 10000 });
+    await page.getByRole('button', { name: /Modo terminal/ }).click();
+    const tile = page.locator('.tgrid-tile');
+    await expect(tile).toBeVisible({ timeout: 10000 });
+
+    // Bar must NOT be there yet (nothing was asked).
+    await expect(tile.getByText('¿Cuál es la mejor comida?')).toHaveCount(0);
+
+    // The dialog arrives LATER, pushed through the tile's /chat/stream.
+    state.pushChat(Object.assign({}, state.payload, {
+      waiting: 'choice',
+      choice: { question: '¿Cuál es la mejor comida?', options: ['Pizza', 'Ensalada', 'Sushi'], selected: 0 },
+    }));
+
+    // The bar appears on its own — no user action, no /api/events.
+    await expect(tile.getByText('¿Cuál es la mejor comida?')).toBeVisible({ timeout: 4000 });
+    await tile.getByRole('button', { name: /Ensalada/ }).click();
+    await page.waitForTimeout(500);
+    expect(state.choiceHistory, 'choice arrived by stream must be clickable').toEqual([1]);
 
     expect(errors, errors.join('\n')).toEqual([]);
   } finally {

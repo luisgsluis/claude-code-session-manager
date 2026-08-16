@@ -1244,9 +1244,14 @@ function ccsmApp() {
     // --- Terminal grid: every active session tiled at once ---
     // Each tile is the same raw pane stream the single-session Terminal tab
     // uses (so reasoning and internal output show up, unlike the chat view),
-    // asked for with colour. Metadata (approval / choice / mode) is fetched
-    // reactively off the shared /api/events stream rather than opening a
-    // second persistent connection per tile.
+    // asked for with colour. Metadata (approval / choice / mode) comes from
+    // the session's own /chat/stream (same stream the live modal uses), NOT
+    // the shared /api/events one: that one is only created inside initNotify
+    // and only when the Notification API exists, so a browser without it (or
+    // with a dropped /api/events connection) left tiles blind to dialogs —
+    // the choice/approval bar never appeared and the pane only answered by
+    // text. The per-session stream carries waiting/choice in its fingerprint
+    // (handlers.ChatStream), so the tile resolves exactly like the modal.
 
     async openTermGrid() {
       this.grid.open = true;
@@ -1283,13 +1288,14 @@ function ccsmApp() {
 
     openGridTile(name) {
       this.grid.tiles[name] = {
-        name, content: '', status: '', es: null, termHist: '',
+        name, content: '', status: '', es: null, ces: null, termHist: '',
         meta: null, input: '', sending: false,
       };
       // Narrow screens can't fit a mosaic, so every tile starts minimized —
       // the user picks one at a time from the header chips (restoreTile).
       if (this.grid.narrow) this.grid.minimized[name] = true;
       this.startTileStream(name);
+      this.startTileChatStream(name);
       this.fetchTileMeta(name);
     },
 
@@ -1306,6 +1312,7 @@ function ccsmApp() {
 
     closeGridTile(name) {
       this.stopTileStream(name);
+      this.stopTileChatStream(name);
       delete this.grid.minimized[name];
       if (this.grid.zoomed === name) this.grid.zoomed = null;
       delete this.grid.tiles[name];
@@ -1332,6 +1339,38 @@ function ccsmApp() {
     stopTileStream(name) {
       const tile = this.grid.tiles[name];
       if (tile && tile.es) { tile.es.close(); tile.es = null; }
+    },
+
+    // The tile's /chat/stream pushes the full session payload (messages,
+    // waiting, choice, modes) the moment it changes — the same stream the
+    // live modal uses. Keeping it per tile means the choice/approval bar
+    // shows up when the dialog opens and disappears when it resolves, even
+    // if the shared /api/events stream (initNotify, Notification-gated) is
+    // dead in this browser.
+    startTileChatStream(name) {
+      const tile = this.grid.tiles[name];
+      if (!tile) return;
+      const es = new EventSource('/api/sessions/' + encodeURIComponent(name) + '/chat/stream');
+      tile.ces = es;
+      es.onopen = () => { if (this.grid.tiles[name]) this.grid.tiles[name].status = ''; };
+      es.onmessage = (ev) => {
+        const t = this.grid.tiles[name];
+        if (!t) return;
+        try {
+          const d = JSON.parse(ev.data);
+          t.meta = d;
+          t.status = '';
+        } catch (e) { /* keep the last good meta */ }
+      };
+      // Don't close() on error: EventSource reconnects on its own.
+      es.onerror = () => {
+        if (this.grid.tiles[name]) this.grid.tiles[name].status = this.t('live_reconnecting');
+      };
+    },
+
+    stopTileChatStream(name) {
+      const tile = this.grid.tiles[name];
+      if (tile && tile.ces) { tile.ces.close(); tile.ces = null; }
     },
 
     // fetchTileMeta pulls the approval/choice/mode state for one tile. Called
