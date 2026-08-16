@@ -596,7 +596,7 @@
             <div class="text-sm text-fg" x-text="live.meta.choice.question"></div>
             <div class="flex flex-col gap-1">
               <template x-for="(opt, i) in live.meta.choice.options" :key="i">
-                <button @click="sendKey('enter')" :class="i === live.meta.choice.selected ? 'bg-warn/15 border-warn/40 text-fg' : 'border-gray-700 text-fg-muted hover:bg-bg-hover'"
+                <button @click="selectChoice(i)" :class="i === live.meta.choice.selected ? 'bg-warn/15 border-warn/40 text-fg' : 'border-gray-700 text-fg-muted hover:bg-bg-hover'"
                   class="text-left px-3 py-1.5 rounded border text-xs transition-colors flex items-center gap-2"
                   :title="t('chat_choice_title')">
                   <span x-text="(i === live.meta.choice.selected ? '❯ ' : '  ') + (i + 1) + '.'"></span>

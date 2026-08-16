@@ -138,6 +138,20 @@ esac
 exit 1
 `
 
+// fakeSystemdRun stubs systemd-run for newSession's launch: skip its leading
+// flags (--user --scope --collect --quiet --slice=...) and exec the real
+// command (tmuxBinary + args) that follows, same as the real systemd-run
+// would run it as the scope's main process.
+const fakeSystemdRun = `#!/bin/sh
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -*) shift ;;
+    *) break ;;
+  esac
+done
+exec "$@"
+`
+
 // fakePs is a stub of `ps -eo comm,args` driven by FAKE_PS_OUT / FAKE_PS_FAIL.
 const fakePs = `#!/bin/sh
 [ -n "$FAKE_PS_FAIL" ] && exit 1
@@ -161,6 +175,7 @@ func fakeHost(t *testing.T, env map[string]string) *Host {
 		return p
 	}
 	tmux := writeExe("tmux", fakeTmux)
+	systemdRun := writeExe("systemd-run", fakeSystemdRun)
 	_ = writeExe("claude", "#!/bin/sh\nexit 0")
 	_ = writeExe("bash", "#!/bin/sh\nexit 0")
 
@@ -175,17 +190,18 @@ func fakeHost(t *testing.T, env map[string]string) *Host {
 	os.MkdirAll(conv, 0700)
 
 	h := New(Options{
-		ProfilesPath:    profiles,
-		SettingsPath:    settings,
-		ConvPath:        conv,
-		ClaudeBinary:    filepath.Join(binDir, "claude"),
-		TmuxBinary:      tmux,
-		BashBinary:      filepath.Join(binDir, "bash"),
-		RcBootstrap:     "estandar",
-		RcWaitSeconds:   2,
-		RcPollSeconds:   0,
-		RcSettleSeconds: 0,
-		Home:            base,
+		ProfilesPath:     profiles,
+		SettingsPath:     settings,
+		ConvPath:         conv,
+		ClaudeBinary:     filepath.Join(binDir, "claude"),
+		TmuxBinary:       tmux,
+		SystemdRunBinary: systemdRun,
+		BashBinary:       filepath.Join(binDir, "bash"),
+		RcBootstrap:      "estandar",
+		RcWaitSeconds:    2,
+		RcPollSeconds:    0,
+		RcSettleSeconds:  0,
+		Home:             base,
 	})
 	// ensurePaneReady's wait is a real-world timing concern (a session's own
 	// TUI booting), not something the fake tmux simulates: its default

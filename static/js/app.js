@@ -1225,6 +1225,16 @@ function ccsmApp() {
       await this.postSessionSend(this.live.name, { keys: key });
     },
 
+    // Clicking an AskUserQuestion option: the host navigates the real picker
+    // to index i itself (from its own read of the pane, not our last-known
+    // selected) and confirms it — not just an Enter on whatever happened to
+    // be highlighted already, which silently picked the wrong option for
+    // every button except the one already selected.
+    async selectChoice(i) {
+      await this.postSessionSend(this.live.name, { choice: i });
+      this.loadChat();
+    },
+
     closeLive() {
       this.closeTermStream();
       this.closeChatStream();

@@ -39,7 +39,7 @@ function makePayload(extraMsgs) {
 // 1s poll.
 function startMockServer() {
   return new Promise((resolve) => {
-    const state = { payload: makePayload(), sendHistory: [], modeHistory: [], keyHistory: [] };
+    const state = { payload: makePayload(), sendHistory: [], modeHistory: [], keyHistory: [], choiceHistory: [] };
     const sseClients = new Set();
     const server = http.createServer((req, res) => {
       const url = new URL(req.url, 'http://x');
@@ -72,9 +72,15 @@ function startMockServer() {
             let text = '';
             let mode = '';
             let keys = '';
-            try { const b = JSON.parse(body); text = (b.text || '').trim(); mode = b.mode || ''; keys = b.keys || ''; } catch (e) {}
+            let choice = null;
+            try {
+              const b = JSON.parse(body);
+              text = (b.text || '').trim(); mode = b.mode || ''; keys = b.keys || '';
+              choice = (typeof b.choice === 'number') ? b.choice : null;
+            } catch (e) {}
             if (mode) state.modeHistory.push(mode);
             if (keys) state.keyHistory.push(keys);
+            if (choice !== null) state.choiceHistory.push(choice);
             state.sendHistory.push(text);
             state.payload = makePayload([
               { index: 3, role: 'user', content: text },
@@ -287,6 +293,50 @@ test('chat box: approval notice with Approve and Stop buttons', async ({ page })
     await stopBtn.click();
     await page.waitForTimeout(500);
     expect(state.keyHistory, 'Stop should send escape').toContain('escape');
+
+    expect(errors, errors.join('\n')).toEqual([]);
+  } finally {
+    server.close();
+  }
+});
+
+// Regression: every AskUserQuestion option button used to send the same
+// sendKey('enter') regardless of which one was clicked — it confirmed
+// whatever the real pane's cursor already happened to be on, so clicking any
+// option but the already-selected one silently picked the wrong one (or, in
+// production, left the dialog looking stuck since nothing about the click
+// matched what actually got submitted). Each button must post its own {i},
+// not a blind key press, so the host can navigate the picker to that exact
+// option itself (internal/host: sessionChoice).
+test('chat box: choice picker option button posts its own index, not a blind Enter', async ({ page }) => {
+  const { server, state } = await startMockServer();
+  const port = server.address().port;
+  try {
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+
+    // Pending AskUserQuestion, cursor on option 0 ("Pizza") — clicking a
+    // DIFFERENT option (index 1, "Ensalada") is the case that was broken.
+    state.payload.waiting = 'choice';
+    state.payload.choice = {
+      question: '¿Cuál es la mejor comida?',
+      options: ['Pizza', 'Ensalada', 'Sushi'],
+      selected: 0,
+    };
+    await page.goto(`http://127.0.0.1:${port}/`);
+    await page.waitForSelector('text=👁️', { timeout: 10000 });
+    await page.click('button[title]:has-text("👁️")');
+
+    const question = page.getByText('¿Cuál es la mejor comida?');
+    await expect(question).toBeVisible({ timeout: 10000 });
+
+    const ensaladaBtn = page.getByRole('button', { name: /Ensalada/ });
+    await expect(ensaladaBtn).toBeVisible();
+    await ensaladaBtn.click();
+    await page.waitForTimeout(500);
+
+    expect(state.choiceHistory, 'clicking "Ensalada" should post {choice: 1}').toEqual([1]);
+    expect(state.keyHistory, 'the click must not fall back to a blind key press').not.toContain('enter');
 
     expect(errors, errors.join('\n')).toEqual([]);
   } finally {

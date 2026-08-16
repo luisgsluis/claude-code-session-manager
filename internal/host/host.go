@@ -25,33 +25,35 @@ import (
 
 // Options configures a Host executor.
 type Options struct {
-	ProfilesPath    string
-	SettingsPath    string
-	ConvPath        string
-	ClaudeBinary    string
-	TmuxBinary      string
-	BashBinary      string
-	RcBootstrap     string
-	RcWaitSeconds   int
-	RcPollSeconds   int
-	RcSettleSeconds int
-	Home            string
+	ProfilesPath     string
+	SettingsPath     string
+	ConvPath         string
+	ClaudeBinary     string
+	TmuxBinary       string
+	SystemdRunBinary string
+	BashBinary       string
+	RcBootstrap      string
+	RcWaitSeconds    int
+	RcPollSeconds    int
+	RcSettleSeconds  int
+	Home             string
 }
 
 // Host executes tmux/claude commands. It runs either in the ccsm-agent process
 // (container deployment) or directly inside ccsm (package deployment).
 type Host struct {
-	profilesPath    string
-	settingsPath    string
-	convPath        string
-	claudeBinary    string
-	tmuxBinary      string
-	bashBinary      string
-	rcBootstrap     string
-	rcWaitSeconds   int
-	rcPollSeconds   int
-	rcSettleSeconds int
-	home            string
+	profilesPath     string
+	settingsPath     string
+	convPath         string
+	claudeBinary     string
+	tmuxBinary       string
+	systemdRunBinary string
+	bashBinary       string
+	rcBootstrap      string
+	rcWaitSeconds    int
+	rcPollSeconds    int
+	rcSettleSeconds  int
+	home             string
 
 	// modeWheelCache holds the discovered Shift+Tab wheel order per profile
 	// (the wheel is account-dependent: auto/bypassPermissions only appear when
@@ -151,6 +153,7 @@ func New(o Options) *Host {
 		convPath:         def(o.ConvPath, o.Home+"/.claude/projects/-home-admin"),
 		claudeBinary:     def(o.ClaudeBinary, o.Home+"/.local/bin/claude"),
 		tmuxBinary:       def(o.TmuxBinary, "/usr/bin/tmux"),
+		systemdRunBinary: def(o.SystemdRunBinary, "/usr/bin/systemd-run"),
 		bashBinary:       def(o.BashBinary, "/usr/bin/bash"),
 		rcBootstrap:      def(o.RcBootstrap, "estandar"),
 		rcWaitSeconds:    o.RcWaitSeconds,
@@ -229,6 +232,16 @@ func (h *Host) Exec(cmd string, args map[string]string) (any, error) {
 			return nil, errBad("missing mode")
 		}
 		return h.sessionMode(name, args["mode"])
+	case "session-choice":
+		name := args["name"]
+		if !safeName(name) {
+			return nil, errBad("invalid session name")
+		}
+		idx, err := strconv.Atoi(args["index"])
+		if err != nil {
+			return nil, errBad("invalid choice index: %s", args["index"])
+		}
+		return h.sessionChoice(name, idx)
 	case "session-rc":
 		name := args["name"]
 		if !safeName(name) {
@@ -1459,7 +1472,7 @@ func (h *Host) conversationGet(id, linesStr string) (map[string]any, error) {
 	var cwd string
 	scanner := bufio.NewScanner(fh)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	var dd chatDedup
+	var entries []chatRawEntry
 	for scanner.Scan() {
 		var line convLine
 		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
@@ -1470,15 +1483,16 @@ func (h *Host) conversationGet(id, linesStr string) (map[string]any, error) {
 		}
 		role, text, source, ok := chatRoleAndText(line)
 		if ok {
-			dd.add(role, text, source, line.Message.ID)
+			ts, _ := time.Parse(time.RFC3339Nano, line.Timestamp)
+			entries = append(entries, chatRawEntry{role, text, source, line.Message.ID, ts})
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		log.Printf("conversationGet %s: transcript truncated: %v", id, err)
 	}
-	dd.flushPending()
+	turns := buildChatTurns(entries)
 	var msgs []map[string]any
-	for i, t := range dd.turns {
+	for i, t := range turns {
 		msgs = append(msgs, map[string]any{
 			"index":   i,
 			"role":    t.role,
@@ -1517,7 +1531,7 @@ func (h *Host) conversationExport(id, format string) (map[string]any, error) {
 	if format == "txt" {
 		filename = id + ".txt"
 		content = "Conversation " + id + "\nDate: " + info.ModTime().Format("02/01/2006 15:04") + "\n\n"
-		var dd chatDedup
+		var entries []chatRawEntry
 		for _, line := range strings.Split(string(data), "\n") {
 			var l convLine
 			if json.Unmarshal([]byte(line), &l) != nil {
@@ -1525,11 +1539,11 @@ func (h *Host) conversationExport(id, format string) (map[string]any, error) {
 			}
 			role, text, source, ok := chatRoleAndText(l)
 			if ok {
-				dd.add(role, text, source, l.Message.ID)
+				ts, _ := time.Parse(time.RFC3339Nano, l.Timestamp)
+				entries = append(entries, chatRawEntry{role, text, source, l.Message.ID, ts})
 			}
 		}
-		dd.flushPending()
-		for _, t := range dd.turns {
+		for _, t := range buildChatTurns(entries) {
 			content += "[" + t.role + "] " + cleanText(t.text) + "\n\n"
 		}
 	} else {
@@ -1846,7 +1860,22 @@ func (h *Host) newSession(extraArgs, name, cwd string) (string, error) {
 		args = append(args, "-s", name)
 	}
 	args = append(args, fullCmd)
-	out, err := exec.Command(h.tmuxBinary, args...).Output()
+	// El servidor tmux (si no existe ya) nace aquí, y todo lo que cuelgue de
+	// él -sesiones y paneles, presentes y futuros- hereda su cgroup mientras
+	// viva. Lanzarlo sin más lo dejaba dentro del cgroup de
+	// ccsm-agent.service y bajo su MemoryMax (pensado solo como cinturón de
+	// seguridad para el runtime del propio agente), así que un par de
+	// sesiones Claude Code activas bastaba para tocar el límite y que el
+	// kernel matara una al azar (incidente 2026-08-16). systemd-run --user
+	// --scope lo saca a su propio scope, fuera de esa jaula. Requiere que
+	// ccsm-agent.service tenga XDG_RUNTIME_DIR/DBUS_SESSION_BUS_ADDRESS del
+	// bus de usuario (ver unit file).
+	runArgs := append([]string{
+		"--user", "--scope", "--collect", "--quiet",
+		"--slice=ccsm-sessions.slice",
+		h.tmuxBinary,
+	}, args...)
+	out, err := exec.Command(h.systemdRunBinary, runArgs...).Output()
 	if err != nil {
 		return "", fmt.Errorf("tmux new-session: %w", err)
 	}
@@ -2288,6 +2317,35 @@ func (d *chatDedup) flushPending() {
 	d.pending = nil
 }
 
+// chatRawEntry is one displayable transcript line, captured with its own
+// timestamp so buildChatTurns can sort it into chronological order before
+// folding it through chatDedup.
+type chatRawEntry struct {
+	role, text, source, msgID string
+	ts                        time.Time
+}
+
+// buildChatTurns sorts pre-collected transcript entries by their own
+// timestamp, then folds them through chatDedup. Claude Code's jsonl append
+// order does not always match when a message actually happened: a mid-turn
+// queue-operation can be written to disk before the preceding turn's own
+// user-line record is flushed (observed right after a session boots — a
+// queue-operation timestamped seconds later still landed a line earlier in
+// the file). Feeding chatDedup in raw file order then processes the newer
+// message first, which at best swaps the two messages' displayed order and
+// at worst — if the earlier message's text happens to match the pending
+// enqueue's — makes chatDedup treat it as that enqueue's own drain and drop
+// it as a duplicate, disappearing it from the chat entirely.
+func buildChatTurns(entries []chatRawEntry) []chatTurn {
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].ts.Before(entries[j].ts) })
+	var dd chatDedup
+	for _, e := range entries {
+		dd.add(e.role, e.text, e.source, e.msgID)
+	}
+	dd.flushPending()
+	return dd.turns
+}
+
 func (d *chatDedup) append(t chatTurn) {
 	if t.role == "assistant" {
 		d.hasAssistant = true
@@ -2344,7 +2402,7 @@ func (h *Host) sessionChat(name string) (map[string]any, error) {
 	var created int64
 	scanner := bufio.NewScanner(fh)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	var dd chatDedup
+	var entries []chatRawEntry
 	for scanner.Scan() {
 		var line convLine
 		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
@@ -2363,19 +2421,20 @@ func (h *Host) sessionChat(name string) (map[string]any, error) {
 		}
 		role, text, source, ok := chatRoleAndText(line)
 		if ok {
-			dd.add(role, text, source, line.Message.ID)
+			ts, _ := time.Parse(time.RFC3339Nano, line.Timestamp)
+			entries = append(entries, chatRawEntry{role, text, source, line.Message.ID, ts})
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		log.Printf("sessionChat %s: transcript truncated: %v", name, err)
 	}
-	dd.flushPending()
+	turns := buildChatTurns(entries)
 	// Cap to the most recent messages: the chat view is for the live session and
 	// re-emits this payload on every SSE frame, so an unbounded transcript (tens
 	// of MB) floods mobile clients. Full history lives in the conversations
 	// browser, not here. Capping the deduplicated turns keeps index stable.
-	msgs := make([]map[string]any, 0, len(dd.turns))
-	for i, t := range dd.turns {
+	msgs := make([]map[string]any, 0, len(turns))
+	for i, t := range turns {
 		msgs = append(msgs, map[string]any{
 			"index":   i,
 			"role":    t.role,
@@ -2416,12 +2475,13 @@ func (h *Host) sessionStatus(name string) (map[string]any, error) {
 	if !h.sessionAlive(name) {
 		return nil, errNotFound("session not found: %s", name)
 	}
-	waiting, choice := h.paneWaitingWithChoice(name)
+	waiting, choice, waitID := h.paneWaitingDetail(name)
 	lastID, lastText := h.lastAssistant(name)
 	return map[string]any{
 		"session":             name,
 		"working":             h.paneWorking(name),
 		"waiting":             waiting,
+		"waiting_id":          waitID,
 		"choice":              choice,
 		"last_assistant_id":   lastID,
 		"last_assistant_text": lastText,
@@ -2547,24 +2607,50 @@ func (h *Host) paneMode(name string) string {
 // AskUserQuestion option picker (reason "choice"), the parsed question, options
 // and selected index so the chat can render it.
 func (h *Host) paneWaitingWithChoice(name string) (string, map[string]any) {
+	reason, choice, _ := h.paneWaitingDetail(name)
+	return reason, choice
+}
+
+// paneWaitingDetail is paneWaitingWithChoice plus a generic identity
+// fingerprint (id) for whatever dialog is blocking the pane, for EVERY
+// waiting reason, not just "choice". session-status (the turn watcher's
+// source) needs this to tell a genuinely different dialog from one it
+// already announced: command/file-edit approval and the ExitPlanMode
+// "would you like to proceed?" prompt render through the exact same
+// numbered "❯ N. label" picker AskUserQuestion does, so paneChoice parses
+// either just as well, and the question/detail line doubles as that
+// approval's own identity — without this, two different approvals landing
+// in the same turnWatchPoll window (one resolves, a different one follows
+// immediately) look identical to a reason-only check, which is exactly the
+// bug already found and fixed for choice dialogs, structurally repeated
+// here. "setup" is the one reason with no numbered-picker shape (a
+// checkbox wizard); it has only ever been observed as a single fixed
+// screen, so the reason string itself is a stable enough id.
+func (h *Host) paneWaitingDetail(name string) (reason string, choice map[string]any, id string) {
 	out, err := exec.Command(h.tmuxBinary, "capture-pane", "-p", "-t", h.paneTarget(name)).Output()
 	if err != nil {
-		return "", nil
+		return "", nil, ""
 	}
-	pane := string(out)
-	reason := paneWaitingReason(pane)
-	if reason != "choice" {
-		return reason, nil
+	return parsePaneWaitingDetail(string(out))
+}
+
+// parsePaneWaitingDetail is paneWaitingDetail's pure parsing half, factored
+// out so it's testable directly against pane-text fixtures (see
+// TestPaneWaitingDetailID) instead of needing a real or stubbed tmux
+// capture-pane.
+func parsePaneWaitingDetail(pane string) (reason string, choice map[string]any, id string) {
+	reason = paneWaitingReason(pane)
+	if reason == "" {
+		return "", nil, ""
 	}
 	q, opts, sel, ok := paneChoice(pane)
 	if !ok {
-		return reason, nil
+		return reason, nil, reason
 	}
-	return reason, map[string]any{
-		"question": q,
-		"options":  opts,
-		"selected": sel,
+	if reason == "choice" {
+		choice = map[string]any{"question": q, "options": opts, "selected": sel}
 	}
+	return reason, choice, q
 }
 
 // modeFromBadge extracts the live mode token from a footer line. The badge
@@ -2587,6 +2673,9 @@ const maxSendLen = 2000
 
 // tmuxKeyMap is the closed whitelist of special keys a client may send to a
 // live session (mapped to tmux key names). Text is always sent literally.
+// "enter" is the one exception: its map value is only used to pass the
+// whitelist check in sessionSend, which special-cases it to pressEnter's raw
+// \r instead — tmux's named "Enter" key is unreliable (see pressEnter).
 var tmuxKeyMap = map[string]string{
 	"enter":  "Enter",
 	"ctrl-c": "C-c",
@@ -2681,20 +2770,74 @@ func (h *Host) sessionSend(name, text, key string) (map[string]any, error) {
 	if !ok {
 		return nil, errBad("unsupported key: %s", key)
 	}
-	// "enter" as a raw literal byte (\r), not tmux's named "Enter": reported in
-	// production as needing two presses to dismiss an approval/choice dialog.
-	// Same class of issue as rawShiftTab below — tmux's named key sometimes
-	// doesn't reach Claude's input loop, only the literal byte reliably does.
-	args := []string{"send-keys", "-t", h.paneTarget(name)}
 	if key == "enter" {
-		args = append(args, "-l", "\r")
-	} else {
-		args = append(args, tmuxKey)
+		if err := h.pressEnter(name); err != nil {
+			return nil, err
+		}
+		return map[string]any{"session": name, "sent": key}, nil
 	}
-	if err := exec.Command(h.tmuxBinary, args...).Run(); err != nil {
+	if err := exec.Command(h.tmuxBinary, "send-keys", "-t", h.paneTarget(name), tmuxKey).Run(); err != nil {
 		return nil, errServer("tmux send-keys: %v", err)
 	}
 	return map[string]any{"session": name, "sent": key}, nil
+}
+
+// pressEnter submits the pane's current input line as a raw literal byte
+// (\r, send-keys -l), not tmux's named "Enter" key: reported in production as
+// needing two presses to dismiss an approval/choice dialog, and separately to
+// submit a typed chat message (sendKeys below) — tmux's named key sometimes
+// doesn't reach Claude Code's input loop, only the literal byte reliably
+// does. Same class of issue as rawShiftTab's \x1b[Z. The one implementation
+// is shared by every caller that needs to submit input, so a fix here can't
+// again miss one of the paths that presses Enter.
+func (h *Host) pressEnter(session string) error {
+	if err := exec.Command(h.tmuxBinary, "send-keys", "-t", h.paneTarget(session), "-l", "\r").Run(); err != nil {
+		return errServer("tmux send-keys: %v", err)
+	}
+	return nil
+}
+
+// sessionChoice picks one option of an open AskUserQuestion picker by index
+// and confirms it — the atomic backend counterpart of clicking an option in
+// the UI. Before this, each option button sent the same sendKey('enter')
+// regardless of which one was clicked: it confirmed whatever the pane's
+// cursor already happened to be on, silently ignoring the option the user
+// actually picked unless it was already the highlighted one. Locked and
+// re-reading the pane itself (not trusting the client's last-known selected
+// index, which can be stale by the time the click arrives) makes clicking
+// any option move the cursor there before submitting, matching the picker's
+// own "Enter or click to select" hint.
+func (h *Host) sessionChoice(name string, index int) (map[string]any, error) {
+	mu := h.sessionSendLock(name)
+	mu.Lock()
+	defer mu.Unlock()
+
+	if !h.sessionAlive(name) {
+		return nil, errNotFound("session not found: %s", name)
+	}
+	reason, choice := h.paneWaitingWithChoice(name)
+	if reason != "choice" || choice == nil {
+		return nil, errBad("no choice dialog is open")
+	}
+	options := choice["options"].([]string)
+	if index < 0 || index >= len(options) {
+		return nil, errBad("option index out of range: %d", index)
+	}
+	delta := index - choice["selected"].(int)
+	key, presses := "down", delta
+	if delta < 0 {
+		key, presses = "up", -delta
+	}
+	for i := 0; i < presses; i++ {
+		if err := exec.Command(h.tmuxBinary, "send-keys", "-t", h.paneTarget(name), tmuxKeyMap[key]).Run(); err != nil {
+			return nil, errServer("tmux send-keys: %v", err)
+		}
+		time.Sleep(modePressDelay)
+	}
+	if err := h.pressEnter(name); err != nil {
+		return nil, err
+	}
+	return map[string]any{"session": name, "sent": "choice", "index": index}, nil
 }
 
 // paneWaitingReason detects when a live session is blocked on an interactive
@@ -3141,11 +3284,10 @@ func (h *Host) claudeRename(session, title string) (map[string]string, error) {
 }
 
 func (h *Host) sendKeys(session, literal string) error {
-	target := h.paneTarget(session)
-	if err := exec.Command(h.tmuxBinary, "send-keys", "-t", target, "-l", literal).Run(); err != nil {
+	if err := exec.Command(h.tmuxBinary, "send-keys", "-t", h.paneTarget(session), "-l", literal).Run(); err != nil {
 		return errServer("tmux send-keys: %v", err)
 	}
-	return exec.Command(h.tmuxBinary, "send-keys", "-t", target, "Enter").Run()
+	return h.pressEnter(session)
 }
 
 func (h *Host) renameClaudeAfterReady(session, title string, waitRC bool) {

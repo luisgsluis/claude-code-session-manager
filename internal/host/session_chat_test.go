@@ -108,6 +108,44 @@ func TestSessionChat(t *testing.T) {
 	}
 }
 
+// TestSessionChatOutOfOrderQueueOperation reproduces a race observed in
+// production: a message typed while the session was mid-turn is written to
+// the jsonl (as a queue-operation) BEFORE the preceding turn's own user-line
+// record, even though its own timestamp is later. Processing strictly in
+// file order made the second message appear first — and worse, chatDedup's
+// pending-enqueue match is by-value: if the earlier user line's text isn't
+// PENDING's own drain it just gets reordered here, but a genuine drain match
+// arriving out of order would have been dropped as a false-positive
+// duplicate. Sorting by timestamp before folding fixes both.
+func TestSessionChatOutOfOrderQueueOperation(t *testing.T) {
+	h := fakeHost(t, nil)
+	content := `{"type":"queue-operation","operation":"enqueue","timestamp":"2026-08-16T07:34:59.038Z","content":"Nada"}
+{"type":"user","timestamp":"2026-08-16T07:34:55.321Z","message":{"content":"Esto es una prueba"}}
+{"type":"queue-operation","operation":"remove","timestamp":"2026-08-16T07:35:01.418Z","content":"Nada"}
+{"type":"assistant","timestamp":"2026-08-16T07:35:04.731Z","message":{"model":"opus","content":[{"type":"text","text":"Recibido. Sin acciones."}]}}
+`
+	writeConv(t, h, content)
+
+	data, err := h.Exec("session-chat", map[string]string{"name": "x"})
+	if err != nil {
+		t.Fatalf("session-chat: %v", err)
+	}
+	got := data.(map[string]any)
+	msgs := got["messages"].([]map[string]any)
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d: %v", len(msgs), msgs)
+	}
+	if msgs[0]["content"] != "Esto es una prueba" {
+		t.Errorf("first message should be the earlier one by timestamp, got %v", msgs[0])
+	}
+	if msgs[1]["content"] != "Nada" {
+		t.Errorf("second message should be the queued one, got %v", msgs[1])
+	}
+	if msgs[2]["content"] != "Recibido. Sin acciones." {
+		t.Errorf("third message should be the assistant reply, got %v", msgs[2])
+	}
+}
+
 func TestSessionChatNotReady(t *testing.T) {
 	h := fakeHost(t, nil)
 	// No jsonl at all -> newestActiveConv returns "" -> ready:false.
@@ -136,8 +174,8 @@ func TestSessionSend(t *testing.T) {
 		if !strings.Contains(got, "send-keys -t %0 -l hola mundo") {
 			t.Errorf("literal not sent: %q", got)
 		}
-		if !strings.Contains(got, "send-keys -t %0 Enter") {
-			t.Errorf("Enter not sent: %q", got)
+		if !strings.Contains(got, "send-keys -t %0 -l \r") {
+			t.Errorf("Enter not sent as a literal \\r byte: %q", got)
 		}
 	})
 
@@ -217,7 +255,7 @@ func TestSessionSendConcurrent(t *testing.T) {
 		t.Fatalf("expected 4 send-keys calls (2 × literal+Enter), got %d: %q", len(lines), lines)
 	}
 	// Every literal line must be immediately followed by ITS OWN Enter (same
-	// -t target, "send-keys -t <target> Enter") — never by the other
+	// -t target, "send-keys -t <target> -l \r") — never by the other
 	// goroutine's literal, which is exactly what the reported bug looked
 	// like ("/model sonnet" + the next message merged before either Enter
 	// fired).
@@ -227,11 +265,105 @@ func TestSessionSendConcurrent(t *testing.T) {
 			t.Fatalf("line %d: expected a literal send-keys, got %q", i, lines[i])
 		}
 		target := fields[2]
-		wantEnter := "send-keys -t " + target + " Enter"
+		wantEnter := "send-keys -t " + target + " -l \r"
 		if lines[i+1] != wantEnter {
 			t.Errorf("line %d: expected %q right after its own literal (%q), got %q — calls interleaved", i, wantEnter, lines[i], lines[i+1])
 		}
 	}
+}
+
+// choicePane is a fixture AskUserQuestion picker, cursor on option index sel
+// (0-based), matching Claude Code's real rendering (see TestPaneChoice).
+func choicePane(sel int) string {
+	labels := []string{"Piña", "Anchoas", "Sin queso"}
+	pane := "☐ Pizza\n¿Cuál es la mejor pizza?\n"
+	for i, l := range labels {
+		cursor := "  "
+		if i == sel {
+			cursor = "❯ "
+		}
+		pane += cursor + strconv.Itoa(i+1) + ". " + l + "\n"
+	}
+	return pane + "Enter to select · ↑/↓ to navigate · n to add notes · Esc to cancel"
+}
+
+// TestSessionChoice proves clicking option i actually lands on option i: it
+// must re-read the pane's real cursor position itself and send exactly the
+// up/down presses needed to reach the requested index before confirming —
+// not just press Enter on whatever was already highlighted, which is the bug
+// reported in production (every option button sent the same sendKey('enter'),
+// so clicking any option but the one already selected silently confirmed the
+// wrong one, or left the dialog seemingly stuck for a fresh AskUserQuestion
+// call re-asked as a result).
+func TestSessionChoice(t *testing.T) {
+	sendkeys := filepath.Join(t.TempDir(), "sendkeys.txt")
+
+	t.Run("navigates down to reach a later option", func(t *testing.T) {
+		os.Remove(sendkeys)
+		h := fakeHost(t, map[string]string{"FAKE_TMUX_SENDKEYS": sendkeys, "FAKE_TMUX_LINE": choicePane(0)})
+		if _, err := h.sessionChoice("3", 2); err != nil {
+			t.Fatalf("sessionChoice: %v", err)
+		}
+		data, _ := os.ReadFile(sendkeys)
+		lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+		if len(lines) != 3 {
+			t.Fatalf("expected 2 Down presses + 1 Enter, got %d: %q", len(lines), lines)
+		}
+		if lines[0] != lines[1] || !strings.HasSuffix(lines[0], "Down") {
+			t.Errorf("expected two Down presses, got %q, %q", lines[0], lines[1])
+		}
+		if !strings.Contains(lines[2], "-l") || !strings.HasSuffix(lines[2], "\r") {
+			t.Errorf("expected a final literal \\r, got %q", lines[2])
+		}
+	})
+
+	t.Run("navigates up to reach an earlier option", func(t *testing.T) {
+		os.Remove(sendkeys)
+		h := fakeHost(t, map[string]string{"FAKE_TMUX_SENDKEYS": sendkeys, "FAKE_TMUX_LINE": choicePane(2)})
+		if _, err := h.sessionChoice("3", 0); err != nil {
+			t.Fatalf("sessionChoice: %v", err)
+		}
+		data, _ := os.ReadFile(sendkeys)
+		lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+		if len(lines) != 3 {
+			t.Fatalf("expected 2 Up presses + 1 Enter, got %d: %q", len(lines), lines)
+		}
+		if lines[0] != lines[1] || !strings.HasSuffix(lines[0], "Up") {
+			t.Errorf("expected two Up presses, got %q, %q", lines[0], lines[1])
+		}
+	})
+
+	t.Run("already-selected option sends only Enter", func(t *testing.T) {
+		os.Remove(sendkeys)
+		h := fakeHost(t, map[string]string{"FAKE_TMUX_SENDKEYS": sendkeys, "FAKE_TMUX_LINE": choicePane(1)})
+		if _, err := h.sessionChoice("3", 1); err != nil {
+			t.Fatalf("sessionChoice: %v", err)
+		}
+		data, _ := os.ReadFile(sendkeys)
+		lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+		if len(lines) != 1 || !strings.Contains(lines[0], "-l") || !strings.HasSuffix(lines[0], "\r") {
+			t.Errorf("expected a single literal \\r with no navigation, got %q", lines)
+		}
+	})
+
+	t.Run("index out of range is rejected", func(t *testing.T) {
+		os.Remove(sendkeys)
+		h := fakeHost(t, map[string]string{"FAKE_TMUX_SENDKEYS": sendkeys, "FAKE_TMUX_LINE": choicePane(0)})
+		if _, err := h.sessionChoice("3", 5); err == nil {
+			t.Error("expected an error for an out-of-range index")
+		}
+		if data, _ := os.ReadFile(sendkeys); len(data) != 0 {
+			t.Errorf("expected no keys sent for a rejected index, got %q", data)
+		}
+	})
+
+	t.Run("no choice dialog open is rejected", func(t *testing.T) {
+		os.Remove(sendkeys)
+		h := fakeHost(t, map[string]string{"FAKE_TMUX_SENDKEYS": sendkeys, "FAKE_TMUX_LINE": "  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents"})
+		if _, err := h.sessionChoice("3", 0); err == nil {
+			t.Error("expected an error when no choice dialog is open")
+		}
+	})
 }
 
 func TestPanePIDAndProcRead(t *testing.T) {

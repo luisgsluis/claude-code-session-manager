@@ -7,10 +7,12 @@ import (
 )
 
 // Turn watcher: polls the active sessions and broadcasts SSE events when a
-// Claude turn completes ("turn_complete"), an approval is requested
-// ("session_waiting") or an AskUserQuestion picker appears ("session_choice").
-// These never reach the transcript in a way the chat view surfaces, so a
-// hidden panel tab gets a browser notification instead of silence.
+// Claude turn completes ("turn_complete"), or the pane blocks on user input —
+// command/file/plan approval or the auto-mode setup wizard ("session_waiting")
+// or an AskUserQuestion picker ("session_choice"). None of these reach the
+// transcript in a way the chat view surfaces, so a hidden panel tab gets a
+// browser notification instead of silence, and an open grid tile knows to
+// refetch instead of showing a stale panel.
 
 // turnWatchPoll is how often the watcher samples each active session.
 const turnWatchPoll = 4 * time.Second
@@ -23,17 +25,16 @@ const turnWatchSettle = 2
 type turnWatchState struct {
 	idleStreak     int
 	lastNotifiedID string
-	notifiedWait   string
-	notifiedChoice bool
+	notifiedWaitID string // identity of the last-announced blocking dialog (any reason); "" while none pending
 }
 
 // turnStatus mirrors host.sessionStatus.
 type turnStatus struct {
-	Working           bool            `json:"working"`
-	Waiting           string          `json:"waiting"`
-	Choice            json.RawMessage `json:"choice"`
-	LastAssistant     string          `json:"last_assistant_id"`
-	LastAssistantText string          `json:"last_assistant_text"`
+	Working           bool   `json:"working"`
+	Waiting           string `json:"waiting"`
+	WaitingID         string `json:"waiting_id"`
+	LastAssistant     string `json:"last_assistant_id"`
+	LastAssistantText string `json:"last_assistant_text"`
 }
 
 // startTurnWatcher launches the polling loop. Errors are silent on purpose: a
@@ -94,19 +95,31 @@ func (s *Server) watchSession(state map[string]*turnWatchState, name string) {
 		state[name] = ws
 	}
 
-	// Approval requested (command permission, file edit, …).
-	if st.Waiting == "approval" && st.Waiting != ws.notifiedWait {
-		ws.notifiedWait = "approval"
-		s.events.broadcast("session_waiting", name, "session "+name+": approval requested")
-	} else if st.Waiting != "approval" {
-		ws.notifiedWait = ""
-	}
-	// AskUserQuestion picker — the user has to choose.
-	if len(st.Choice) > 0 && !ws.notifiedChoice {
-		ws.notifiedChoice = true
-		s.events.broadcast("session_choice", name, "session "+name+": "+choiceQuestion(st.Choice))
-	} else if len(st.Choice) == 0 {
-		ws.notifiedChoice = false
+	// Any dialog blocking the pane needs the user to act: command/file/plan
+	// approval, an AskUserQuestion picker, or the auto-mode setup wizard —
+	// all three report a non-empty Waiting reason from host.paneWaitingDetail.
+	// Tracked by the dialog's own identity (WaitingID — the question or
+	// approval detail line, or the reason itself for setup, which has no
+	// such line), not just "is something pending" or "which reason": two
+	// different dialogs, even of the SAME reason, can land in the same
+	// turnWatchPoll window — one resolves, a different one immediately
+	// follows — and a reason-only guard sees no change on the second
+	// sample, silently swallowing it. This was found and fixed for choice
+	// dialogs specifically; approval and plan-approval render through the
+	// exact same numbered picker (see paneWaitingDetail) and share the
+	// identical structural gap, and setup previously had no watcher
+	// coverage at all — a pending setup wizard never told an open grid tile
+	// to refresh, even though the tile already renders a "skip" control for
+	// it (index.html, waiting === 'setup').
+	if st.WaitingID != "" && st.WaitingID != ws.notifiedWaitID {
+		ws.notifiedWaitID = st.WaitingID
+		action := "session_waiting"
+		if st.Waiting == "choice" {
+			action = "session_choice"
+		}
+		s.events.broadcast(action, name, "session "+name+": "+st.WaitingID)
+	} else if st.WaitingID == "" {
+		ws.notifiedWaitID = ""
 	}
 
 	// Turn completed: the pane went idle and a new assistant message settled.
@@ -132,14 +145,4 @@ func turnPreview(text string) string {
 		t = t[:120] + "…"
 	}
 	return t
-}
-
-func choiceQuestion(raw json.RawMessage) string {
-	var c struct {
-		Question string `json:"question"`
-	}
-	if err := json.Unmarshal(raw, &c); err != nil || c.Question == "" {
-		return "choose an option"
-	}
-	return c.Question
 }

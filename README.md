@@ -182,6 +182,12 @@ ExecStart=/usr/local/bin/ccsm-agent \
   --settings /home/admin/.claude/settings.json \
   --conversations /home/admin/.claude/projects/-home-admin
 User=admin
+# KillMode=process (default would be control-group): the agent launches
+# `tmux new-session -d` for every Claude session; those sessions live in the
+# user's tmux server, independent of the agent, but they're forked inside its
+# cgroup. Without this, `systemctl restart ccsm-agent` (e.g. after a redeploy)
+# kills everything in that cgroup — your live tmux/claude sessions included.
+KillMode=process
 Restart=on-failure
 RestartSec=3
 # The agent is polled every few seconds per open session (tmux capture-pane,
@@ -250,6 +256,9 @@ After=network.target
 Type=simple
 ExecStart=/usr/local/bin/ccsm --config /etc/ccsm/config.yaml
 User=admin
+# Same reason as ccsm-agent.service above: in package mode `ccsm` itself runs
+# tmux in-process, so a plain restart would otherwise kill live sessions too.
+KillMode=process
 Restart=on-failure
 
 [Install]

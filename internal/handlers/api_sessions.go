@@ -251,23 +251,29 @@ func (h *SessionHandler) Send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Text string `json:"text"`
-		Keys string `json:"keys"`
-		Mode string `json:"mode"`
+		Text   string `json:"text"`
+		Keys   string `json:"keys"`
+		Mode   string `json:"mode"`
+		Choice *int   `json:"choice"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.Text == "" && req.Keys == "" && req.Mode == "" {
-		writeError(w, http.StatusBadRequest, "missing text, keys or mode")
+	if req.Text == "" && req.Keys == "" && req.Mode == "" && req.Choice == nil {
+		writeError(w, http.StatusBadRequest, "missing text, keys, mode or choice")
 		return
 	}
 
 	// mode goes through session-mode (Shift+Tab wheel / /plan in the host), not
 	// as text: /mode does not exist in Claude Code and the message would be lost.
+	// choice goes through session-choice, which navigates the picker to that
+	// option itself instead of trusting the client's last-known cursor position.
 	op, args := "session-send", map[string]string{"name": name, "text": req.Text, "keys": req.Keys}
-	if req.Mode != "" {
+	switch {
+	case req.Mode != "":
 		op, args = "session-mode", map[string]string{"name": name, "mode": req.Mode}
+	case req.Choice != nil:
+		op, args = "session-choice", map[string]string{"name": name, "index": strconv.Itoa(*req.Choice)}
 	}
 	_, err := h.Agent.Exec(op, args)
 	if err != nil {
@@ -283,6 +289,9 @@ func (h *SessionHandler) Send(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Mode != "" {
 		detail += ", mode=" + req.Mode
+	}
+	if req.Choice != nil {
+		detail += ", choice=" + strconv.Itoa(*req.Choice)
 	}
 	audit(h.Audit, "session_send", UserFrom(r), detail)
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "sent to " + name})

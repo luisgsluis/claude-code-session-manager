@@ -99,15 +99,19 @@ func TestClaudeTitlePunctuationTypedLiteral(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read keys: %v", err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("expected 2 send-keys calls (literal + Enter), got %d: %q", len(lines), raw)
+	// Don't trim: the trailing Enter is the literal byte \r, which
+	// strings.TrimSpace would strip along with the surrounding whitespace.
+	got := string(raw)
+	if n := strings.Count(got, "\n"); n != 2 {
+		t.Fatalf("expected 2 send-keys calls (literal + Enter), got %d: %q", n, raw)
 	}
-	if !strings.Contains(lines[0], "-l /rename ; rm -rf /") {
-		t.Errorf("title not sent as literal -l argument: %q", lines[0])
+	if !strings.Contains(got, "-l /rename ; rm -rf /") {
+		t.Errorf("title not sent as literal -l argument: %q", got)
 	}
-	if !strings.Contains(lines[1], "Enter") {
-		t.Errorf("expected Enter key after literal, got: %q", lines[1])
+	// Enter as a raw literal byte (\r), not tmux's named "Enter" key — see
+	// pressEnter in host.go.
+	if !strings.Contains(got, "-l \r") {
+		t.Errorf("expected enter sent as a literal \\r byte, got: %q", got)
 	}
 }
 
@@ -144,22 +148,24 @@ exit 1
 `)
 	_ = writeExe("claude", "#!/bin/sh\nexit 0")
 	_ = writeExe("bash", "#!/bin/sh\nexit 0")
+	systemdRun := writeExe("systemd-run", fakeSystemdRun)
 
 	profiles := filepath.Join(base, "perfiles")
 	os.MkdirAll(profiles, 0700)
 	os.WriteFile(filepath.Join(profiles, "estandar.json"), []byte(`{"model":"sonnet"}`), 0600)
 
 	h := New(Options{
-		ProfilesPath:  profiles,
-		SettingsPath:  filepath.Join(base, "settings.json"),
-		ConvPath:      filepath.Join(base, "conv"),
-		ClaudeBinary:  filepath.Join(binDir, "claude"),
-		TmuxBinary:    tmux,
-		BashBinary:    filepath.Join(binDir, "bash"),
-		RcBootstrap:   "estandar",
-		RcWaitSeconds: 2,
-		RcPollSeconds: 0,
-		Home:          base,
+		ProfilesPath:     profiles,
+		SettingsPath:     filepath.Join(base, "settings.json"),
+		ConvPath:         filepath.Join(base, "conv"),
+		ClaudeBinary:     filepath.Join(binDir, "claude"),
+		TmuxBinary:       tmux,
+		SystemdRunBinary: systemdRun,
+		BashBinary:       filepath.Join(binDir, "bash"),
+		RcBootstrap:      "estandar",
+		RcWaitSeconds:    2,
+		RcPollSeconds:    0,
+		Home:             base,
 	})
 
 	if _, err := h.Exec("claude-nueva", map[string]string{"profile": "estandar", "name": "abc123"}); err != nil {

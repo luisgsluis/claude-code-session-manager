@@ -159,6 +159,9 @@ func TestHostNewDefaults(t *testing.T) {
 	if h.tmuxBinary != "/usr/bin/tmux" || h.bashBinary != "/usr/bin/bash" {
 		t.Errorf("binaries: tmux=%s bash=%s", h.tmuxBinary, h.bashBinary)
 	}
+	if h.systemdRunBinary != "/usr/bin/systemd-run" {
+		t.Errorf("systemdRun: %s", h.systemdRunBinary)
+	}
 	if h.rcBootstrap != "estandar" {
 		t.Errorf("rcBootstrap: %s", h.rcBootstrap)
 	}
@@ -304,7 +307,12 @@ func TestExecTmuxKillNoTmux(t *testing.T) {
 }
 
 func TestExecNewSessionNoTmux(t *testing.T) {
-	h := New(Options{Home: t.TempDir(), TmuxBinary: "/nonexistent/tmux"})
+	// newSession launches via systemd-run --user --scope now (see newSession's
+	// comment): a bogus TmuxBinary alone wouldn't be reached, since it's an
+	// argument to systemd-run, not the exec'd binary. A bogus SystemdRunBinary
+	// keeps the failure fast and deterministic without touching the real
+	// systemd-run (which would need a user bus that may not exist in CI).
+	h := New(Options{Home: t.TempDir(), TmuxBinary: "/nonexistent/tmux", SystemdRunBinary: "/nonexistent/systemd-run"})
 	_, err := h.Exec("claude-nueva", nil)
 	if err == nil {
 		t.Fatal("expected error creating session with bogus tmux")
@@ -1336,6 +1344,49 @@ func TestPaneWaitingReason(t *testing.T) {
 	}
 }
 
+// TestPaneWaitingDetailID proves paneWaitingDetail's id — the identity the
+// turn watcher needs to tell one dialog from a different one of the same
+// reason (see watcher.go) — is populated for every waiting reason, not just
+// "choice". Approval and plan-approval dialogs render through the identical
+// numbered "❯ N. label" picker AskUserQuestion does, so the same paneChoice
+// parse that extracts a choice's question line works unchanged for them;
+// "setup" has no such line (a checkbox wizard, not a numbered list), so it
+// falls back to the reason string itself.
+func TestPaneWaitingDetailID(t *testing.T) {
+	approval := " Verify [1m] applied\n This command requires approval\n Do you want to proceed?\n ❯ 1. Yes\n Esc to cancel · Tab to amend · ctrl+e to explain"
+	if _, _, id := parsePaneWaitingDetail(approval); id != "Do you want to proceed?" {
+		t.Errorf("approval id = %q, want the question line", id)
+	}
+
+	edit := " Edit file\n claude.sh\n Do you want to make this edit to claude.sh?\n ❯ 1. Yes\n   2. Yes, allow all edits during this session (shift+tab)\n   3. No\n Esc to cancel · Tab to amend"
+	if _, _, id := parsePaneWaitingDetail(edit); id != "Do you want to make this edit to claude.sh?" {
+		t.Errorf("edit-approval id = %q, want the question line", id)
+	}
+
+	choice := "☐ Comentario\n¿Qué comentario quieres dejar en claude.sh?\n❯ 1. Mantener el actual\n  2. Describe acción exacta\nEnter to select · ↑/↓ to navigate · n to add notes · Esc to cancel"
+	reason, c, id := parsePaneWaitingDetail(choice)
+	if reason != "choice" || id != "¿Qué comentario quieres dejar en claude.sh?" {
+		t.Errorf("choice reason/id = %q/%q", reason, id)
+	}
+	if c == nil {
+		t.Error("choice map should still be populated for reason=choice")
+	}
+
+	setup := " Set up auto mode for your environment?\n\n" +
+		" How you use Claude here    ◄ Mixed ►\n" +
+		" › Also scan shell history   [✓]\n" +
+		"   Also scan your other repos [ ]\n\n" +
+		"   Continue\n\n" +
+		" ←/→ to change usage · Enter to continue · Esc to cancel"
+	if reason, _, id := parsePaneWaitingDetail(setup); reason != "setup" || id != "setup" {
+		t.Errorf("setup reason/id = %q/%q, want setup/setup", reason, id)
+	}
+
+	if reason, _, id := parsePaneWaitingDetail("  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents"); reason != "" || id != "" {
+		t.Errorf("idle pane reason/id = %q/%q, want empty/empty", reason, id)
+	}
+}
+
 func TestPaneChoice(t *testing.T) {
 	// Real AskUserQuestion picker shape (Claude Code 2.1.228): title line,
 	// question, numbered options with the current one prefixed by ❯, footer.
@@ -1595,5 +1646,30 @@ func TestSessionSendEnterIsLiteral(t *testing.T) {
 	}
 	if strings.Contains(got, "Enter") {
 		t.Errorf("enter must not be sent as the named tmux key: %q", got)
+	}
+}
+
+// TestSessionSendTextEnterIsLiteral: a plain chat message shares the exact
+// same submit mechanics as the "enter" special key above (sessionSend's text
+// branch calls sendKeys, which types the literal text then presses Enter) —
+// so it must go through the same raw \r, not tmux's named "Enter" key. Before
+// this, sendKeys had its own separate, unfixed named-key Enter, so a typed
+// chat answer to an approval/choice dialog (e.g. typing "1" instead of
+// clicking the option) could sit unsubmitted exactly like the bug
+// TestSessionSendEnterIsLiteral covers.
+func TestSessionSendTextEnterIsLiteral(t *testing.T) {
+	sendkeys := filepath.Join(t.TempDir(), "sendkeys.txt")
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_SENDKEYS": sendkeys})
+
+	if _, err := h.sessionSend("3", "1", ""); err != nil {
+		t.Fatalf("sessionSend text: %v", err)
+	}
+	data, _ := os.ReadFile(sendkeys)
+	got := string(data)
+	if !strings.Contains(got, "-l") || !strings.Contains(got, "\r") {
+		t.Errorf("trailing enter not sent as a literal \\r byte: %q", got)
+	}
+	if strings.Contains(got, "Enter") {
+		t.Errorf("trailing enter must not be sent as the named tmux key: %q", got)
 	}
 }
