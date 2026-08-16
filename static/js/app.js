@@ -1357,9 +1357,7 @@ function ccsmApp() {
         const t = this.grid.tiles[name];
         if (!t) return;
         try {
-          const d = JSON.parse(ev.data);
-          t.meta = d;
-          t.status = '';
+          this.applyTileChat(name, JSON.parse(ev.data));
         } catch (e) { /* keep the last good meta */ }
       };
       // Don't close() on error: EventSource reconnects on its own.
@@ -1373,6 +1371,24 @@ function ccsmApp() {
       if (tile && tile.ces) { tile.ces.close(); tile.ces = null; }
     },
 
+    // applyTileChat folds one /chat payload into a tile: meta (approval/choice/
+    // mode, what the bar and status chrome read) AND termHist (the "history"
+    // text above the live screen). Claude Code draws its TUI on the alternate
+    // screen, so tmux's scrollback for that pane is just the current screen —
+    // the /chat messages are the only scrollable history, same reasoning as
+    // the single-session Terminal tab. Both the tile's own /chat/stream and
+    // fetchTileMeta go through here so the historical part stays current even
+    // when the shared /api/events stream is dead (the iOS case).
+    applyTileChat(name, d) {
+      const t = this.grid.tiles[name];
+      if (!t) return; // tile closed while in flight
+      t.meta = d;
+      const msgs = (d.messages || []).map(m => String(m.content || '').trim() ? (m.role === 'user' ? '❯ ' : '') + String(m.content).trim() : '');
+      t.termHist = msgs.filter(Boolean).join('\n\n');
+      const el = document.getElementById('tile-pane-' + name);
+      if (el && this.atBottom(el)) this.$nextTick(() => { el.scrollTop = el.scrollHeight; });
+    },
+
     // fetchTileMeta pulls the approval/choice/mode state for one tile. Called
     // when the tile opens and whenever /api/events reports that session moved.
     async fetchTileMeta(name) {
@@ -1381,20 +1397,7 @@ function ccsmApp() {
       try {
         const resp = await fetch('/api/sessions/' + encodeURIComponent(name) + '/chat');
         if (!resp.ok) return;
-        const d = await resp.json();
-        const t = this.grid.tiles[name];
-        if (!t) return; // tile closed while in flight
-        t.meta = d;
-        // Claude Code draws its TUI on the alternate screen, so tmux's
-        // scrollback for that pane is just the current screen — there is
-        // nothing to scroll up to (same reasoning as the single-session
-        // Terminal tab's termHist). Reuse the /chat messages already fetched
-        // above for the approval/choice state as the "history" text, instead
-        // of opening a second stream just for this.
-        const msgs = (d.messages || []).map(m => String(m.content || '').trim() ? (m.role === 'user' ? '❯ ' : '') + String(m.content).trim() : '');
-        t.termHist = msgs.filter(Boolean).join('\n\n');
-        const el = document.getElementById('tile-pane-' + name);
-        if (el && this.atBottom(el)) this.$nextTick(() => { el.scrollTop = el.scrollHeight; });
+        this.applyTileChat(name, await resp.json());
       } catch (e) { /* transient; the next event retries */ }
     },
 

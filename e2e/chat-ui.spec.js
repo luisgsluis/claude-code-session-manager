@@ -440,3 +440,41 @@ test('terminal grid: a choice arriving on the tile chat stream (dead /api/events
     server.close();
   }
 });
+
+// Regression (Luis's report): the tile's historical part (termHist, the /chat
+// messages above the live screen) used to be rebuilt ONLY in fetchTileMeta —
+// on open and on shared /api/events events — so with that stream dead (iOS,
+// no Notification API) a tile left open would show a history frozen at
+// whatever was fetched when it opened, while the live pane kept advancing.
+// applyTileChat now runs on every /chat/stream frame (not just meta): a new
+// message pushed through the stream must appear in the tile's history.
+test('terminal grid: a new message on the tile chat stream updates the historical part', async ({ page }) => {
+  const { server, state } = await startMockServer();
+  const port = server.address().port;
+  try {
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+
+    await page.goto(`http://127.0.0.1:${port}/`);
+    await page.waitForSelector('text=👁️', { timeout: 10000 });
+    await page.getByRole('button', { name: /Modo terminal/ }).click();
+    const tile = page.locator('.tgrid-tile');
+    await expect(tile).toBeVisible({ timeout: 10000 });
+    // Initial history: Hola / Respuesta.
+    await expect(tile.getByText(/Hola desde el móvil/)).toBeVisible({ timeout: 10000 });
+
+    // A later message arrives through the tile's /chat/stream.
+    state.pushChat(Object.assign({}, state.payload, {
+      messages: (state.payload.messages || []).concat([
+        { index: 3, role: 'user', content: 'Mensaje nuevo en la sesión' },
+      ]),
+    }));
+
+    // The historical part shows it, without any user action or /api/events.
+    await expect(tile.getByText('Mensaje nuevo en la sesión')).toBeVisible({ timeout: 4000 });
+
+    expect(errors, errors.join('\n')).toEqual([]);
+  } finally {
+    server.close();
+  }
+});
