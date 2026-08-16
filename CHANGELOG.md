@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.5.2] — 2026-08-16
+
+### Fixed
+- **The active sessions list ordered sessions by creation, not by last interaction.**
+  `tmuxList` sorted numerically by tmux's auto-assigned session number, so the newest
+  session sat at the bottom even when an older one was the last you used. The list now
+  sorts by `window_activity` (the only tmux activity timestamp that actually moves —
+  `session_activity` stays frozen at creation), which for a Claude session is the last
+  output/interaction; sessions are now MRU-first, with the creation number as tie-break.
+
 ## [1.5.1] — 2026-08-15
 
 ### Fixed
