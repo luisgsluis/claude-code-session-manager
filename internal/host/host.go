@@ -348,7 +348,10 @@ func safeTitle(s string) bool       { return titlePattern.MatchString(s) }
 var leadingNoise = regexp.MustCompile(`^[^\p{L}\p{N}]*[\s]*`)
 
 func (h *Host) tmuxList() ([]map[string]any, error) {
-	out, err := exec.Command(h.tmuxBinary, "list-sessions", "-F", "#{session_name}\t#{session_created_string}\t#{pane_title}\t#{@ccsm_project}").Output()
+	// window_activity is the only tmux "last activity" timestamp that actually
+	// moves (session_activity stays frozen at creation); session_created backs
+	// the fallback for sessions that have produced no output yet.
+	out, err := exec.Command(h.tmuxBinary, "list-sessions", "-F", "#{session_name}\t#{session_created_string}\t#{pane_title}\t#{@ccsm_project}\t#{session_created}\t#{window_activity}").Output()
 	if err != nil {
 		// No sessions is not an error — tmux exits 1
 		return []map[string]any{}, nil
@@ -360,7 +363,7 @@ func (h *Host) tmuxList() ([]map[string]any, error) {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 4)
+		parts := strings.SplitN(line, "\t", 6)
 		s := map[string]any{"name": parts[0]}
 		if len(parts) > 1 {
 			s["created"] = parts[1]
@@ -375,12 +378,18 @@ func (h *Host) tmuxList() ([]map[string]any, error) {
 		if len(parts) > 3 {
 			s["project"] = strings.TrimSpace(parts[3])
 		}
+		s["last_activity"] = sessionLastActivity(parts)
 		s["status"] = h.rcStatus(parts[0])
 		sessions = append(sessions, s)
 	}
 
-	// tmux numbers sessions; sort numerically so "10" comes after "9".
+	// Sessions sort by last activity (most recent interaction first), so the
+	// session you touched last floats to the top; ties (equal or unknown
+	// activity) fall back to the numeric creation order tmux assigns.
 	sort.Slice(sessions, func(i, j int) bool {
+		if ai, aj := sessions[i]["last_activity"].(int64), sessions[j]["last_activity"].(int64); ai != aj {
+			return ai > aj
+		}
 		ni, e1 := strconv.Atoi(sessions[i]["name"].(string))
 		nj, e2 := strconv.Atoi(sessions[j]["name"].(string))
 		if e1 == nil && e2 == nil {
@@ -390,6 +399,20 @@ func (h *Host) tmuxList() ([]map[string]any, error) {
 	})
 
 	return sessions, nil
+}
+
+// sessionLastActivity returns a session's last-activity epoch seconds from a
+// parsed list-sessions line, preferring window_activity (last output, i.e. the
+// last interaction) over session_created; 0 when neither is available.
+func sessionLastActivity(parts []string) int64 {
+	for _, i := range []int{5, 4} { // window_activity, then session_created
+		if i < len(parts) {
+			if secs, err := strconv.ParseInt(strings.TrimSpace(parts[i]), 10, 64); err == nil && secs > 0 {
+				return secs
+			}
+		}
+	}
+	return 0
 }
 
 // rcStatus reports the Remote Control bridge state of a tmux session: the pane

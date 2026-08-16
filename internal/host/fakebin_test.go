@@ -230,7 +230,8 @@ func (h *Host) readSettings(t *testing.T) string {
 
 func TestTmuxListSortNoiseAndStatus(t *testing.T) {
 	h := fakeHost(t, map[string]string{
-		"FAKE_TMUX_LIST": "10\t2024-01-02 11:00:00\tclaude\n3\t2024-01-01 10:00:00\t✳ analizando logs\n",
+		// name, created_string, pane_title, project, session_created, window_activity
+		"FAKE_TMUX_LIST": "10\t2024-01-02 11:00:00\tclaude\t\t1700000000\t1700000500\n3\t2024-01-01 10:00:00\t✳ analizando logs\t\t1699990000\t1699990100\n",
 		"FAKE_TMUX_LINE": "/rc connected",
 	})
 
@@ -242,15 +243,68 @@ func TestTmuxListSortNoiseAndStatus(t *testing.T) {
 	if len(sessions) != 2 {
 		t.Fatalf("want 2 sessions, got %d", len(sessions))
 	}
-	// Numerically sorted: 3 before 10.
-	if sessions[0]["name"] != "3" || sessions[1]["name"] != "10" {
+	// Sorted by last activity (most recent interaction first): 10 touched
+	// after 3, so it leads despite the higher creation number.
+	if sessions[0]["name"] != "10" || sessions[1]["name"] != "3" {
 		t.Errorf("order: %v, %v", sessions[0]["name"], sessions[1]["name"])
 	}
-	if sessions[0]["task"] != "analizando logs" {
-		t.Errorf("noise not stripped: %q", sessions[0]["task"])
+	if sessions[0]["last_activity"] != int64(1700000500) {
+		t.Errorf("last_activity: %v", sessions[0]["last_activity"])
 	}
-	if sessions[0]["status"] != "rc_connected" {
-		t.Errorf("status: %v", sessions[0]["status"])
+	for _, s := range sessions {
+		if s["name"] == "3" {
+			if s["task"] != "analizando logs" {
+				t.Errorf("noise not stripped: %q", s["task"])
+			}
+			if s["status"] != "rc_connected" {
+				t.Errorf("status: %v", s["status"])
+			}
+		}
+	}
+}
+
+// TestTmuxListSortByActivityFallback: sessions without a window_activity value
+// fall back to session_created, and unknown activity keeps the creation-order
+// tie-break (numeric, then alphabetical).
+func TestTmuxListSortByActivityFallback(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{
+			"activity over creation",
+			"9\t2024-01-01 10:00:00\tt\t\t1700000000\t1700000900\n0\t2024-01-01 10:00:00\tt\t\t1700000000\t1700000100\n",
+			[]string{"9", "0"},
+		},
+		{
+			"creation fallback when no activity",
+			"9\t2024-01-01 10:00:00\tt\t\t1700000100\t\n0\t2024-01-01 10:00:00\tt\t\t1700000000\t\n",
+			[]string{"9", "0"},
+		},
+		{
+			"numeric tie-break on equal activity",
+			"10\t2024-01-01 10:00:00\tt\t\t1700000000\t1700000000\n3\t2024-01-01 10:00:00\tt\t\t1700000000\t1700000000\n",
+			[]string{"3", "10"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := fakeHost(t, map[string]string{"FAKE_TMUX_LIST": c.in})
+			data, err := h.Exec("tmux-ls", nil)
+			if err != nil {
+				t.Fatalf("tmux-ls: %v", err)
+			}
+			sessions := data.([]map[string]any)
+			if len(sessions) != len(c.want) {
+				t.Fatalf("want %d sessions, got %d: %v", len(c.want), len(sessions), sessions)
+			}
+			for i, name := range c.want {
+				if sessions[i]["name"] != name {
+					t.Fatalf("order: %v, want %v", sessions[i]["name"], c.want)
+				}
+			}
+		})
 	}
 }
 
