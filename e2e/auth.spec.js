@@ -76,7 +76,7 @@ test('login asks for the TOTP code and only then opens the app', async ({ page }
   // The right password is not enough: step two appears and the login overlay
   // stays up. (The app's own markup is always in the DOM behind it, so what
   // proves we are not in is the overlay, not the absence of app buttons.)
-  const overlay = page.locator('div[x-show="showLogin"]');
+  const overlay = page.locator('#login-overlay');
   const code = page.locator('#login-totp');
   await expect(code).toBeVisible();
   await expect(overlay).toBeVisible();
@@ -99,7 +99,7 @@ test('a wrong TOTP code keeps the app closed', async ({ page }) => {
   await page.getByRole('button', { name: 'Verificar' }).click();
 
   await expect(page.getByText('Código incorrecto o caducado')).toBeVisible();
-  await expect(page.locator('div[x-show="showLogin"]')).toBeVisible();
+  await expect(page.locator('#login-overlay')).toBeVisible();
 });
 
 // Covers the only part of the 2FA feature no Go test can reach: the QR is
@@ -117,7 +117,7 @@ test('2FA enrollment draws a QR and only enables on a valid code', async ({ page
   await page.getByRole('button', { name: 'Entrar' }).click();
   await page.locator('#login-totp').fill(await freshLoginCode());
   await page.getByRole('button', { name: 'Verificar' }).click();
-  await expect(page.locator('div[x-show="showLogin"]')).toBeHidden();
+  await expect(page.locator('#login-overlay')).toBeHidden();
 
   await page.getByTitle('Settings').click();
   await page.getByRole('button', { name: /Configuración/ }).click();

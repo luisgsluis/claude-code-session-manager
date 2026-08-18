@@ -227,7 +227,7 @@
 
     <!-- Search -->
     <div class="mb-3">
-      <input type="search" name="conversations-search" autocomplete="off" x-model="convSearch" @input.debounce.300ms="loadConversations()"
+      <input type="search" x-model="convSearch" @input.debounce.300ms="loadConversations()"
         :placeholder="'🔍 ' + t('search_conv')"
         class="w-full bg-bg-card border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors">
     </div>
@@ -499,7 +499,7 @@
       <button @click="audit.open = false" class="text-fg-muted hover:text-fg text-xl leading-none">&times;</button>
     </div>
     <div class="p-3 border-b border-gray-800 flex items-center gap-2 shrink-0">
-      <input @keyup.enter="loadAudit()" x-model="audit.q" type="search" name="audit-filter" autocomplete="off" :placeholder="t('audit_filter')"
+      <input @keyup.enter="loadAudit()" x-model="audit.q" type="text" :placeholder="t('audit_filter')"
         class="flex-1 bg-bg-hover border border-gray-700 rounded-xl px-3 py-2 text-sm outline-none focus:border-accent">
       <button @click="loadAudit()" class="px-3 py-2 bg-accent hover:bg-accent-hover text-white rounded-xl text-sm" x-text="t('refresh')"></button>
     </div>
@@ -864,7 +864,7 @@
         x-text="t('cfg_2fa_confirm')"></button>
     </div>
   </div>
-</div>
+  </div>
 
 
 <!-- Preview modal -->
@@ -1202,7 +1202,8 @@
   x-text="toast.message"></div>
 
 <!-- Login overlay (shown when not authenticated) -->
-<div x-show="showLogin" class="fixed inset-0 bg-bg flex items-center justify-center z-[100]">
+<template x-if="showLogin">
+  <div id="login-overlay" class="fixed inset-0 bg-bg flex items-center justify-center z-[100]">
   <div class="bg-bg-card border border-gray-700 rounded-2xl p-8 w-full max-w-sm mx-4">
     <div class="text-center mb-6">
       <span class="text-4xl">🤖</span>
@@ -1240,7 +1241,8 @@
       <button type="button" @click="cancelTotp()" class="w-full text-xs text-fg-muted hover:text-fg transition-colors" x-text="t('login_totp_back')"></button>
     </form>
   </div>
-</div>
+  </div>
+</template>
 
 <script src="/static/js/app.js"></script>
 </body>
