@@ -93,6 +93,11 @@ type Host struct {
 	// matched, and the raw hostname leaked into the session list as the task
 	// until Claude Code's own title caught up (visto 2026-08-15).
 	hostname string
+
+	// ftsText caches the folded chat text of conversations for the q_text
+	// full-text search field. Lazy and empty until the first use, so it never
+	// inflates the agent's footprint on its own (see fts.go).
+	ftsText *ftsTextCache
 }
 
 // defaultPaneReadyTimeout is how long ensurePaneReady waits, in production,
@@ -164,6 +169,7 @@ func New(o Options) *Host {
 		modeWheelCache:   map[string][]string{},
 		paneReadyTimeout: defaultPaneReadyTimeout,
 		hostname:         osHostname(),
+		ftsText:          &ftsTextCache{},
 	}
 }
 
@@ -1176,12 +1182,13 @@ func conversationSummary(path string) (text, cwd string, ok bool) {
 	return text, cwd, ok
 }
 
-// conversationTitle returns the latest name of a conversation: the manually set
-// /rename title wins, otherwise the AI-generated one. Claude Code writes
-// ai-title (and, after a rename, custom-title) lines on every turn, so the
-// current name is near the tail; we scan the last 64KB and fall back to the
-// beginning of the file if the tail has none.
-func conversationTitle(path string) string {
+// conversationTitleFull returns the latest name of a conversation, untruncated:
+// the manually set /rename title wins, otherwise the AI-generated one. Claude
+// Code writes ai-title (and, after a rename, custom-title) lines on every turn,
+// so the current name is near the tail; we scan the last 64KB and fall back to
+// the beginning of the file if the tail has none. The untruncated form is what
+// the title search indexes; conversationTitle wraps it for display.
+func conversationTitleFull(path string) string {
 	fh, err := os.Open(path)
 	if err != nil {
 		return ""
@@ -1218,7 +1225,7 @@ func conversationTitle(path string) string {
 		return true
 	})
 	if title != "" {
-		return truncateRunes(title, 80)
+		return title
 	}
 	// Tail had no title (very old files): scan the beginning once.
 	if _, err := fh.Seek(0, 0); err != nil {
@@ -1241,18 +1248,24 @@ func conversationTitle(path string) string {
 		switch line.Type {
 		case "custom-title":
 			if t := strings.TrimSpace(line.CustomTitle); t != "" {
-				title = truncateRunes(t, 80)
+				title = t
 				return false
 			}
 		case "ai-title":
 			if t := strings.TrimSpace(line.AITitle); t != "" {
-				title = truncateRunes(t, 80)
+				title = t
 				return false
 			}
 		}
 		return true
 	})
 	return title
+}
+
+// conversationTitle returns the latest name of a conversation, truncated for
+// display (the search field indexes the untruncated form, conversationTitleFull).
+func conversationTitle(path string) string {
+	return truncateRunes(conversationTitleFull(path), 80)
 }
 
 // cleanText flattens a prompt to a single line, safe for JSON and for display.
@@ -1296,6 +1309,7 @@ type convFileEntry struct {
 	path string
 	id   string
 	mod  time.Time
+	size int64 // used by the FTS cache to spot files that changed between reads
 }
 
 // convProjectsDir is the parent of the conversation dir. Transcripts live in
@@ -1356,7 +1370,7 @@ func (h *Host) convFiles() ([]convFileEntry, error) {
 			if err != nil {
 				continue
 			}
-			files = append(files, convFileEntry{filepath.Join(d, name), id, info.ModTime()})
+			files = append(files, convFileEntry{filepath.Join(d, name), id, info.ModTime(), info.Size()})
 		}
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].mod.After(files[j].mod) })
@@ -1404,7 +1418,7 @@ func (h *Host) convFilesIn(cwd string) []convFileEntry {
 				if err != nil {
 					continue
 				}
-				files = append(files, convFileEntry{filepath.Join(dir, name), id, info.ModTime()})
+				files = append(files, convFileEntry{filepath.Join(dir, name), id, info.ModTime(), info.Size()})
 			}
 			sort.Slice(files, func(i, j int) bool { return files[i].mod.After(files[j].mod) })
 			return files
@@ -1431,7 +1445,11 @@ func fileBirthTime(path string) int64 {
 }
 
 func (h *Host) conversationsList(args map[string]string) ([]map[string]any, error) {
-	q := strings.ToLower(strings.TrimSpace(args["q"]))
+	// q searches the title, q_text the whole conversation. Both are FTS
+	// (word/prefix terms, quoted phrases) and AND with each other and with the
+	// other filters below. A nil query means "no filter".
+	titleQuery := parseFTSQuery(args["q"])
+	textQuery := parseFTSQuery(args["q_text"])
 	origin := strings.TrimSpace(args["origin"])
 	aliveOnly := args["alive"] == "1" || args["alive"] == "true"
 	archived := args["archived"] // "only" = archived only; "all" = include; "" = hide
@@ -1458,17 +1476,36 @@ func (h *Host) conversationsList(args map[string]string) ([]map[string]any, erro
 	alive := h.aliveConversations()
 
 	// Build the full filtered list, then paginate. Pinned conversations float
-	// to the top (by date among themselves); the rest stay date-desc.
+	// to the top (by date among themselves); the rest stay date-desc. The FTS
+	// filters run first so the summary read (and everything after) only happens
+	// for files that pass them.
 	var result []map[string]any
+	seen := make(map[string]struct{}, len(files))
 	for _, f := range files {
+		seen[f.id] = struct{}{}
+		var titleFull string
+		haveTitle := false
+		if titleQuery != nil {
+			titleFull = conversationTitleFull(f.path)
+			haveTitle = true
+			if !matchFTS(ftsJoin(titleFull), titleQuery) {
+				continue
+			}
+		}
+		if textQuery != nil {
+			ok, err := h.ftsText.match(f.id, f.path, f.mod, f.size, textQuery)
+			if err != nil {
+				return nil, errServer("full-text search: %v", err)
+			}
+			if !ok {
+				continue
+			}
+		}
 		text, cwd, ok := conversationSummary(f.path)
 		if !ok {
 			continue
 		}
 		text = cleanText(text)
-		if q != "" && !strings.Contains(strings.ToLower(text), q) {
-			continue
-		}
 		if origin != "" && originFor(cwd) != origin {
 			continue
 		}
@@ -1491,11 +1528,14 @@ func (h *Host) conversationsList(args map[string]string) ([]map[string]any, erro
 		if !meta.Archived && archived == "only" {
 			continue
 		}
+		if !haveTitle {
+			titleFull = conversationTitleFull(f.path)
+		}
 		result = append(result, map[string]any{
 			"id":       f.id,
 			"date":     f.mod.Format("02/01 15:04"),
 			"origin":   originFor(cwd),
-			"title":    conversationTitle(f.path),
+			"title":    truncateRunes(titleFull, 80),
 			"preview":  truncateRunes(text, 120),
 			"is_alive": alive[f.id],
 			"tags":     meta.Tags,
@@ -1503,6 +1543,10 @@ func (h *Host) conversationsList(args map[string]string) ([]map[string]any, erro
 			"pinned":   meta.Pinned,
 			"archived": meta.Archived,
 		})
+	}
+	// Drop cache entries for transcripts that no longer exist.
+	if textQuery != nil {
+		h.ftsText.prune(seen)
 	}
 	// An empty result must serialize as [] (json.Marshal of nil is null, which
 	// the UI treats as a broken response).

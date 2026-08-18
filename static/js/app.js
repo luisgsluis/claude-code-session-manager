@@ -41,7 +41,11 @@ const I18N = {
     conversations: 'Conversaciones',
     switch_cards: '▦ tarjetas',
     switch_list: '≡ lista',
-    search_conv: 'Buscar conversación...',
+    search_title: 'Buscar por título',
+    search_title_ph: 'En el título...',
+    search_text: 'Buscar en la conversación',
+    search_text_ph: 'En toda la conversación...',
+    search_hint: 'Varias palabras = todas; usa "frase exacta" entre comillas para coincidencia completa',
     searching: 'buscando...',
     no_conv: 'No se encontraron conversaciones',
     no_conv_search: 'Prueba con otros términos',
@@ -337,7 +341,11 @@ const I18N = {
     conversations: 'Conversations',
     switch_cards: '▦ cards',
     switch_list: '≡ list',
-    search_conv: 'Search conversation...',
+    search_title: 'Search by title',
+    search_title_ph: 'In the title...',
+    search_text: 'Search the conversation',
+    search_text_ph: 'In the whole conversation...',
+    search_hint: 'Multiple words = all; use "exact phrase" in quotes for an exact match',
     searching: 'searching...',
     no_conv: 'No conversations found',
     no_conv_search: 'Try different terms',
@@ -645,7 +653,8 @@ function ccsmApp() {
     lang: 'es',
     skin: 'dark',
     viewMode: 'list',
-    convSearch: '',
+    convSearch: '',          // busqueda en titulo (q)
+    convSearchText: '',      // busqueda en toda la conversacion (q_text)
     convFilters: { origin: '', from: '', to: '', alive: false },
     actionLoading: false,
     // "New session" advanced form (optional tmux name, Claude name, profile,
@@ -997,6 +1006,7 @@ function ccsmApp() {
       try {
         const params = new URLSearchParams({ page: String(page), per_page: '20' });
         if (this.convSearch) params.set('q', this.convSearch);
+        if (this.convSearchText) params.set('q_text', this.convSearchText);
         if (this.convFilters.origin) params.set('origin', this.convFilters.origin);
         if (this.convFilters.from) params.set('from', this.convFilterDate(this.convFilters.from));
         if (this.convFilters.to) params.set('to', this.convFilterDate(this.convFilters.to));

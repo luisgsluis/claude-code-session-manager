@@ -225,11 +225,24 @@
       </div>
     </div>
 
-    <!-- Search -->
+    <!-- Search: title and full conversation, both FTS. Both are type="search"
+         with no name so no browser history/password-manager coupling. -->
     <div class="mb-3">
-      <input type="search" x-model="convSearch" @input.debounce.300ms="loadConversations()"
-        :placeholder="'🔍 ' + t('search_conv')"
-        class="w-full bg-bg-card border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div>
+          <label class="block text-xs text-fg-muted mb-1" x-text="t('search_title')"></label>
+          <input type="search" x-model="convSearch" @input.debounce.300ms="loadConversations()"
+            :placeholder="'🔍 ' + t('search_title_ph')"
+            class="w-full bg-bg-card border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors">
+        </div>
+        <div>
+          <label class="block text-xs text-fg-muted mb-1" x-text="t('search_text')"></label>
+          <input type="search" x-model="convSearchText" @input.debounce.300ms="loadConversations()"
+            :placeholder="'🔍 ' + t('search_text_ph')"
+            class="w-full bg-bg-card border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors">
+        </div>
+      </div>
+      <p class="mt-1 text-xs text-fg-muted" x-text="t('search_hint')"></p>
     </div>
 
     <!-- Advanced filters -->
@@ -259,7 +272,7 @@
       <div x-show="conversations.loading" class="text-center py-4 text-fg-muted animate-pulse" x-text="t('searching')"></div>
       <div x-show="!conversations.loading && conversations.items.length === 0" class="text-center py-8 text-fg-muted">
         <p class="text-lg mb-1" x-text="t('no_conv')"></p>
-        <p class="text-sm" x-text="convSearch ? t('no_conv_search') : t('no_conv_empty')"></p>
+        <p class="text-sm" x-text="(convSearch || convSearchText) ? t('no_conv_search') : t('no_conv_empty')"></p>
       </div>
       <template x-for="c in conversations.items" :key="c.id">
         <div class="bg-bg-card rounded-xl border border-gray-800 p-4 hover:border-gray-700 transition-colors">
@@ -298,7 +311,7 @@
       <div x-show="conversations.loading" class="col-span-full text-center py-4 text-fg-muted animate-pulse" x-text="t('searching')"></div>
       <div x-show="!conversations.loading && conversations.items.length === 0" class="col-span-full text-center py-8 text-fg-muted">
         <p class="text-lg mb-1" x-text="t('no_conv')"></p>
-        <p class="text-sm" x-text="convSearch ? t('no_conv_search') : t('no_conv_empty')"></p>
+        <p class="text-sm" x-text="(convSearch || convSearchText) ? t('no_conv_search') : t('no_conv_empty')"></p>
       </div>
       <template x-for="c in conversations.items" :key="c.id">
         <div class="bg-bg-card rounded-xl border border-gray-800 p-4 hover:border-gray-700 transition-colors flex flex-col">

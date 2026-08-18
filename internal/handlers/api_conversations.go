@@ -23,6 +23,7 @@ func (h *ConversationHandler) ListConversations(w http.ResponseWriter, r *http.R
 	query := r.URL.Query()
 	args := map[string]string{
 		"q":        query.Get("q"),
+		"q_text":   query.Get("q_text"),
 		"origin":   query.Get("origin"),
 		"from":     query.Get("from"),
 		"to":       query.Get("to"),

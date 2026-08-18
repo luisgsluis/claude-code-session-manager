@@ -443,11 +443,17 @@ func TestConversationsListPaginationAndSearch(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		id := "00000000-0000-0000-0000-00000000000" + string(rune('0'+i))
 		path := h.convPath + "/" + id + ".jsonl"
-		content := `{"type":"user","cwd":"/home/admin/x","message":{"content":"proyecto sonarr"}}`
+		// Every file carries both an ai-title (the q search field) and a chat
+		// body (the q_text field), which can differ so each field is exercised.
+		var b strings.Builder
 		if i%2 == 1 {
-			content = `{"type":"user","cwd":"/home/luis/x","message":{"content":"bug parser"}}`
+			b.WriteString(`{"type":"ai-title","aiTitle":"Bug parser"}` + "\n")
+			b.WriteString(`{"type":"user","cwd":"/home/luis/x","message":{"content":"bug parser"}}` + "\n")
+		} else {
+			b.WriteString(`{"type":"ai-title","aiTitle":"Proyecto sonarr"}` + "\n")
+			b.WriteString(`{"type":"user","cwd":"/home/admin/x","message":{"content":"proyecto sonarr"}}` + "\n")
 		}
-		os.WriteFile(path, []byte(content+"\n"), 0600)
+		os.WriteFile(path, []byte(b.String()), 0600)
 	}
 
 	data, err := h.Exec("conversations-ls", map[string]string{"page": "1", "per_page": "2"})
@@ -459,18 +465,29 @@ func TestConversationsListPaginationAndSearch(t *testing.T) {
 		t.Fatalf("expected 2 on page 1, got %d", len(list))
 	}
 
+	// Title field (q): FTS prefix over the ai-title, origin pc.
 	data, err = h.Exec("conversations-ls", map[string]string{"q": "parser"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	list = data.([]map[string]any)
 	if len(list) != 2 {
-		t.Errorf("expected 2 matching 'parser', got %d", len(list))
+		t.Errorf("expected 2 matching title 'parser', got %d", len(list))
 	}
 	for _, c := range list {
 		if c["origin"] != "pc" {
 			t.Errorf("origin for parser: %v", c["origin"])
 		}
+	}
+
+	// Full-text field (q_text): a body word that is absent from every title.
+	data, err = h.Exec("conversations-ls", map[string]string{"q_text": "sonarr"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	list = data.([]map[string]any)
+	if len(list) != 3 {
+		t.Errorf("expected 3 matching body 'sonarr', got %d", len(list))
 	}
 }
 

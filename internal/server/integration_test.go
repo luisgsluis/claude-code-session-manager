@@ -357,8 +357,8 @@ func TestE2EConversations(t *testing.T) {
 	srv := newIntegrationServer(t, m, "")
 	token, _ := srv.sessions.CreateSession("luis", false)
 
-	// List with pagination + search forwarded to the agent.
-	w := authedRequest(srv, token, "GET", "/api/conversations?q=hola&page=2&per_page=10&origin=pi", "")
+	// List with pagination + both search fields forwarded to the agent.
+	w := authedRequest(srv, token, "GET", "/api/conversations?q=hola&q_text=whisper&page=2&per_page=10&origin=pi", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("conv list: %d %s", w.Code, w.Body.String())
 	}
@@ -370,7 +370,7 @@ func TestE2EConversations(t *testing.T) {
 		t.Errorf("unexpected list: %v", list)
 	}
 	cmd, args, _ := m.lastCmd()
-	if cmd != "conversations-ls" || args["q"] != "hola" || args["page"] != "2" || args["per_page"] != "10" || args["origin"] != "pi" {
+	if cmd != "conversations-ls" || args["q"] != "hola" || args["q_text"] != "whisper" || args["page"] != "2" || args["per_page"] != "10" || args["origin"] != "pi" {
 		t.Errorf("agent got %s %v", cmd, args)
 	}
 }

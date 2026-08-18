@@ -831,17 +831,19 @@ func TestConversationsListSkipsConflictsAndPages(t *testing.T) {
 	id1 := "00000000-0000-0000-0000-0000000000dd"
 	id2 := "00000000-0000-0000-0000-0000000000ee"
 	id3 := "00000000-0000-0000-0000-0000000000ff"
-	content := func(txt string) string {
-		return `{"type":"user","cwd":"/home/admin/x","message":{"content":"` + txt + `"}}` + "\n"
+	// title (searched by q) + body (searched by q_text).
+	content := func(title, body string) string {
+		return `{"type":"ai-title","aiTitle":"` + title + `"}` + "\n" +
+			`{"type":"user","cwd":"/home/admin/x","message":{"content":"` + body + `"}}` + "\n"
 	}
-	os.WriteFile(h.convPath+"/"+id1+".jsonl", []byte(content("primer proyecto")), 0600)
-	os.WriteFile(h.convPath+"/"+id2+".jsonl", []byte(content("SEGUNDO Proyecto")), 0600)
-	os.WriteFile(h.convPath+"/"+id3+".jsonl", []byte(content("tercero")), 0600)
+	os.WriteFile(h.convPath+"/"+id1+".jsonl", []byte(content("Primer proyecto", "primer proyecto")), 0600)
+	os.WriteFile(h.convPath+"/"+id2+".jsonl", []byte(content("SEGUNDO Proyecto", "SEGUNDO Proyecto")), 0600)
+	os.WriteFile(h.convPath+"/"+id3+".jsonl", []byte(content("tercero", "tercero")), 0600)
 	// Syncthing-style conflict files and non-uuid files must be ignored.
-	os.WriteFile(h.convPath+"/"+id1+".sync-conflict-20240101-000000.jsonl", []byte(content("conflicto")), 0600)
+	os.WriteFile(h.convPath+"/"+id1+".sync-conflict-20240101-000000.jsonl", []byte(content("conflicto", "conflicto")), 0600)
 	os.WriteFile(h.convPath+"/nota.txt", []byte("x"), 0600)
 
-	// Case-insensitive search.
+	// Case-insensitive title search (FTS prefix).
 	data, err := h.Exec("conversations-ls", map[string]string{"q": "proyecto"})
 	if err != nil {
 		t.Fatal(err)
