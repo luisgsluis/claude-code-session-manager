@@ -82,3 +82,52 @@ rc:
   wait_seconds: 25
   poll_seconds: 2
   settle_seconds: 1
+
+# --- Voice dictation and prompt rewriting ---
+# Providers (and their credentials) are defined ONLY here. Which provider is
+# used is switched at runtime from the UI's settings panel; GET /api/config
+# exposes each provider's name and capabilities, never its credential.
+voice:
+  enabled: false
+  # Hint for the transcriber only ("" = autodetect). It does NOT decide the
+  # language of the rewritten prompt: the meta-prompt detects the language of
+  # what was dictated and answers in that same language.
+  language: es
+  # Where the meta-prompt override and its versions live. "auto" resolves to
+  # $HOME/.ccsm/prompts. The pristine original is embedded in the binary and is
+  # what "restore original" restores, so this directory may be empty.
+  prompts_path: auto
+  stt:
+    # whisper          → record in the browser, transcribe server-side
+    # webspeech        → the browser's own recogniser, no server involvement
+    # whisper_fallback → whisper when possible, webspeech otherwise
+    mode: whisper_fallback
+    provider: ""
+    # Passed to the transcriber as a hint. This is what stops dictated jargon
+    # coming back phonetically mangled.
+    vocabulary: "sonarr, radarr, tmux, systemd, macvlan"
+  rewrite:
+    enabled: true
+    provider: ""
+    model: ""
+    max_questions: 3
+    default_role: auto
+  providers:
+    # Exactly ONE credential source per provider; startup fails otherwise.
+    #   api_key        literal, here in config.yaml (already 0600)
+    #   api_key_env    name of an environment variable
+    #   api_key_helper an executable printing the key on stdout — the same
+    #                  contract as Claude Code's apiKeyHelper, so it can point
+    #                  at the script you already have (bind-mount it in
+    #                  container mode: it lives outside every volume)
+    #   from_profile   a Claude Code profile to borrow apiKeyHelper and
+    #                  ANTHROPIC_BASE_URL from
+    groq:
+      base_url: https://api.groq.com/openai/v1
+      api_key: gsk_...
+      stt_model: whisper-large-v3-turbo
+      chat_model: llama-3.3-70b-versatile
+    deepseek:
+      base_url: https://api.deepseek.com/v1
+      api_key_helper: /keys/claude-apikey
+      chat_model: deepseek-chat

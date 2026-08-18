@@ -82,6 +82,33 @@ that owns the Claude config.
 
 In package mode the same permissions apply to the user running `ccsm`.
 
+### 7. Voice credentials
+
+Provider credentials are **file-only**. `config.yaml` is the single place they can be
+defined; no API call can create a provider, change a key, or read one back. `GET
+/api/config` returns each provider's name and what it can do (`stt`, `chat`) — enough to
+build a dropdown, nothing more — and `PATCH /api/config` accepts only the *choice* of
+provider, mode and model.
+
+Exactly one credential source per provider is enforced at startup, so a provider can never
+quietly authenticate with the wrong one. Prefer `api_key_helper` or `from_profile`: both
+reuse the key the host already has (the same `apiKeyHelper` contract Claude Code uses)
+instead of copying it into another file. The helper is executed per request and its stdout
+is never logged, never wrapped into an error and never returned — a failing helper that
+prints the key on its way out cannot leak it into an HTTP response.
+
+Executing a path named in the config is a code-execution vector, and a deliberate one: the
+same file already decides which `claude`, `tmux` and `bash` binaries run, and it is 0600.
+
+Provider errors become a bare 502. The provider's own error body is discarded rather than
+forwarded, because it can echo the request back — and the request carries the
+`Authorization` header.
+
+**What leaves the machine.** With `stt.mode: whisper` the recorded audio goes to the STT
+provider; with `webspeech` it goes to Google or Apple (the browser's own recogniser); the
+text to be rewritten goes to the rewrite provider. `webspeech` + `rewrite.enabled: false`
+sends nothing anywhere.
+
 ## Threats Not Mitigated (current)
 
 | Threat | Risk | Mitigation in future version |

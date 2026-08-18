@@ -3,6 +3,67 @@
 ## [Unreleased]
 
 ### Added
+- **Voice dictation that produces a prompt, not a transcript.** A 🎤 button in the live chat
+  and in every terminal-grid tile records, transcribes and rewrites in one action, and a ✨
+  button does the rewrite alone on whatever is already in the input (so the system keyboard's
+  own dictation works too, and no microphone is needed). There is deliberately no
+  transcribe-only mode: spoken text is unordered, full of hesitations and mid-sentence
+  corrections, and dropping that straight into a session is the problem this solves.
+  - **Speech to text, two ways, chosen by config:** `whisper` (record with `MediaRecorder`,
+    transcribe server-side through an OpenAI-compatible provider), `webspeech` (the browser's
+    own recogniser, no server involvement) or `whisper_fallback` (whisper when the browser can
+    record and a provider is configured, the browser otherwise). The recorded MIME type is
+    negotiated with `MediaRecorder.isTypeSupported()` — iOS Safari produces `audio/mp4`, not
+    webm — and forwarded so the provider picks the right decoder. A configurable vocabulary
+    hint is what keeps `sonarr`, `macvlan` and `systemd` from coming back phonetically
+    mangled.
+  - **The rewriter is a meta-prompt you can edit.** One Markdown file with front matter
+    declaring the roles, a `# Base` section of shared rules and a `# Role: <id>` block each
+    (software engineer, architect, DevOps/SRE, diagnosis, documentation, plus `auto`, which
+    classifies the request itself). It is viewable and editable from the settings panel, with
+    numbered versions and a one-click restore; the pristine original is embedded in the binary
+    and can never be edited away. Adding a role is editing the prompt — no rebuild.
+  - **It asks when the request is ambiguous**, returning up to `max_questions` questions
+    alongside its best attempt. Answering re-runs the rewrite with the replies folded in, and
+    that pass may not ask again — one round, so it cannot loop.
+  - **The meta-prompt is written in English and answers in the language you dictated**;
+    `voice.language` is only a hint for the transcriber.
+  - **A review panel, because neither input could show a prompt.** The chat textarea is one
+    row tall and a tile's is 1.4em, so the result opens in a panel with a real textarea, a
+    character counter, the raw transcription one click away ("show what I said"), a role
+    selector with retry, and buttons to send, drop it into the input, or discard. Nothing is
+    ever sent unread.
+  - **Credentials are reused, not duplicated.** A provider names exactly one of `api_key`,
+    `api_key_env`, `api_key_helper` (the same contract as Claude Code's `apiKeyHelper`) or
+    `from_profile` (borrowing from a Claude Code profile through the existing
+    `profile-content` command). `GET /api/config` exposes only each provider's name and
+    capabilities; `PATCH` can switch which one is used but never define one or read a key.
+- **`Permissions-Policy` now allows the microphone for CCSM's own origin** (`microphone=(self)`
+  instead of `microphone=()`). The old value denied `getUserMedia` and `SpeechRecognition`
+  with no console error and no permission prompt.
+
+### Changed
+- **A chat message may now be up to 16000 characters, up from 2000.** Anything above 2000
+  travels through `tmux load-buffer` + `paste-buffer -d -p -r` instead of `send-keys`, so
+  Claude Code receives it as an explicit bracketed paste (`[Pasted text #N +M lines]`) rather
+  than as thousands of keystrokes. `-r` is load-bearing: tmux translates LF to CR by default,
+  and CR submits, so without it a multi-line prompt would be sent one line at a time.
+  Everything at or below 2000 characters — including slash commands typed as chat — takes the
+  exact path it always did, and the commands CCSM types itself (`/rename`, `/remote-control`)
+  are never pasted. Measured, rather than assumed: `send-keys` was *not* losing characters at
+  16k even against a deliberately slow reader; the reason to paste is that bracketed paste is
+  explicit where the TUI's input-rate heuristic is a behaviour that has changed between
+  versions. User text is also stripped of C0 control characters, so a literal `\e[201~`
+  cannot close the paste early.
+- The chat textarea now grows with its content up to `max-h-32`. It shipped as `rows="1"`,
+  so that class had never done anything.
+
+### Fixed
+- **e2e: the tmux stub's state was never wiped between runs.** `playwright.config.js` pointed
+  `CCSM_TMUX_STATE` at `e2e/e2e/state/tmux` (`__dirname` is already `e2e/`) while
+  `run-e2e.sh` cleans `e2e/state`, so sessions accumulated across runs and any spec creating a
+  session with a fixed name eventually failed with "name already in use" — which looks exactly
+  like a code regression and is not one.
 - **The live chat now shows a compact processing indicator while the assistant is working.**
   The chat view reads the session's live status line from the pane (the TUI's
   "noodling…/pondering…/processing…" word, e.g. `✻ Doodling… (4m · ↓ 23.9k tokens)`) via two

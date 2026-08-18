@@ -21,6 +21,7 @@ CCSM is a lightweight web app that turns any Linux box you control — a homelab
 
 - 🚀 **One-click sessions**: new Claude session, with profile, or resume a past conversation (top action bar)
 - 🖥️ **Terminal grid**: tile every active session's raw terminal pane at once, in colour — minimize, zoom (tmux-style), and send text/keys per tile without leaving the view. Below 1024px, where a mosaic wouldn't fit, it becomes a one-session-at-a-time view instead: every tile starts minimized as a header chip and tapping one opens it full-screen, replacing whichever was open before
+- 🎤 **Voice dictation with prompt rewriting**: dictate into the chat or a grid tile and get back a *structured prompt*, not a transcript. A prompt-engineer meta-prompt cleans the hesitations and self-corrections, fixes technical terms the transcriber mangled, adapts to a role (software / architect / DevOps / diagnosis / documentation, or auto-detected), and asks a question or two when the request is genuinely ambiguous. The result opens in a review panel — nothing is ever sent unread. ✨ rewrites what you typed, no microphone needed
 - ✏️ **Rename sessions**: rename the tmux session AND set the Claude conversation title — the title is typed as `/rename <title>` into the pane, so punctuation like `!` is fine
 - 🔍 **Search conversations**: full-text search across all your `.jsonl` history, filter by machine origin
 - 👁 **Preview conversations** before resuming
@@ -372,6 +373,13 @@ All endpoints live under `/api` and are protected by authentication — a sessio
 cookie or the LAN-subnet bypass — except `GET /api/health`, which is public and
 used by the container healthcheck.
 
+**Voice** (dictation and prompt rewriting)
+- `POST /api/voice/transcribe` — raw audio body (MIME in `Content-Type`, 8 MiB cap) → `{"text"}`
+- `POST /api/voice/rewrite` — `{"text", "role"?, "answers"?}` → `{"role", "prompt", "questions"}`
+- `GET /api/voice/prompt` — the active meta-prompt, the embedded original, the roles and the version list (`?version=N` for one archived version)
+- `PUT /api/voice/prompt` — validate, archive the current one, save
+- `POST /api/voice/prompt/reset` — drop the override, back to the embedded original
+
 **Sessions**
 - `GET /api/sessions` — list sessions
 - `GET /api/projects` — launch targets for a new session ("principal" = home, plus any dir
@@ -513,9 +521,14 @@ already answering, and cleans up a stale socket left by a crash. See
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
 Referrer-Policy: no-referrer
-Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
+Permissions-Policy: camera=(), microphone=(self), geolocation=(), interest-cohort=()
 Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'
 ```
+
+`microphone=(self)` — not `()` — because voice dictation needs `getUserMedia` /
+`SpeechRecognition`, and a bare `()` denies the microphone to this origin too. Denied that
+way there is no console error and no permission prompt: the button just does nothing. The
+camera stays denied; nothing in CCSM uses it.
 
 `'unsafe-eval'` is required by Alpine.js, which compiles `x-data` expressions with
 `new Function`. Everything else is `'self'`: no inline scripts (an inline `<script>` **will**

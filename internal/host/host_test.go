@@ -1651,7 +1651,8 @@ func TestSessionSendEnterIsLiteral(t *testing.T) {
 
 // TestSessionSendTextEnterIsLiteral: a plain chat message shares the exact
 // same submit mechanics as the "enter" special key above (sessionSend's text
-// branch calls sendKeys, which types the literal text then presses Enter) —
+// branch calls sendText, which under pasteThreshold is sendKeys: type the
+// literal text, then press Enter) —
 // so it must go through the same raw \r, not tmux's named "Enter" key. Before
 // this, sendKeys had its own separate, unfixed named-key Enter, so a typed
 // chat answer to an approval/choice dialog (e.g. typing "1" instead of

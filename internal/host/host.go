@@ -2773,8 +2773,19 @@ func modeFromBadge(line string) string {
 	return ""
 }
 
-// maxSendLen caps a chat message sent into a live session.
-const maxSendLen = 2000
+// MaxSendLen caps a chat message sent into a live session. It was 2000 while
+// every message travelled as keystrokes; sendText's paste path (below) lifts
+// it to 16000 so a rewritten voice prompt — context, constraints and
+// acceptance criteria run to 3-4k characters easily — is not truncated. A cap
+// still exists: audit.jsonl records what is sent, and an absurd payload should
+// fail fast rather than be pushed at a TUI.
+const MaxSendLen = 16000
+
+// pasteThreshold is where sendText switches transport. It is deliberately the
+// OLD MaxSendLen: every message that worked before the limit was raised still
+// travels the exact same code path it always did, and only what used to be
+// rejected outright takes the new one.
+const pasteThreshold = 2000
 
 // tmuxKeyMap is the closed whitelist of special keys a client may send to a
 // live session (mapped to tmux key names). Text is always sent literally.
@@ -2863,10 +2874,10 @@ func (h *Host) sessionSend(name, text, key string) (map[string]any, error) {
 		return nil, errBad("nothing to send")
 	}
 	if text != "" {
-		if len([]rune(text)) > maxSendLen {
-			return nil, errBad("text too long (max %d chars)", maxSendLen)
+		if len([]rune(text)) > MaxSendLen {
+			return nil, errBad("text too long (max %d chars)", MaxSendLen)
 		}
-		if err := h.sendKeys(name, text); err != nil {
+		if err := h.sendText(name, text); err != nil {
 			return nil, err
 		}
 		return map[string]any{"session": name, "sent": "text"}, nil
@@ -3392,6 +3403,89 @@ func (h *Host) claudeRename(session, title string) (map[string]string, error) {
 		return nil, err
 	}
 	return map[string]string{"session": session, "name": title}, nil
+}
+
+// sendText delivers a USER chat message to a pane and submits it. It is
+// deliberately separate from sendKeys, which stays the transport for the
+// control commands CCSM types itself (/rename, /remote-control): those must
+// keep arriving as keystrokes, because that is how the TUI recognises a slash
+// command, and pasting them risks landing as literal text instead.
+//
+// Two transports, split at pasteThreshold:
+//
+//   - <= pasteThreshold: send-keys, byte for byte what CCSM has always done.
+//     A slash command the user types as a chat message (/model sonnet) is far
+//     below the threshold, so it keeps its old behaviour.
+//   - >  pasteThreshold: through a tmux buffer, pasted with -d -p -r.
+//
+// What each paste flag is load-bearing for:
+//
+//   - -r stops tmux translating LF into CR. Without it a multi-line message is
+//     SUBMITTED once per line, because CR is exactly what pressEnter sends to
+//     submit. Measured on tmux 3.5a: the default and -p alone both deliver 0
+//     LF and 6 CR for a 6-newline payload.
+//   - -p asks for bracketed paste. Claude Code understands it and collapses the
+//     text into "[Pasted text #N +M lines]" instead of processing thousands of
+//     keystrokes. tmux omits the markers when the application has not enabled
+//     bracketed paste, so it is safe everywhere.
+//   - -d drops the buffer afterwards, leaving tmux's paste stack as it was.
+//
+// This is NOT a fix for dropped characters. That was the initial theory for
+// why the cap was 2000, and measuring disproved it: send-keys delivered all
+// 16000 bytes intact even against a deliberately slow reader (200 B per 20 ms),
+// and the real TUI collapsed it to "[Pasted text]" on its own. The reason to
+// paste is that bracketed paste is explicit where send-keys leans on the TUI
+// inferring "that was a paste" from input rate — the class of version-dependent
+// TUI heuristic this project has repeatedly been bitten by.
+func (h *Host) sendText(session, text string) error {
+	text = sanitizePaneText(text)
+	if len([]rune(text)) <= pasteThreshold {
+		return h.sendKeys(session, text)
+	}
+	if err := h.pasteText(session, text); err != nil {
+		return err
+	}
+	return h.pressEnter(session)
+}
+
+// pasteText loads text into a private tmux buffer and pastes it into the
+// session's pane. The text travels on stdin, so it is never an argv element:
+// no MAX_ARG_STRLEN ceiling (128 KiB per argument) and no quoting to get wrong.
+func (h *Host) pasteText(session, text string) error {
+	// Session names are already validated by safeName, so this cannot inject.
+	// One buffer per session keeps concurrent sends to different sessions from
+	// overwriting each other's payload.
+	buf := "ccsm-" + session
+	load := exec.Command(h.tmuxBinary, "load-buffer", "-b", buf, "-")
+	load.Stdin = strings.NewReader(text)
+	if err := load.Run(); err != nil {
+		return errServer("tmux load-buffer: %v", err)
+	}
+	if err := exec.Command(h.tmuxBinary, "paste-buffer", "-d", "-p", "-r",
+		"-b", buf, "-t", h.paneTarget(session)).Run(); err != nil {
+		// -d never ran, so drop the buffer here or it lingers with the
+		// message still in it.
+		_ = exec.Command(h.tmuxBinary, "delete-buffer", "-b", buf).Run()
+		return errServer("tmux paste-buffer: %v", err)
+	}
+	return nil
+}
+
+// sanitizePaneText strips C0 control characters from user text, keeping only
+// newline and tab. Two reasons, both about the bytes reaching a terminal:
+// an ESC in the payload can carry an escape sequence into the pane, and
+// specifically a literal \e[201~ would close bracketed paste early and let the
+// remainder of the message be interpreted as keystrokes.
+func sanitizePaneText(text string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, text)
 }
 
 func (h *Host) sendKeys(session, literal string) error {

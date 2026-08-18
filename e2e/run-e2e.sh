@@ -38,6 +38,30 @@ rc:
   bootstrap_profile: ""
   wait_seconds: 5
   poll_seconds: 1
+voice:
+  enabled: true
+  language: es
+  prompts_path: $STATE/prompts
+  stt:
+    mode: whisper
+    provider: stub
+    vocabulary: "sonarr, radarr, tmux, systemd, macvlan"
+  rewrite:
+    enabled: true
+    provider: stub
+    model: stub-chat
+    max_questions: 3
+    default_role: auto
+  providers:
+    stub:
+      base_url: http://127.0.0.1:8797/v1
+      api_key: e2e-stub-key
+      stt_model: stub-whisper
+      chat_model: stub-chat
+    chatonly:
+      base_url: http://127.0.0.1:8797/v1
+      api_key: e2e-stub-key
+      chat_model: stub-chat
 YAML
 
 if [ ! -x "$E2E/ccsm-e2e" ]; then

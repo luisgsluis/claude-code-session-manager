@@ -199,7 +199,7 @@ func TestSessionSend(t *testing.T) {
 		if _, err := h.Exec("session-send", map[string]string{"name": "x", "keys": "rm -rf"}); err == nil {
 			t.Error("expected 400 for non-whitelisted key")
 		}
-		if _, err := h.Exec("session-send", map[string]string{"name": "x", "text": strings.Repeat("a", maxSendLen+1)}); err == nil {
+		if _, err := h.Exec("session-send", map[string]string{"name": "x", "text": strings.Repeat("a", MaxSendLen+1)}); err == nil {
 			t.Error("expected 400 for overlong text")
 		}
 		if _, err := h.Exec("session-send", map[string]string{"name": "x", "text": "x"}); err != nil {

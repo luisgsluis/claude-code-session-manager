@@ -8,7 +8,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +24,7 @@ import (
 	"github.com/luisgsluis/claude-code-session-manager/internal/direct"
 	"github.com/luisgsluis/claude-code-session-manager/internal/handlers"
 	"github.com/luisgsluis/claude-code-session-manager/internal/host"
+	"github.com/luisgsluis/claude-code-session-manager/internal/voice"
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
 )
@@ -52,6 +55,7 @@ type Server struct {
 	sessionHdlr      *handlers.SessionHandler
 	profileHdlr      *handlers.ProfileHandler
 	conversationHdlr *handlers.ConversationHandler
+	voiceHdlr        *handlers.VoiceHandler
 }
 
 // New creates a new Server. staticPath is the path to the static/ directory;
@@ -119,6 +123,25 @@ func New(cfg *config.Config, staticPath, configPath string) *Server {
 	}
 	s.conversationHdlr = &handlers.ConversationHandler{
 		Agent: executor,
+	}
+
+	// Voice. The prompt store reads its directory from the config once; the
+	// rest of the voice config is read per request through the closure below,
+	// so a PATCH that switches provider or mode takes effect immediately
+	// without recreating anything.
+	promptStore := voice.PromptStore{Dir: resolveVoicePromptsPath(cfg.Voice.PromptsPath)}
+	s.voiceHdlr = &handlers.VoiceHandler{
+		Service: voice.NewService(
+			func() config.VoiceConfig {
+				s.cfgMu.RLock()
+				defer s.cfgMu.RUnlock()
+				return s.cfg.Voice
+			},
+			handlers.AgentProfileReader{Agent: executor},
+			promptStore,
+		),
+		Store: promptStore,
+		Audit: auditLog,
 	}
 
 	s.mux = http.NewServeMux()
@@ -201,6 +224,27 @@ func (s *Server) registerRoutes() {
 
 	// Settings content (protected): raw settings.json for profile viewer
 	s.mux.HandleFunc("GET /api/settings", s.auth(s.handleGetSettings))
+
+	// Voice dictation and prompt rewriting (protected)
+	s.mux.HandleFunc("POST /api/voice/transcribe", s.auth(s.voiceHdlr.Transcribe))
+	s.mux.HandleFunc("POST /api/voice/rewrite", s.auth(s.voiceHdlr.Rewrite))
+	s.mux.HandleFunc("GET /api/voice/prompt", s.auth(s.voiceHdlr.GetPrompt))
+	s.mux.HandleFunc("PUT /api/voice/prompt", s.auth(s.voiceHdlr.PutPrompt))
+	s.mux.HandleFunc("POST /api/voice/prompt/reset", s.auth(s.voiceHdlr.ResetPrompt))
+}
+
+// resolveVoicePromptsPath expands the "auto" default the same way the other
+// paths do: $HOME/.ccsm/prompts in package mode, and whatever the container
+// mounts when set explicitly.
+func resolveVoicePromptsPath(p string) string {
+	if p != "auto" {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".ccsm", "prompts")
 }
 
 func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
@@ -486,6 +530,54 @@ type configInfo struct {
 	Users          []userInfo        `json:"users"`
 	Paths          map[string]string `json:"paths"`
 	RC             map[string]any    `json:"rc"`
+	Voice          map[string]any    `json:"voice"`
+}
+
+// voiceProviderInfo is everything the settings panel may know about a
+// provider: its name and what it can do. Never the key, never the helper path,
+// never the profile it borrows from — knowing a key exists is enough to build
+// a dropdown, and anything more is a credential leak waiting for a screenshot.
+type voiceProviderInfo struct {
+	Name string `json:"name"`
+	STT  bool   `json:"stt"`
+	Chat bool   `json:"chat"`
+}
+
+// voiceInfo builds the non-secret view of the voice config. Callers hold
+// cfgMu.
+func (s *Server) voiceInfo() map[string]any {
+	v := s.cfg.Voice
+	providers := make([]voiceProviderInfo, 0, len(v.Providers))
+	for name, p := range v.Providers {
+		providers = append(providers, voiceProviderInfo{
+			Name: name, STT: p.CanSTT(), Chat: p.CanChat(),
+		})
+	}
+	sort.Slice(providers, func(i, j int) bool { return providers[i].Name < providers[j].Name })
+
+	return map[string]any{
+		"enabled":  v.Enabled,
+		"language": v.Language,
+		"stt": map[string]any{
+			"mode":       v.STT.Mode,
+			"provider":   v.STT.Provider,
+			"vocabulary": v.STT.Vocabulary,
+			"modes":      config.VoiceSTTModes,
+		},
+		"rewrite": map[string]any{
+			"enabled":       v.Rewrite.Enabled,
+			"provider":      v.Rewrite.Provider,
+			"model":         v.Rewrite.Model,
+			"max_questions": v.Rewrite.MaxQuestions,
+			"default_role":  v.Rewrite.DefaultRole,
+		},
+		"providers": providers,
+		// The UI needs the send cap to show a counter and stop an over-long
+		// prompt before it fails at the agent. Taken from host so there is one
+		// source of truth: a UI limit that drifts from the real one either
+		// blocks valid prompts or lets them fail after the user hits send.
+		"max_send_len": host.MaxSendLen,
+	}
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -519,6 +611,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"wait_seconds":      s.cfg.Rc.WaitSeconds,
 			"poll_seconds":      s.cfg.Rc.PollSeconds,
 		},
+		Voice: s.voiceInfo(),
 	}
 	s.cfgMu.RUnlock()
 	writeJSON(w, http.StatusOK, info)
@@ -561,9 +654,10 @@ func writeConfig(path string, cfg *config.Config) error {
 
 // patchConfigRequest is a partial update: every field is optional.
 type patchConfigRequest struct {
-	LANSubnets     []string       `json:"lan_subnets"`
-	HostAttachAddr *string        `json:"host_attach_addr"`
-	Rc             *patchRcConfig `json:"rc"`
+	LANSubnets     []string          `json:"lan_subnets"`
+	HostAttachAddr *string           `json:"host_attach_addr"`
+	Rc             *patchRcConfig    `json:"rc"`
+	Voice          *patchVoiceConfig `json:"voice"`
 }
 
 type patchRcConfig struct {
@@ -571,6 +665,34 @@ type patchRcConfig struct {
 	WaitSeconds      *int    `json:"wait_seconds"`
 	PollSeconds      *int    `json:"poll_seconds"`
 }
+
+// patchVoiceConfig is the hot-reloadable half of the voice config: which
+// provider, which mode, which model.
+//
+// Note what is absent: providers themselves. Credentials are file-only, so no
+// request to this endpoint can add a provider, change a key, or read one back.
+// The UI picks between what the file already declares.
+type patchVoiceConfig struct {
+	Enabled *bool              `json:"enabled"`
+	STT     *patchVoiceSTT     `json:"stt"`
+	Rewrite *patchVoiceRewrite `json:"rewrite"`
+}
+
+type patchVoiceSTT struct {
+	Mode       *string `json:"mode"`
+	Provider   *string `json:"provider"`
+	Vocabulary *string `json:"vocabulary"`
+}
+
+type patchVoiceRewrite struct {
+	Enabled      *bool   `json:"enabled"`
+	Provider     *string `json:"provider"`
+	Model        *string `json:"model"`
+	MaxQuestions *int    `json:"max_questions"`
+	DefaultRole  *string `json:"default_role"`
+}
+
+var voiceModelPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:\[\]-]{0,63}$`)
 
 var attachPattern = regexp.MustCompile(`^[a-zA-Z0-9@._-]{1,120}$`)
 var bootstrapPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
@@ -638,6 +760,18 @@ func (s *Server) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Voice: hot-reload. Everything here is validated against the providers the
+	// config file declares, so a typo names its alternatives instead of
+	// surfacing as a 502 the next time someone presses the microphone.
+	if req.Voice != nil {
+		fields, errMsg := s.patchVoice(req.Voice)
+		if errMsg != "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": errMsg})
+			return
+		}
+		updated = append(updated, fields...)
+	}
+
 	if len(updated) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no valid fields to update"})
 		return
@@ -655,6 +789,130 @@ func (s *Server) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 		"updated":        updated,
 		"restart_needed": needsRestart,
 	})
+}
+
+// patchVoice applies the voice half of a config patch. Caller holds cfgMu.
+// Returns the field names it changed, or a message describing the first
+// rejection — in which case nothing has been mutated.
+func (s *Server) patchVoice(p *patchVoiceConfig) ([]string, string) {
+	v := s.cfg.Voice
+	var updated []string
+
+	if p.Enabled != nil {
+		v.Enabled = *p.Enabled
+		updated = append(updated, "voice.enabled")
+	}
+	if p.STT != nil {
+		if p.STT.Mode != nil {
+			valid := false
+			for _, m := range config.VoiceSTTModes {
+				if m == *p.STT.Mode {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				return nil, "voice.stt.mode must be one of " + strings.Join(config.VoiceSTTModes, ", ")
+			}
+			v.STT.Mode = *p.STT.Mode
+			updated = append(updated, "voice.stt.mode")
+		}
+		if p.STT.Provider != nil {
+			if msg := s.checkVoiceProvider(*p.STT.Provider, "stt"); msg != "" {
+				return nil, msg
+			}
+			v.STT.Provider = *p.STT.Provider
+			updated = append(updated, "voice.stt.provider")
+		}
+		if p.STT.Vocabulary != nil {
+			if len(*p.STT.Vocabulary) > 4000 {
+				return nil, "voice.stt.vocabulary is too long (max 4000 chars)"
+			}
+			v.STT.Vocabulary = *p.STT.Vocabulary
+			updated = append(updated, "voice.stt.vocabulary")
+		}
+	}
+	if p.Rewrite != nil {
+		if p.Rewrite.Enabled != nil {
+			v.Rewrite.Enabled = *p.Rewrite.Enabled
+			updated = append(updated, "voice.rewrite.enabled")
+		}
+		if p.Rewrite.Provider != nil {
+			if msg := s.checkVoiceProvider(*p.Rewrite.Provider, "chat"); msg != "" {
+				return nil, msg
+			}
+			v.Rewrite.Provider = *p.Rewrite.Provider
+			updated = append(updated, "voice.rewrite.provider")
+		}
+		if p.Rewrite.Model != nil {
+			if *p.Rewrite.Model != "" && !voiceModelPattern.MatchString(*p.Rewrite.Model) {
+				return nil, "invalid voice.rewrite.model"
+			}
+			v.Rewrite.Model = *p.Rewrite.Model
+			updated = append(updated, "voice.rewrite.model")
+		}
+		if p.Rewrite.MaxQuestions != nil {
+			if *p.Rewrite.MaxQuestions < 0 || *p.Rewrite.MaxQuestions > 10 {
+				return nil, "voice.rewrite.max_questions must be 0-10"
+			}
+			v.Rewrite.MaxQuestions = *p.Rewrite.MaxQuestions
+			updated = append(updated, "voice.rewrite.max_questions")
+		}
+		if p.Rewrite.DefaultRole != nil {
+			// Checked against the roles the ACTIVE meta-prompt declares, not a
+			// hardcoded list: roles live in the editable prompt, so a role
+			// added there is selectable here without a rebuild.
+			if msg := s.checkVoiceRole(*p.Rewrite.DefaultRole); msg != "" {
+				return nil, msg
+			}
+			v.Rewrite.DefaultRole = *p.Rewrite.DefaultRole
+			updated = append(updated, "voice.rewrite.default_role")
+		}
+	}
+
+	s.cfg.Voice = v
+	return updated, ""
+}
+
+// checkVoiceProvider verifies a provider exists and can do what it is being
+// selected for. "" means the selection is valid.
+func (s *Server) checkVoiceProvider(name, capability string) string {
+	if name == "" {
+		return "" // clearing the selection is allowed
+	}
+	p, ok := s.cfg.Voice.Providers[name]
+	if !ok {
+		names := make([]string, 0, len(s.cfg.Voice.Providers))
+		for n := range s.cfg.Voice.Providers {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		if len(names) == 0 {
+			return "no voice providers are configured in config.yaml"
+		}
+		return "unknown voice provider " + name + " (configured: " + strings.Join(names, ", ") + ")"
+	}
+	if capability == "stt" && !p.CanSTT() {
+		return "voice provider " + name + " has no stt_model"
+	}
+	if capability == "chat" && !p.CanChat() {
+		return "voice provider " + name + " has no chat_model"
+	}
+	return ""
+}
+
+func (s *Server) checkVoiceRole(role string) string {
+	if role == "" {
+		return ""
+	}
+	prompt, err := s.voiceHdlr.Store.Active()
+	if err != nil {
+		return "cannot read the meta-prompt to validate the role"
+	}
+	if role == voice.AutoRole || prompt.HasRole(role) {
+		return ""
+	}
+	return "unknown role " + role + " (available: " + strings.Join(prompt.RoleIDs(), ", ") + ")"
 }
 
 // --- User management ---

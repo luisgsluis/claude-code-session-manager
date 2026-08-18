@@ -12,7 +12,12 @@ func withSecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()")
+		// microphone=(self), not (): the voice dictation button needs
+		// getUserMedia / SpeechRecognition, and a bare () denies the mic to this
+		// origin too. Denied that way there is no console error and no
+		// permission prompt — the button just silently does nothing. Camera
+		// stays denied: nothing in CCSM uses it.
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(self), geolocation=(), interest-cohort=()")
 		// 'unsafe-eval' is required by Alpine.js (it compiles x-data expressions with new Function).
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'")
 		next.ServeHTTP(w, r)

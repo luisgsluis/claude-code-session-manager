@@ -243,6 +243,62 @@ const I18N = {
     toast_rc_fail: 'No se pudo re-registrar el Remote Control ni relanzar la sesión ({0})',
     mode_sent: 'Modo cambiado a {0}',
     model_sent: 'Modelo cambiado a {0}',
+    // --- voice dictation / prompt rewriting ---
+    voice_dictate: 'Dictar y reescribir como prompt',
+    voice_dictate_stop: 'Parar y procesar',
+    voice_rewrite: 'Reescribir como prompt',
+    voice_stage_recording: 'Grabando\u2026',
+    voice_stage_transcribing: 'Transcribiendo\u2026',
+    voice_stage_rewriting: 'Reescribiendo\u2026',
+    voice_unsupported: 'Este navegador no puede dictar aqu\u00ed',
+    voice_insecure: 'El dictado necesita HTTPS. Entra por https://ccsm.lan',
+    voice_denied: 'Permiso de micr\u00f3fono denegado. Act\u00edvalo en los ajustes del navegador',
+    voice_no_speech: 'No se ha o\u00eddo nada',
+    voice_empty_input: 'No hay texto que reescribir',
+    voice_err_mic: 'No se pudo acceder al micr\u00f3fono',
+    voice_disabled: 'El dictado est\u00e1 desactivado en la configuraci\u00f3n',
+    compose_title: 'Revisar antes de enviar',
+    compose_role: 'Rol',
+    compose_role_auto_detected: 'detectado',
+    compose_questions_title: '\u00bfFalta algo? (opcional)',
+    compose_answer: 'Responder',
+    compose_skip: 'Omitir',
+    compose_show_raw: 'Ver lo que dict\u00e9',
+    compose_show_prompt: 'Ver el prompt',
+    compose_raw_label: 'Transcripci\u00f3n original',
+    compose_send: 'Enviar',
+    compose_retry: 'Reintentar',
+    compose_to_input: 'Al input',
+    compose_discard: 'Descartar',
+    compose_too_long: 'El prompt supera el l\u00edmite de {0} caracteres',
+    compose_sent: 'Enviado a la sesi\u00f3n {0}',
+    cfg_voice: 'Voz',
+    cfg_voice_enabled: 'Activado',
+    cfg_voice_stt_mode: 'Modo de dictado',
+    cfg_voice_stt_provider: 'Proveedor de transcripci\u00f3n',
+    cfg_voice_vocabulary: 'Vocabulario',
+    cfg_voice_rewrite_enabled: 'Reescribir',
+    cfg_voice_rewrite_provider: 'Proveedor de reescritura',
+    cfg_voice_rewrite_model: 'Modelo',
+    cfg_voice_max_questions: 'M\u00e1x. preguntas',
+    cfg_voice_default_role: 'Rol por defecto',
+    cfg_voice_prompt_edit: 'Editar meta-prompt\u2026',
+    cfg_voice_no_providers: 'Sin proveedores en config.yaml',
+    cfg_voice_saved: 'Configuraci\u00f3n de voz guardada',
+    cfg_voice_mode_whisper: 'Whisper (servidor)',
+    cfg_voice_mode_webspeech: 'Navegador (Web Speech)',
+    cfg_voice_mode_whisper_fallback: 'Whisper con respaldo del navegador',
+    prompt_title: 'Meta-prompt de reescritura',
+    prompt_save: 'Guardar',
+    prompt_reset: 'Restaurar original',
+    prompt_versions: 'Versiones',
+    prompt_version_current: 'actual',
+    prompt_saved: 'Meta-prompt guardado',
+    prompt_reset_done: 'Meta-prompt restaurado al original',
+    prompt_custom: 'modificado',
+    prompt_original: 'original del proyecto',
+    prompt_confirm_reset: 'Se descartar\u00e1 tu meta-prompt y volver\u00e1 el original del proyecto. Las versiones guardadas se conservan. \u00bfSeguir?',
+    prompt_section: 'Ir a secci\u00f3n',
   },
   en: {
     logout: 'logout',
@@ -483,6 +539,62 @@ const I18N = {
     toast_rc_reconnect: 'Remote Control re-registered',
     toast_rc_recovered: 'Bridge not recoverable live: session relaunched as {0}',
     toast_rc_fail: 'Could not re-register Remote Control or relaunch the session ({0})',
+    // --- voice dictation / prompt rewriting ---
+    voice_dictate: 'Dictate and rewrite as a prompt',
+    voice_dictate_stop: 'Stop and process',
+    voice_rewrite: 'Rewrite as a prompt',
+    voice_stage_recording: 'Recording\u2026',
+    voice_stage_transcribing: 'Transcribing\u2026',
+    voice_stage_rewriting: 'Rewriting\u2026',
+    voice_unsupported: 'This browser cannot dictate here',
+    voice_insecure: 'Dictation needs HTTPS. Use https://ccsm.lan',
+    voice_denied: 'Microphone permission denied. Enable it in the browser settings',
+    voice_no_speech: 'Nothing was heard',
+    voice_empty_input: 'There is no text to rewrite',
+    voice_err_mic: 'Could not access the microphone',
+    voice_disabled: 'Dictation is disabled in the configuration',
+    compose_title: 'Review before sending',
+    compose_role: 'Role',
+    compose_role_auto_detected: 'detected',
+    compose_questions_title: 'Anything missing? (optional)',
+    compose_answer: 'Answer',
+    compose_skip: 'Skip',
+    compose_show_raw: 'Show what I said',
+    compose_show_prompt: 'Show the prompt',
+    compose_raw_label: 'Original transcription',
+    compose_send: 'Send',
+    compose_retry: 'Retry',
+    compose_to_input: 'To input',
+    compose_discard: 'Discard',
+    compose_too_long: 'The prompt is over the {0} character limit',
+    compose_sent: 'Sent to session {0}',
+    cfg_voice: 'Voice',
+    cfg_voice_enabled: 'Enabled',
+    cfg_voice_stt_mode: 'Dictation mode',
+    cfg_voice_stt_provider: 'Transcription provider',
+    cfg_voice_vocabulary: 'Vocabulary',
+    cfg_voice_rewrite_enabled: 'Rewrite',
+    cfg_voice_rewrite_provider: 'Rewrite provider',
+    cfg_voice_rewrite_model: 'Model',
+    cfg_voice_max_questions: 'Max. questions',
+    cfg_voice_default_role: 'Default role',
+    cfg_voice_prompt_edit: 'Edit meta-prompt\u2026',
+    cfg_voice_no_providers: 'No providers in config.yaml',
+    cfg_voice_saved: 'Voice settings saved',
+    cfg_voice_mode_whisper: 'Whisper (server)',
+    cfg_voice_mode_webspeech: 'Browser (Web Speech)',
+    cfg_voice_mode_whisper_fallback: 'Whisper with browser fallback',
+    prompt_title: 'Rewriting meta-prompt',
+    prompt_save: 'Save',
+    prompt_reset: 'Restore original',
+    prompt_versions: 'Versions',
+    prompt_version_current: 'current',
+    prompt_saved: 'Meta-prompt saved',
+    prompt_reset_done: 'Meta-prompt restored to the original',
+    prompt_custom: 'modified',
+    prompt_original: 'project original',
+    prompt_confirm_reset: 'Your meta-prompt will be discarded and the project original restored. Saved versions are kept. Continue?',
+    prompt_section: 'Go to section',
   },
 };
 
@@ -525,6 +637,27 @@ function ccsmApp() {
     audit: { open: false, loading: false, q: '', entries: [] },
     metrics: { open: false, loading: false, data: null, model: '' },
     notify: { supported: false, permission: 'default', muted: false, es: null },
+    // Voice dictation. `mode` is what the server is configured for; `effective`
+    // is what this browser can actually do, which may be less (no HTTPS, no
+    // MediaRecorder, no SpeechRecognition).
+    voice: {
+      enabled: false, mode: 'whisper_fallback', effective: '', reason: '',
+      rewriteEnabled: true, roles: [], defaultRole: 'auto', maxSendLen: 16000,
+      providers: [], recording: false, stage: '', target: null,
+      rec: null, chunks: [], stream: null, sr: null, srText: '',
+    },
+    // The review panel: where a dictated or rewritten prompt lands so it can
+    // be read and edited. Neither input in the app is big enough for that —
+    // the chat one is a single row and the tile one is 1.4em tall.
+    compose: {
+      open: false, target: '', role: 'auto', detected: '', raw: '', text: '',
+      questions: [], answers: [], showRaw: false, busy: false, answered: false,
+    },
+    promptEditor: {
+      open: false, loading: false, saving: false, content: '', original: '',
+      custom: false, versions: [], viewing: 0,
+    },
+    voiceForm: null,
     live: { open: false, name: '', view: 'chat', content: '', status: '', chatStatus: '', es: null, ces: null, timer: null, msgs: [], termHist: '', meta: null, input: '', sending: false, elapsed: '', models: [], maxH: null },
     // Terminal grid: tiles keyed by session name (the same stable identity the
     // session list uses), plus a single `zoomed` name — only one tile can be
@@ -589,11 +722,14 @@ function ccsmApp() {
       this.$watch('totpModal.open', v => this.setBodyLock());
       this.$watch('live.open', v => this.setBodyLock());
       this.$watch('grid.open', v => this.setBodyLock());
+      this.$watch('compose.open', v => this.setBodyLock());
+      this.$watch('promptEditor.open', v => this.setBodyLock());
       await this.checkAuth();
       if (this.authenticated) {
         this.showLogin = false;
         this.loadAll();
         this.initNotify();
+        this.initVoice();
       }
     },
 
@@ -609,7 +745,7 @@ function ccsmApp() {
     setBodyLock() {
       const lock = this.settings.open || this.preview.open || this.rename.open ||
         this.profViewer.open || this.userModal.open || this.totpModal.open ||
-        this.live.open || this.grid.open;
+        this.live.open || this.grid.open || this.compose.open || this.promptEditor.open;
 
       if (lock) {
         if (this.scrollLock !== null) return;   // already locked by another overlay
@@ -1556,13 +1692,18 @@ function ccsmApp() {
     // --- Settings panel ---
     async openSettings() {
       this.settings.open = true;
-      if (this.settings.groups.length) return;
+      // The voice form is rebuilt on every open even when the generated groups
+      // are cached: it is editable, so a stale copy would show the previous
+      // provider after someone changed it from another device.
+      if (this.settings.groups.length && this.voiceForm) return;
       this.settings.loading = true;
       try {
         const resp = await fetch('/api/config');
         if (!resp.ok) throw new Error('config unavailable');
         const cfg = await resp.json();
         this.settings.groups = this.buildConfigGroups(cfg);
+        this.voiceFormInit(cfg);
+        this.applyVoiceConfig(cfg.voice);
       } catch (e) {
         this.toastMsg(e.message, 'error');
       }
@@ -2393,6 +2534,538 @@ function ccsmApp() {
     },
     toastError(msg) { this.toastMsg(msg, 'error'); },
     toastSuccess(msg) { this.toastMsg(msg, 'success'); },
+
+    // --- Voice: dictation and prompt rewriting ---
+
+    // initVoice mirrors initNotify: read what the server offers, then work out
+    // what THIS browser can actually do. Both are needed — a server with
+    // whisper configured is useless in a browser that cannot record, and a
+    // page served over plain HTTP cannot use the microphone at all.
+    async initVoice() {
+      try {
+        const resp = await fetch('/api/config');
+        if (!resp.ok) return;
+        const cfg = await resp.json();
+        this.applyVoiceConfig(cfg.voice);
+      } catch (e) { /* voice stays off; nothing else depends on it */ }
+    },
+
+    applyVoiceConfig(v) {
+      if (!v) return;
+      this.voice.enabled = !!v.enabled;
+      this.voice.mode = (v.stt && v.stt.mode) || 'whisper_fallback';
+      this.voice.rewriteEnabled = !!(v.rewrite && v.rewrite.enabled);
+      this.voice.defaultRole = (v.rewrite && v.rewrite.default_role) || 'auto';
+      this.voice.maxSendLen = v.max_send_len || 16000;
+      this.voice.providers = v.providers || [];
+      this.voice.effective = this.resolveVoiceMode();
+      this.compose.role = this.voice.defaultRole;
+      this.loadVoiceRoles();
+    },
+
+    // resolveVoiceMode decides how this browser will capture speech, and
+    // records why when it cannot.
+    //
+    // Order matters: the secure-context check comes first because without it
+    // both APIs are simply absent, and reporting "unsupported browser" for
+    // what is really "you are on http://" sends people debugging the wrong
+    // thing.
+    resolveVoiceMode() {
+      this.voice.reason = '';
+      if (!this.voice.enabled) { this.voice.reason = 'voice_disabled'; return ''; }
+      if (!window.isSecureContext) { this.voice.reason = 'voice_insecure'; return ''; }
+
+      const canRecord = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+      const canSpeech = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+      const hasSTT = this.voice.providers.some(p => p.stt);
+
+      if (this.voice.mode === 'webspeech') {
+        if (canSpeech) return 'webspeech';
+        this.voice.reason = 'voice_unsupported';
+        return '';
+      }
+      if (this.voice.mode === 'whisper') {
+        if (canRecord && hasSTT) return 'whisper';
+        this.voice.reason = 'voice_unsupported';
+        return '';
+      }
+      // whisper_fallback
+      if (canRecord && hasSTT) return 'whisper';
+      if (canSpeech) return 'webspeech';
+      this.voice.reason = 'voice_unsupported';
+      return '';
+    },
+
+    // The mic button only appears where dictation can work; the sparkle button
+    // needs no audio at all, so it appears whenever rewriting is configured.
+    canDictate() { return !!this.voice.effective; },
+    canRewrite() { return this.voice.enabled && this.voice.rewriteEnabled; },
+
+    async loadVoiceRoles() {
+      if (!this.voice.enabled) return;
+      try {
+        const resp = await fetch('/api/voice/prompt');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        this.voice.roles = data.roles || [];
+      } catch (e) { /* the dropdown just stays empty */ }
+    },
+
+    roleLabel(id) {
+      const r = this.voice.roles.find(x => x.id === id);
+      if (!r) return id;
+      return this.lang === 'en' ? r.en : r.es;
+    },
+
+    // --- Recording ---
+
+    // pickAudioMime asks the browser what it can actually record. Safari on
+    // iOS produces audio/mp4 (AAC) and everything else webm/opus, so hardcoding
+    // webm silently breaks dictation on iPhone.
+    pickAudioMime() {
+      const candidates = [
+        'audio/webm;codecs=opus', 'audio/webm',
+        'audio/mp4;codecs=mp4a.40.2', 'audio/mp4',
+        'audio/ogg;codecs=opus', 'audio/ogg',
+      ];
+      for (const c of candidates) {
+        if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(c)) return c;
+      }
+      return '';
+    },
+
+    toggleVoice(target) {
+      if (this.voice.recording) { this.stopVoice(); return; }
+      this.startVoice(target);
+    },
+
+    async startVoice(target) {
+      if (!this.canDictate()) {
+        this.toastError(this.t(this.voice.reason || 'voice_unsupported'));
+        return;
+      }
+      this.voice.target = target;
+      if (this.voice.effective === 'webspeech') return this.startWebSpeech();
+      return this.startRecorder();
+    },
+
+    stopVoice() {
+      if (this.voice.sr) { try { this.voice.sr.stop(); } catch (e) {} return; }
+      if (this.voice.rec && this.voice.rec.state !== 'inactive') { this.voice.rec.stop(); }
+    },
+
+    async startRecorder() {
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (e) {
+        this.toastError(this.t(e && e.name === 'NotAllowedError' ? 'voice_denied' : 'voice_err_mic'));
+        return;
+      }
+      const mime = this.pickAudioMime();
+      let rec;
+      try {
+        rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      } catch (e) {
+        stream.getTracks().forEach(t => t.stop());
+        this.toastError(this.t('voice_err_mic'));
+        return;
+      }
+      this.voice.chunks = [];
+      this.voice.stream = stream;
+      this.voice.rec = rec;
+      rec.ondataavailable = e => { if (e.data && e.data.size) this.voice.chunks.push(e.data); };
+      rec.onstop = () => this.finishRecording();
+      rec.start();
+      this.voice.recording = true;
+      this.voice.stage = 'voice_stage_recording';
+    },
+
+    async finishRecording() {
+      const rec = this.voice.rec;
+      this.voice.recording = false;
+      if (this.voice.stream) {
+        // Release the mic promptly: leaving the track live keeps the browser's
+        // recording indicator on and, on mobile, holds the audio session.
+        this.voice.stream.getTracks().forEach(t => t.stop());
+        this.voice.stream = null;
+      }
+      this.voice.rec = null;
+      const chunks = this.voice.chunks;
+      this.voice.chunks = [];
+      if (!chunks.length) { this.voice.stage = ''; this.toastError(this.t('voice_no_speech')); return; }
+
+      const type = (rec && rec.mimeType) || chunks[0].type || 'audio/webm';
+      const blob = new Blob(chunks, { type });
+      this.voice.stage = 'voice_stage_transcribing';
+      try {
+        const resp = await fetch('/api/voice/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': type },
+          body: blob,
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) { throw new Error(data.error || 'transcription failed'); }
+        await this.afterTranscript(data.text || '');
+      } catch (e) {
+        this.voice.stage = '';
+        this.toastError(e.message);
+      }
+    },
+
+    // Web Speech runs entirely in the browser; there is no audio upload and no
+    // server round trip for this half.
+    startWebSpeech() {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const sr = new SR();
+      sr.lang = this.lang === 'en' ? 'en-US' : 'es-ES';
+      sr.interimResults = false;
+      sr.continuous = false;
+      this.voice.srText = '';
+      sr.onresult = e => {
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          if (e.results[i].isFinal) this.voice.srText += e.results[i][0].transcript;
+        }
+      };
+      sr.onerror = e => {
+        this.voice.recording = false;
+        this.voice.stage = '';
+        this.voice.sr = null;
+        this.toastError(this.t(e && e.error === 'not-allowed' ? 'voice_denied' : 'voice_err_mic'));
+      };
+      sr.onend = async () => {
+        this.voice.recording = false;
+        this.voice.sr = null;
+        const text = (this.voice.srText || '').trim();
+        if (!text) { this.voice.stage = ''; this.toastError(this.t('voice_no_speech')); return; }
+        await this.afterTranscript(text);
+      };
+      try { sr.start(); } catch (e) { this.toastError(this.t('voice_err_mic')); return; }
+      this.voice.sr = sr;
+      this.voice.recording = true;
+      this.voice.stage = 'voice_stage_recording';
+    },
+
+    // afterTranscript is where the two stages join: the mic button always
+    // rewrites, because dictating without rewriting is exactly what this
+    // feature exists to avoid. When rewriting is off or unconfigured it
+    // degrades to opening the panel with the raw text, which is still better
+    // than dropping several thousand characters into a one-row input.
+    async afterTranscript(text) {
+      const target = this.voice.target;
+      if (!this.canRewrite()) {
+        this.voice.stage = '';
+        this.openCompose(target, text, { role: '', prompt: text, questions: [] });
+        return;
+      }
+      this.voice.stage = 'voice_stage_rewriting';
+      const res = await this.callRewrite(text, this.voice.defaultRole, []);
+      this.voice.stage = '';
+      if (res) this.openCompose(target, text, res);
+    },
+
+    // The sparkle button: rewrite whatever is already in the input, wherever
+    // it came from — the system keyboard's own dictation, or typing.
+    async runRewrite(target) {
+      const text = (this.inputFor(target) || '').trim();
+      if (!text) { this.toastError(this.t('voice_empty_input')); return; }
+      this.voice.stage = 'voice_stage_rewriting';
+      const res = await this.callRewrite(text, this.voice.defaultRole, []);
+      this.voice.stage = '';
+      if (res) this.openCompose(target, text, res);
+    },
+
+    async callRewrite(text, role, answers) {
+      try {
+        const resp = await fetch('/api/voice/rewrite', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: text, role: role, answers: answers || [] }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || 'rewrite failed');
+        return data;
+      } catch (e) {
+        this.toastError(e.message);
+        return null;
+      }
+    },
+
+    // --- Review panel ---
+
+    // inputFor / setInput are the only places that know where a target's text
+    // lives, so the chat and a grid tile are handled by one set of functions.
+    inputFor(target) {
+      if (target === 'chat') return this.live.input;
+      const tile = this.grid.tiles[target];
+      return tile ? tile.input : '';
+    },
+    setInput(target, value) {
+      if (target === 'chat') { this.live.input = value; return; }
+      if (this.grid.tiles[target]) this.grid.tiles[target].input = value;
+    },
+    composeSession() {
+      return this.compose.target === 'chat' ? this.live.name : this.compose.target;
+    },
+
+    openCompose(target, raw, res) {
+      this.compose.open = true;
+      this.compose.target = target;
+      this.compose.raw = raw;
+      this.compose.text = res.prompt || raw;
+      this.compose.detected = res.role || '';
+      this.compose.role = res.role || this.voice.defaultRole;
+      this.compose.questions = res.questions || [];
+      this.compose.answers = (res.questions || []).map(() => '');
+      this.compose.showRaw = false;
+      this.compose.answered = false;
+      this.compose.busy = false;
+    },
+
+    closeCompose() {
+      this.compose.open = false;
+      this.compose.questions = [];
+      this.compose.answers = [];
+      this.compose.raw = '';
+      this.compose.text = '';
+    },
+
+    // Answering re-runs the rewrite with the replies folded in. The server
+    // forbids a second round of questions, so this cannot bounce forever.
+    async composeAnswer() {
+      const answers = this.compose.questions
+        .map((q, i) => ({ question: q, answer: (this.compose.answers[i] || '').trim() }))
+        .filter(a => a.answer !== '');
+      if (!answers.length) { this.composeSkip(); return; }
+      this.compose.busy = true;
+      const res = await this.callRewrite(this.compose.raw, this.compose.role, answers);
+      this.compose.busy = false;
+      if (!res) return;
+      this.compose.text = res.prompt || this.compose.text;
+      this.compose.detected = res.role || this.compose.detected;
+      this.compose.questions = [];
+      this.compose.answers = [];
+      this.compose.answered = true;
+    },
+
+    composeSkip() {
+      this.compose.questions = [];
+      this.compose.answers = [];
+      this.compose.answered = true;
+    },
+
+    // Retry rewrites from the ORIGINAL transcription, not from the edited
+    // prompt: that is what makes changing the role in the header useful, and
+    // it avoids compounding the model's own output turn after turn.
+    async composeRetry() {
+      if (!this.compose.raw) return;
+      this.compose.busy = true;
+      const res = await this.callRewrite(this.compose.raw, this.compose.role, []);
+      this.compose.busy = false;
+      if (!res) return;
+      this.compose.text = res.prompt || this.compose.text;
+      this.compose.detected = res.role || '';
+      this.compose.questions = res.questions || [];
+      this.compose.answers = (res.questions || []).map(() => '');
+      this.compose.answered = false;
+    },
+
+    composeCount() { return (this.compose.text || '').length; },
+    composeOver() { return this.composeCount() > this.voice.maxSendLen; },
+    composeNearLimit() { return this.composeCount() > this.voice.maxSendLen * 0.9; },
+
+    composeToInput() {
+      this.setInput(this.compose.target, this.compose.text);
+      this.closeCompose();
+    },
+
+    // Sending reuses postSessionSend, the single POST /send code path the chat
+    // and the tiles already share — so the panel adds a caller, not a second
+    // way to send. It is called directly rather than through sendChat() /
+    // sendTileText() because those return nothing, and the panel must stay
+    // open (with the text intact) when the send fails.
+    async composeSend() {
+      if (this.composeOver()) {
+        this.toastError(this.t('compose_too_long', [this.voice.maxSendLen]));
+        return;
+      }
+      const target = this.compose.target;
+      const text = (this.compose.text || '').trim();
+      if (!text) return;
+      const session = this.composeSession();
+      this.compose.busy = true;
+      const ok = await this.postSessionSend(session, { text: text });
+      this.compose.busy = false;
+      if (!ok) return;   // postSessionSend has already explained why
+      if (target === 'chat') { this.loadChat(); } else { this.fetchTileMeta(target); }
+      this.setInput(target, '');
+      this.toastSuccess(this.t('compose_sent', [session]));
+      this.closeCompose();
+    },
+
+    // --- Voice settings ---
+
+    voiceFormInit(cfg) {
+      const v = (cfg && cfg.voice) || {};
+      this.voiceForm = {
+        enabled: !!v.enabled,
+        mode: (v.stt && v.stt.mode) || 'whisper_fallback',
+        modes: (v.stt && v.stt.modes) || ['whisper', 'webspeech', 'whisper_fallback'],
+        sttProvider: (v.stt && v.stt.provider) || '',
+        vocabulary: (v.stt && v.stt.vocabulary) || '',
+        rewriteEnabled: !!(v.rewrite && v.rewrite.enabled),
+        rewriteProvider: (v.rewrite && v.rewrite.provider) || '',
+        model: (v.rewrite && v.rewrite.model) || '',
+        maxQuestions: (v.rewrite && v.rewrite.max_questions) || 0,
+        defaultRole: (v.rewrite && v.rewrite.default_role) || 'auto',
+        providers: v.providers || [],
+      };
+    },
+
+    async saveVoiceSettings() {
+      const f = this.voiceForm;
+      if (!f) return;
+      const body = {
+        voice: {
+          enabled: f.enabled,
+          stt: { mode: f.mode, provider: f.sttProvider, vocabulary: f.vocabulary },
+          rewrite: {
+            enabled: f.rewriteEnabled, provider: f.rewriteProvider, model: f.model,
+            max_questions: Number(f.maxQuestions), default_role: f.defaultRole,
+          },
+        },
+      };
+      try {
+        const resp = await fetch('/api/config', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || 'error');
+        this.toastSuccess(this.t('cfg_voice_saved'));
+        // Re-read rather than trusting the local form: the server is what
+        // decides, and a mode that this browser cannot honour must be
+        // reflected in the buttons immediately.
+        const fresh = await fetch('/api/config');
+        if (fresh.ok) {
+          const cfg = await fresh.json();
+          this.applyVoiceConfig(cfg.voice);
+          this.voiceFormInit(cfg);
+        }
+      } catch (e) {
+        this.toastError(e.message);
+      }
+    },
+
+    // --- Meta-prompt editor ---
+
+    async openPromptEditor() {
+      this.promptEditor.open = true;
+      this.promptEditor.loading = true;
+      this.promptEditor.viewing = 0;
+      try {
+        const resp = await fetch('/api/voice/prompt');
+        if (!resp.ok) throw new Error('cannot read the meta-prompt');
+        const data = await resp.json();
+        this.promptEditor.content = data.content || '';
+        this.promptEditor.original = data.original || '';
+        this.promptEditor.custom = !!data.custom;
+        this.promptEditor.versions = data.versions || [];
+        this.voice.roles = data.roles || this.voice.roles;
+      } catch (e) {
+        this.toastError(e.message);
+      }
+      this.promptEditor.loading = false;
+    },
+
+    // The section list drives a jump menu. Editing a 4 KB document in a phone
+    // textarea is the case this exists for.
+    promptSections() {
+      const out = [];
+      const re = /^#[ \t]+(Base|Role:[ \t]*[A-Za-z0-9_-]+)[ \t]*$/gm;
+      let m;
+      while ((m = re.exec(this.promptEditor.content)) !== null) {
+        out.push({ label: m[1].replace(/\s+/g, ' '), index: m.index });
+      }
+      return out;
+    },
+
+    gotoPromptSection(index) {
+      const el = document.getElementById('prompt-editor-text');
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(Number(index), Number(index));
+      // Approximate scroll: put the section near the top of the viewport.
+      const before = this.promptEditor.content.slice(0, Number(index)).split('\n').length;
+      el.scrollTop = Math.max(0, (before - 1) * 18);
+    },
+
+    async savePrompt() {
+      this.promptEditor.saving = true;
+      try {
+        const resp = await fetch('/api/voice/prompt', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: this.promptEditor.content }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || 'invalid meta-prompt');
+        this.promptEditor.content = data.content || this.promptEditor.content;
+        this.promptEditor.custom = !!data.custom;
+        this.promptEditor.versions = data.versions || [];
+        this.voice.roles = data.roles || this.voice.roles;
+        this.toastSuccess(this.t('prompt_saved'));
+      } catch (e) {
+        // The message names the exact problem (a role with no section, broken
+        // front matter), which is the whole point of surfacing it verbatim.
+        this.toastError(e.message);
+      }
+      this.promptEditor.saving = false;
+    },
+
+    async resetPrompt() {
+      if (!confirm(this.t('prompt_confirm_reset'))) return;
+      try {
+        const resp = await fetch('/api/voice/prompt/reset', { method: 'POST' });
+        if (!resp.ok) throw new Error('could not restore the original');
+        const data = await resp.json();
+        this.promptEditor.content = data.content || '';
+        this.promptEditor.custom = !!data.custom;
+        this.promptEditor.versions = data.versions || [];
+        this.voice.roles = data.roles || this.voice.roles;
+        this.promptEditor.viewing = 0;
+        this.toastSuccess(this.t('prompt_reset_done'));
+      } catch (e) {
+        this.toastError(e.message);
+      }
+    },
+
+    async viewPromptVersion(n) {
+      if (!n) { await this.openPromptEditor(); return; }
+      try {
+        const resp = await fetch('/api/voice/prompt?version=' + encodeURIComponent(n));
+        if (!resp.ok) throw new Error('version not found');
+        const data = await resp.json();
+        this.promptEditor.content = data.content || '';
+        this.promptEditor.viewing = n;
+      } catch (e) {
+        this.toastError(e.message);
+      }
+    },
+
+    // --- Chat input auto-grow ---
+    //
+    // The textarea ships as rows="1" with a max-h-32 that never came into
+    // play, so a multi-line message scrolled inside a one-line box. Growing it
+    // does not replace the review panel — a rewritten prompt still needs far
+    // more room than this — but it fixes typing a few lines by hand.
+    autoGrow(el) {
+      if (!el) return;
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 128) + 'px';
+    },
+
   };
 }
 

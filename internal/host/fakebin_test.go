@@ -112,6 +112,19 @@ case "$1" in
     [ -n "$FAKE_TMUX_CREATED" ] || exit 1
     printf '%s' "$FAKE_TMUX_CREATED"
     exit 0 ;;
+  load-buffer)
+    # sendText's paste path feeds the message on stdin. Always drain it, even
+    # when the test is not capturing it, or the writing side sees EPIPE.
+    if [ -n "$FAKE_TMUX_BUFFER" ]; then cat > "$FAKE_TMUX_BUFFER"; else cat > /dev/null; fi
+    [ -n "$FAKE_TMUX_LOAD_FAIL" ] && exit 1
+    exit 0 ;;
+  paste-buffer)
+    [ -n "$FAKE_TMUX_PASTE" ] && printf '%s\n' "$*" >> "$FAKE_TMUX_PASTE"
+    [ -n "$FAKE_TMUX_PASTE_FAIL" ] && exit 1
+    exit 0 ;;
+  delete-buffer)
+    [ -n "$FAKE_TMUX_DELETE" ] && printf '%s\n' "$*" >> "$FAKE_TMUX_DELETE"
+    exit 0 ;;
   send-keys)
     [ -n "$FAKE_TMUX_SENDKEYS" ] && printf '%s\n' "$*" >> "$FAKE_TMUX_SENDKEYS"
     # Concurrency tests (TestSessionSendConcurrent): a delay between the

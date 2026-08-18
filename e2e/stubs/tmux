@@ -78,6 +78,19 @@ case "$cmd" in
   send-keys)
     exit 0
     ;;
+  load-buffer)
+    # sendText's paste path for anything over pasteThreshold. The message
+    # arrives on stdin; keep it so a test can assert what was pasted.
+    cat > "$STATE/.buffer" 2>/dev/null || cat > /dev/null
+    exit 0
+    ;;
+  paste-buffer)
+    printf '%s\n' "$*" >> "$STATE/.paste-args"
+    exit 0
+    ;;
+  delete-buffer)
+    exit 0
+    ;;
   *)
     echo "tmux stub: unknown command: $cmd" >&2
     exit 1

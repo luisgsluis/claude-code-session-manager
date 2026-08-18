@@ -120,6 +120,50 @@ GET  /api/settings                           content of the CURRENTLY APPLIED se
 Enter into the pane. `GET /api/settings` reflects the **active profile** — it may
 differ from the saved profile files, so it is separate from `GET /api/profiles/{name}`.
 
+### Voice: dictation and prompt rewriting
+
+Two stages behind two buttons. 🎤 records, transcribes **and** rewrites in one action; ✨
+rewrites whatever is already in the input. There is deliberately no transcribe-only mode:
+dictated text is unordered and full of hesitations, and dropping that straight into a
+session is what the feature exists to avoid.
+
+```
+                 ┌─ webspeech ── SpeechRecognition ─────► text (browser only)
+browser  🎤 ─────┤
+                 └─ whisper ──── MediaRecorder ─► POST /api/voice/transcribe
+                                                          │
+                                          {base_url}/audio/transcriptions
+                                                          ▼
+         ✨ ────────────────────► POST /api/voice/rewrite ─► {base_url}/chat/completions
+                                          │
+                         {role, prompt, questions[]} ─► review panel ─► /send
+```
+
+`internal/voice` is the only package in CCSM that makes an outbound HTTP request. Both
+supported providers (Groq, DeepSeek) speak the OpenAI dialect, so one client covers them
+and anything added later.
+
+**Credentials never move.** A provider declares exactly one source — `api_key`,
+`api_key_env`, `api_key_helper` or `from_profile` — validated at startup. `api_key_helper`
+is the same contract as Claude Code's `apiKeyHelper`, and `from_profile` reads a profile
+through the existing `profile-content` agent command, so both reuse what the host already
+has instead of duplicating a key into CCSM. Nothing about them is reachable through the API:
+`GET /api/config` returns each provider's name and capabilities only, and `PATCH` can switch
+which provider is used but never define one.
+
+**The meta-prompt is data, not code.** One Markdown file: front matter declaring the roles,
+a `# Base` section of shared rules, and a `# Role: <id>` block each. The server assembles
+Base + the chosen block, or Base + every block for `auto` (the model cannot classify into
+roles it has not seen). The pristine copy is embedded in the binary with `go:embed`; an
+override and its numbered versions live in `voice.prompts_path`. Saving validates both
+directions — a declared role with no block, a block nobody declared — and refuses to write
+on failure, so a bad edit never displaces a working prompt.
+
+**The rewrite may ask before answering.** When the request is genuinely ambiguous the model
+returns up to `max_questions` questions alongside its best attempt. Answering re-runs the
+rewrite with the replies folded in, and that second pass is told it may not ask again — one
+round, so the UI cannot bounce forever.
+
 ### Rename gotcha
 
 The `=` target prefix (`-t =name`) is valid only for tmux **session** targets —
