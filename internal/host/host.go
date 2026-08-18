@@ -968,8 +968,13 @@ func (h *Host) profilesList() ([]map[string]any, error) {
 		return nil, errServer("read profiles dir: %v", err)
 	}
 
-	settingsData, _ := os.ReadFile(h.settingsPath)
-	activeSettings := normalizeJSON(settingsData)
+	// The active profile is decided in one place: the catalog profile whose
+	// content matches the applied settings.json (see activeProfileName).
+	// Reusing it keeps /api/profiles' is_active and the session-launch logic
+	// in sync, and guarantees at most ONE profile is ever flagged active even
+	// if two catalog files carry identical content (the old per-file equality
+	// check ticked both).
+	active := h.activeProfileName()
 
 	var profiles []map[string]any
 	for _, e := range entries {
@@ -980,14 +985,10 @@ func (h *Host) profilesList() ([]map[string]any, error) {
 		if !safeProfileName(name) {
 			continue
 		}
-		isActive := false
-		if pf, err := os.ReadFile(h.profilesPath + "/" + e.Name()); err == nil && activeSettings != "" {
-			isActive = normalizeJSON(pf) == activeSettings
-		}
 		profiles = append(profiles, map[string]any{
 			"name":      name,
 			"label":     name,
-			"is_active": isActive,
+			"is_active": active != "" && name == active,
 		})
 	}
 

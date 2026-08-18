@@ -1065,6 +1065,21 @@ function ccsmApp() {
       } catch (e) { /* ignore */ }
     },
 
+    // Name of the profile currently applied to settings.json, taken from the
+    // server's is_active flag. First match wins so the UI can never paint more
+    // than one active tick even if the server ever misbehaves.
+    activeProfileName() {
+      const act = this.profiles.filter(p => p.is_active);
+      return act.length ? act[0].name : '';
+    },
+
+    // Whether a specific profile is the active one. Single source for every
+    // ✓/arrow in the UI (change-profile list and the advanced-session select),
+    // so the indication is consistent across both.
+    isActiveProfile(p) {
+      return !!p && p.name === this.activeProfileName();
+    },
+
     async loadProjects() {
       try {
         const resp = await fetch('/api/projects');

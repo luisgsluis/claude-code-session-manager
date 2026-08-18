@@ -120,12 +120,12 @@
             class="w-full bg-bg border border-gray-700 rounded-lg px-3 py-2 text-sm text-fg placeholder:text-fg-muted/60 focus:outline-none focus:border-accent transition-colors">
         </div>
         <div>
-          <label class="block text-xs text-fg-muted mb-1" x-text="t('adv_profile')"></label>
-          <select x-model="adv.profile"
+          <label for="adv-profile" class="block text-xs text-fg-muted mb-1" x-text="t('adv_profile')"></label>
+          <select id="adv-profile" x-model="adv.profile"
             class="w-full bg-bg border border-gray-700 rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent transition-colors">
-            <option value="" x-text="t('adv_profile_default')"></option>
+            <option value="" x-text="t('adv_profile_default') + (activeProfileName() ? ' · ' + activeProfileName() : '')"></option>
             <template x-for="p in profiles" :key="p.name">
-              <option :value="p.name" x-text="p.label || p.name"></option>
+              <option :value="p.name" x-text="(isActiveProfile(p) ? '✓ ' : '') + (p.label || p.name)"></option>
             </template>
           </select>
         </div>
@@ -161,7 +161,7 @@
             <button @click="open = false; applyProfile(p.name)"
               class="flex-1 text-left px-4 py-2 text-sm">
               <span x-text="p.label || p.name"></span>
-              <span x-show="p.is_active" class="text-success text-xs ml-2">✓</span>
+              <span x-show="isActiveProfile(p)" class="text-success text-xs ml-2">✓</span>
             </button>
             <button @click="viewProfile(p.name)" class="px-2 py-2 text-sm text-fg-muted hover:text-fg shrink-0" :title="t('view_profile_title', [p.label||p.name])">👁️</button>
           </div>

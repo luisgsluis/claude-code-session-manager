@@ -657,6 +657,67 @@ func TestProfilesListNoSettings(t *testing.T) {
 	}
 }
 
+// TestProfilesListOnlyOneActive guards the UI sync between the active-profile
+// tick and settings.json: two catalog profiles with identical content must not
+// both be flagged is_active (the old per-file equality check did exactly that),
+// and the flagged one must be the one activeProfileName resolves.
+func TestProfilesListOnlyOneActive(t *testing.T) {
+	h := fakeHost(t, nil)
+	// Two byte-identical profiles: whichever is listed first wins, never both.
+	h.writeProfile(t, "clone", `{"model":"sonnet"}`)
+	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)
+	if err := h.applyProfile("estandar"); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := h.Exec("profiles-ls", nil)
+	if err != nil {
+		t.Fatalf("profiles-ls: %v", err)
+	}
+	profiles := data.([]map[string]any)
+	if len(profiles) != 2 {
+		t.Fatalf("want 2 profiles, got %d: %v", len(profiles), profiles)
+	}
+	activeCount := 0
+	for _, p := range profiles {
+		if p["is_active"] == true {
+			activeCount++
+			if p["name"] != h.activeProfileName() {
+				t.Errorf("flagged profile %v disagrees with activeProfileName %q", p, h.activeProfileName())
+			}
+		}
+	}
+	if activeCount != 1 {
+		t.Errorf("want exactly 1 active profile, got %d: %v", activeCount, profiles)
+	}
+}
+
+// TestProfilesListUnmatchedSettings: when settings.json doesn't match any
+// catalog profile (hand-edited, or applied outside the catalog), no profile is
+// flagged active — the tick must reflect settings.json's content truthfully.
+func TestProfilesListUnmatchedSettings(t *testing.T) {
+	h := fakeHost(t, nil)
+	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)
+	h.writeProfile(t, "deepseek", `{"apiKeyHelper":"/x"}`)
+	// A settings.json that is neither profile (e.g. an extra hand-added key).
+	if err := os.WriteFile(h.settingsPath, []byte(`{"model":"sonnet","tui":"fullscreen"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := h.Exec("profiles-ls", nil)
+	if err != nil {
+		t.Fatalf("profiles-ls: %v", err)
+	}
+	for _, p := range data.([]map[string]any) {
+		if p["is_active"] == true {
+			t.Errorf("no profile should be active when settings.json matches none: %v", p)
+		}
+	}
+	if got := h.activeProfileName(); got != "" {
+		t.Errorf("activeProfileName should be empty, got %q", got)
+	}
+}
+
 func TestActiveProfileNameNoMatch(t *testing.T) {
 	h := fakeHost(t, nil)
 	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)
