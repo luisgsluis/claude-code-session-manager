@@ -111,12 +111,12 @@
         class="absolute top-full mt-1 left-0 bg-bg-card border border-gray-700 rounded-xl shadow-xl p-4 min-w-[260px] z-50 space-y-3">
         <div>
           <label for="adv-tmux" class="block text-xs text-fg-muted mb-1" x-text="t('adv_tmux')"></label>
-          <input id="adv-tmux" type="text" x-model="adv.tmux" :placeholder="t('adv_tmux_ph')"
+          <input id="adv-tmux" type="text" name="new-session-tmux" x-model="adv.tmux" :placeholder="t('adv_tmux_ph')"
             class="w-full bg-bg border border-gray-700 rounded-lg px-3 py-2 text-sm text-fg placeholder:text-fg-muted/60 focus:outline-none focus:border-accent transition-colors">
         </div>
         <div>
           <label for="adv-claude" class="block text-xs text-fg-muted mb-1" x-text="t('adv_claude')"></label>
-          <input id="adv-claude" type="text" x-model="adv.claude" :placeholder="adv.tmux || t('adv_claude_ph')"
+          <input id="adv-claude" type="text" name="new-session-claude" x-model="adv.claude" :placeholder="adv.tmux || t('adv_claude_ph')"
             class="w-full bg-bg border border-gray-700 rounded-lg px-3 py-2 text-sm text-fg placeholder:text-fg-muted/60 focus:outline-none focus:border-accent transition-colors">
         </div>
         <div>
@@ -227,7 +227,7 @@
 
     <!-- Search -->
     <div class="mb-3">
-      <input type="search" x-model="convSearch" @input.debounce.300ms="loadConversations()"
+      <input type="search" name="conversations-search" x-model="convSearch" @input.debounce.300ms="loadConversations()"
         :placeholder="'🔍 ' + t('search_conv')"
         class="w-full bg-bg-card border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors">
     </div>
@@ -358,7 +358,7 @@
               </template>
               <template x-if="settings.editing === row.field">
                 <div class="flex items-center gap-2 flex-1 justify-end min-w-0">
-                  <input type="text" x-model="settings.editValue"
+                  <input type="text" name="settings-value" x-model="settings.editValue"
                     class="bg-bg border border-accent rounded-lg px-2 py-1 text-sm text-fg w-full max-w-[300px] focus:outline-none">
                   <button @click="saveEdit(row)" class="text-xs text-success hover:text-fg shrink-0" :title="t('cfg_save')">💾</button>
                   <button @click="cancelEdit()" class="text-xs text-fg-muted hover:text-fg shrink-0" :title="t('cfg_cancel')">❌</button>
@@ -409,7 +409,7 @@
 
         <label class="voice-setting" x-show="voiceForm.mode !== 'webspeech'">
           <span x-text="t('cfg_voice_vocabulary')"></span>
-          <input type="text" x-model="voiceForm.vocabulary">
+          <input type="text" name="voice-vocabulary" x-model="voiceForm.vocabulary">
         </label>
 
         <label class="voice-setting">
@@ -429,7 +429,7 @@
 
         <label class="voice-setting" x-show="voiceForm.rewriteEnabled">
           <span x-text="t('cfg_voice_rewrite_model')"></span>
-          <input type="text" x-model="voiceForm.model">
+          <input type="text" name="voice-model" x-model="voiceForm.model">
         </label>
 
         <label class="voice-setting" x-show="voiceForm.rewriteEnabled">
@@ -499,7 +499,7 @@
       <button @click="audit.open = false" class="text-fg-muted hover:text-fg text-xl leading-none">&times;</button>
     </div>
     <div class="p-3 border-b border-gray-800 flex items-center gap-2 shrink-0">
-      <input @keyup.enter="loadAudit()" x-model="audit.q" type="text" :placeholder="t('audit_filter')"
+      <input @keyup.enter="loadAudit()" x-model="audit.q" type="search" name="audit-filter" :placeholder="t('audit_filter')"
         class="flex-1 bg-bg-hover border border-gray-700 rounded-xl px-3 py-2 text-sm outline-none focus:border-accent">
       <button @click="loadAudit()" class="px-3 py-2 bg-accent hover:bg-accent-hover text-white rounded-xl text-sm" x-text="t('refresh')"></button>
     </div>
@@ -783,14 +783,14 @@
     <div class="overflow-y-auto p-6 space-y-4" style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
       <div>
         <label class="block text-xs text-fg-muted mb-1" x-text="t('rename_tmux')"></label>
-        <input type="text" x-model="rename.tmuxName" @keydown.enter="renameTmux()"
+        <input type="text" name="rename-tmux" x-model="rename.tmuxName" @keydown.enter="renameTmux()"
           class="w-full bg-bg border border-gray-700 rounded-xl px-3 py-2 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors">
         <button @click="renameTmux()"
           class="mt-2 px-4 py-1.5 bg-accent hover:bg-accent-hover text-white rounded-xl text-xs font-medium transition-colors" x-text="t('rename_tmux_apply')"></button>
       </div>
       <div class="border-t border-gray-800 pt-4">
         <label class="block text-xs text-fg-muted mb-1" x-text="t('rename_claude')"></label>
-        <input type="text" x-model="rename.claudeName" @keydown.enter="renameClaude()"
+        <input type="text" name="rename-claude" x-model="rename.claudeName" @keydown.enter="renameClaude()"
           class="w-full bg-bg border border-gray-700 rounded-xl px-3 py-2 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors">
         <button @click="renameClaude()"
           class="mt-2 px-4 py-1.5 bg-accent hover:bg-accent-hover text-white rounded-xl text-xs font-medium transition-colors" x-text="t('rename_claude_apply')"></button>
@@ -890,7 +890,7 @@
     </div>
     <div class="mt-5 pt-4 border-t border-gray-800">
       <div class="text-xs font-semibold text-fg-muted uppercase mb-2" x-text="t('tags_notes_label')"></div>
-      <input x-model="preview.tags" :placeholder="t('tags_placeholder')"
+      <input type="text" name="preview-tags" x-model="preview.tags" :placeholder="t('tags_placeholder')"
         class="w-full bg-bg border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent mb-2">
       <textarea x-model="preview.notes" rows="2" :placeholder="t('notes_placeholder')"
         class="w-full bg-bg border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent"></textarea>
