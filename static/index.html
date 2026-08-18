@@ -227,7 +227,7 @@
 
     <!-- Search -->
     <div class="mb-3">
-      <input type="search" name="conversations-search" x-model="convSearch" @input.debounce.300ms="loadConversations()"
+      <input type="search" name="conversations-search" autocomplete="off" x-model="convSearch" @input.debounce.300ms="loadConversations()"
         :placeholder="'🔍 ' + t('search_conv')"
         class="w-full bg-bg-card border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors">
     </div>
@@ -499,7 +499,7 @@
       <button @click="audit.open = false" class="text-fg-muted hover:text-fg text-xl leading-none">&times;</button>
     </div>
     <div class="p-3 border-b border-gray-800 flex items-center gap-2 shrink-0">
-      <input @keyup.enter="loadAudit()" x-model="audit.q" type="search" name="audit-filter" :placeholder="t('audit_filter')"
+      <input @keyup.enter="loadAudit()" x-model="audit.q" type="search" name="audit-filter" autocomplete="off" :placeholder="t('audit_filter')"
         class="flex-1 bg-bg-hover border border-gray-700 rounded-xl px-3 py-2 text-sm outline-none focus:border-accent">
       <button @click="loadAudit()" class="px-3 py-2 bg-accent hover:bg-accent-hover text-white rounded-xl text-sm" x-text="t('refresh')"></button>
     </div>
