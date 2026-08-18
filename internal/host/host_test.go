@@ -392,8 +392,7 @@ func TestExecValidationExtras(t *testing.T) {
 		{"claude-rename", map[string]string{"session": "", "title": "x"}, 400, "invalid session name"},
 		{"claude-rename", map[string]string{"session": "x", "title": ""}, 400, "invalid title"},
 		{"claude-rename", map[string]string{"session": "x", "title": "\n"}, 400, "invalid title"},
-		{"claude-nueva", map[string]string{"name": "a;rm"}, 400, "invalid session name"},
-		{"claude-nueva", map[string]string{"name": strings.Repeat("x", 33)}, 400, "invalid session name"},
+		{"claude-nueva", map[string]string{"name": "!!"}, 400, "invalid session name"},
 	}
 	for _, c := range cases {
 		_, err := h.Exec(c.cmd, c.args)

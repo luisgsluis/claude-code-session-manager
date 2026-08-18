@@ -393,12 +393,30 @@ func TestRenameSessionMissingNewName(t *testing.T) {
 
 func TestRenameSessionInvalidNewName(t *testing.T) {
 	h := &SessionHandler{Agent: newMockAgent()}
-	req := httptest.NewRequest("POST", "/api/sessions/x/rename", strings.NewReader(`{"new_name":"a!b"}`))
+	// Only names with nothing valid left after normalization are rejected.
+	req := httptest.NewRequest("POST", "/api/sessions/x/rename", strings.NewReader(`{"new_name":"!!!"}`))
 	req.SetPathValue("name", "x")
 	w := httptest.NewRecorder()
 	h.RenameSession(w, req)
 	if w.Code != 400 {
 		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestRenameSessionNormalizesNewName(t *testing.T) {
+	rec, getBody := mockAgentRecorder()
+	sockPath, cleanup := mockAgentServer(t, rec)
+	defer cleanup()
+
+	h := &SessionHandler{Agent: requireAgent(t, sockPath)}
+	req := httptest.NewRequest("POST", "/api/sessions/x/rename", strings.NewReader(`{"new_name":"mi sesión"}`))
+	req.SetPathValue("name", "x")
+	w := httptest.NewRecorder()
+	h.RenameSession(w, req)
+
+	body := getBody()
+	if !strings.Contains(body, "mi-sesion") || strings.Contains(body, "mi sesión") {
+		t.Errorf("expected normalized new_name forwarded to agent, got body %s", body)
 	}
 }
 
@@ -511,12 +529,30 @@ func TestNewSessionWithName(t *testing.T) {
 
 func TestNewSessionInvalidName(t *testing.T) {
 	h := &SessionHandler{Agent: newMockAgent()}
-	req := httptest.NewRequest("POST", "/api/sessions/new", strings.NewReader(`{"name":"bad/name"}`))
+	// Only names with nothing valid left after normalization are rejected.
+	req := httptest.NewRequest("POST", "/api/sessions/new", strings.NewReader(`{"name":"!!!"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.NewSession(w, req)
 	if w.Code != 400 {
 		t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestNewSessionNormalizesName(t *testing.T) {
+	rec, getBody := mockAgentRecorder()
+	sockPath, cleanup := mockAgentServer(t, rec)
+	defer cleanup()
+
+	h := &SessionHandler{Agent: requireAgent(t, sockPath)}
+	req := httptest.NewRequest("POST", "/api/sessions/new", strings.NewReader(`{"name":"mi sesión"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.NewSession(w, req)
+
+	body := getBody()
+	if !strings.Contains(body, "mi-sesion") || strings.Contains(body, "mi sesión") {
+		t.Errorf("expected normalized name forwarded to agent, got body %s", body)
 	}
 }
 

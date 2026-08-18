@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/luisgsluis/claude-code-session-manager/internal/sessionname"
 )
 
 // profileNamePattern mirrors the agent's whitelist. A second check here keeps
@@ -392,11 +394,12 @@ func (h *SessionHandler) NewSession(w http.ResponseWriter, r *http.Request) {
 		args["profile"] = req.Profile
 	}
 	if req.Name != "" {
-		if !sessionNamePattern.MatchString(req.Name) {
+		name, ok := sessionname.Normalize(req.Name)
+		if !ok {
 			writeError(w, http.StatusBadRequest, "invalid session name")
 			return
 		}
-		args["name"] = req.Name
+		args["name"] = name
 	}
 	if req.ClaudeName != "" {
 		if !claudeTitlePattern.MatchString(req.ClaudeName) {
@@ -500,18 +503,19 @@ func (h *SessionHandler) RenameSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing new_name")
 		return
 	}
-	if !sessionNamePattern.MatchString(req.NewName) {
+	newName, ok := sessionname.Normalize(req.NewName)
+	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid new name")
 		return
 	}
 
-	_, err := h.Agent.Exec("tmux-rename", map[string]string{"name": name, "new_name": req.NewName})
+	_, err := h.Agent.Exec("tmux-rename", map[string]string{"name": name, "new_name": newName})
 	if err != nil {
 		writeAgentError(w, err)
 		return
 	}
-	audit(h.Audit, "session_rename", UserFrom(r), "session="+name+" → "+req.NewName)
-	writeJSON(w, http.StatusOK, map[string]string{"ok": "renamed " + name + " to " + req.NewName})
+	audit(h.Audit, "session_rename", UserFrom(r), "session="+name+" → "+newName)
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "renamed " + name + " to " + newName})
 }
 
 // SetClaudeName sets the Claude session name (sends /rename).

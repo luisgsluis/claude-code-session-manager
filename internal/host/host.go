@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/luisgsluis/claude-code-session-manager/internal/sessionname"
 )
 
 // Options configures a Host executor.
@@ -188,7 +190,9 @@ func (h *Host) Exec(cmd string, args map[string]string) (any, error) {
 	case "tmux-rename":
 		name := args["name"]
 		newName := args["new_name"]
-		if !safeName(name) || !safeName(newName) {
+		// The old name is a lookup target: it must already be valid. The new
+		// name is user input: tmuxRename normalizes it before use.
+		if !safeName(name) {
 			return nil, errBad("invalid session name")
 		}
 		return h.tmuxRename(name, newName)
@@ -261,9 +265,8 @@ func (h *Host) Exec(cmd string, args map[string]string) (any, error) {
 		if p := args["profile"]; p != "" && !safeProfileName(p) {
 			return nil, errBad("invalid profile name")
 		}
-		if n := strings.TrimSpace(args["name"]); n != "" && !safeName(n) {
-			return nil, errBad("invalid session name")
-		}
+		// The name is normalized (not rejected) in claudeNew, where the empty
+		// result of an unusable input is turned into a 400.
 		return h.claudeNew(args)
 	case "claude-resume":
 		id := args["id"]
@@ -481,7 +484,14 @@ func (h *Host) tmuxKill(name string) error {
 
 func (h *Host) claudeNew(args map[string]string) (map[string]string, error) {
 	profile := args["profile"]
-	name := strings.TrimSpace(args["name"])
+	name := args["name"]
+	if name != "" {
+		var ok bool
+		name, ok = sessionname.Normalize(name)
+		if !ok {
+			return nil, errBad("invalid session name")
+		}
+	}
 	if name != "" && h.sessionAlive(name) {
 		return nil, errBad("session name already in use: %s", name)
 	}
@@ -3379,6 +3389,11 @@ func (h *Host) activeSessionUsingConv(id string) string {
 }
 
 func (h *Host) tmuxRename(name, newName string) (map[string]string, error) {
+	var ok bool
+	newName, ok = sessionname.Normalize(newName)
+	if !ok {
+		return nil, errBad("invalid session name")
+	}
 	if newName == name {
 		return nil, errBad("new name must differ")
 	}

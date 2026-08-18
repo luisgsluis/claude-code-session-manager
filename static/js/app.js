@@ -118,7 +118,7 @@ const I18N = {
     confirm_kill: '¿Archivar sesión {0}?',
     lan_label: '[lan]',
     name_placeholder: 'Nombre (opcional)',
-    name_invalid: 'A-Z, a-z, 0-9, _-, 32 car.',
+    name_invalid: 'Nombre inválido: vacío o solo símbolos',
     rename: 'Renombrar sesión',
     rename_title: 'Renombrar {0}',
     rename_tmux: 'Nombre tmux',
@@ -414,7 +414,7 @@ const I18N = {
     confirm_kill: 'Archive session {0}?',
     lan_label: '[lan]',
     name_placeholder: 'Name (optional)',
-    name_invalid: 'A-Z, a-z, 0-9, _-, 32 chars',
+    name_invalid: 'Invalid name: empty or only symbols',
     rename: 'Rename session',
     rename_title: 'Rename {0}',
     rename_tmux: 'tmux name',
@@ -597,6 +597,28 @@ const I18N = {
     prompt_section: 'Go to section',
   },
 };
+
+// Mirrors internal/sessionname's Normalize so the UI shows the same name the
+// server will actually create, without a round-trip. Strips combining
+// diacritics (NFD) so accented letters become ASCII, turns any other rune
+// outside [A-Za-z0-9_-] into '-', collapses runs, trims, and truncates to 32.
+// Returns '' when nothing valid remains (empty or only symbols).
+function normalizeSessionName(raw) {
+  const s = (raw || '').trim();
+  if (!s) return '';
+  const decomposed = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  let out = '';
+  let lastDash = false;
+  for (const ch of decomposed) {
+    if (/[A-Za-z0-9_]/.test(ch)) { out += ch; lastDash = false; continue; }
+    if (ch === '-') { if (!out || lastDash) continue; out += '-'; lastDash = true; continue; }
+    if (!out || lastDash) continue;
+    out += '-'; lastDash = true;
+  }
+  let name = out.replace(/-+$/, '');
+  if (name.length > 32) name = name.slice(0, 32).replace(/-+$/, '');
+  return name;
+}
 
 function ccsmApp() {
   return {
@@ -2219,11 +2241,14 @@ function ccsmApp() {
     // Advanced session: optional tmux name, Claude name and profile. Like the
     // quick button, it jumps straight into the new session's chat.
     async newSessionAdvanced() {
-      const tmux = this.adv.tmux.trim();
       const claude = this.adv.claude.trim();
-      if (tmux && !/^[A-Za-z0-9_-]{1,32}$/.test(tmux)) {
-        this.toastMsg(this.t('name_invalid'), 'error');
-        return;
+      let tmux = '';
+      if (this.adv.tmux.trim()) {
+        tmux = normalizeSessionName(this.adv.tmux);
+        if (!tmux) {
+          this.toastMsg(this.t('name_invalid'), 'error');
+          return;
+        }
       }
       if (claude && !/^[\p{L}\p{N}\p{P} ]{1,80}$/u.test(claude)) {
         this.toastMsg(this.t('name_invalid'), 'error');
@@ -2458,8 +2483,8 @@ function ccsmApp() {
     },
 
     async renameTmux() {
-      const newName = this.rename.tmuxName.trim();
-      if (!newName || !/^[A-Za-z0-9_-]{1,32}$/.test(newName)) {
+      const newName = normalizeSessionName(this.rename.tmuxName);
+      if (!newName) {
         this.toastMsg(this.t('name_invalid'), 'error');
         return;
       }

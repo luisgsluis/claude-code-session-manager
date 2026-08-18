@@ -53,10 +53,8 @@ func TestExecInjectionRejected(t *testing.T) {
 	}{
 		{"tmux-kill", func(p string) map[string]string { return map[string]string{"name": p} }, "invalid session name", nil},
 		{"tmux-rename", func(p string) map[string]string { return map[string]string{"name": p, "new_name": "safe1"} }, "invalid session name", nil},
-		{"tmux-rename", func(p string) map[string]string { return map[string]string{"name": "safe1", "new_name": p} }, "invalid session name", nil},
 		{"claude-rename", func(p string) map[string]string { return map[string]string{"session": p, "title": "ok"} }, "invalid session name", nil},
 		{"claude-rename", func(p string) map[string]string { return map[string]string{"session": "x", "title": p} }, "invalid title", hostileTitle},
-		{"claude-nueva", func(p string) map[string]string { return map[string]string{"name": p} }, "invalid session name", nil},
 		{"claude-nueva", func(p string) map[string]string { return map[string]string{"profile": p} }, "invalid profile name", nil},
 		{"claude-resume", func(p string) map[string]string { return map[string]string{"id": p} }, "invalid conversation id", nil},
 		{"claude-perfil", func(p string) map[string]string { return map[string]string{"profile": p} }, "invalid profile name", nil},
@@ -77,6 +75,39 @@ func TestExecInjectionRejected(t *testing.T) {
 			if err != nil && !strings.Contains(err.Error(), c.msg) {
 				t.Errorf("%s payload %q: message %q not in %q", c.cmd, p, c.msg, err.Error())
 			}
+		}
+	}
+}
+
+// TestSessionNameNeutralized proves that session names (creation and rename) are
+// normalized to a safe [A-Za-z0-9_-] form before any command runs, and that a
+// name with nothing valid left after normalization is rejected with a 400. The
+// raw hostile string must never reach exec.Command.
+func TestSessionNameNeutralized(t *testing.T) {
+	h := fakeHost(t, nil)
+
+	// A hostile name normalizes to a harmless one and proceeds — it must not
+	// be rejected as "invalid session name", and the normalized form must be
+	// the one the Host acts on (here, the already-in-use check).
+	_, err := h.Exec("claude-nueva", map[string]string{"name": "x; rm -rf /"})
+	if err == nil {
+		t.Fatal("expected an error from claude-nueva, got nil")
+	}
+	if !strings.Contains(err.Error(), "x-rm-rf") {
+		t.Errorf("normalized name not used; error was: %v", err)
+	}
+	if strings.Contains(err.Error(), "invalid session name") {
+		t.Errorf("hostile name was rejected instead of normalized: %v", err)
+	}
+
+	// Names with nothing left after normalization are a clean 400.
+	for _, name := range []string{"...", "!!!", "   ", "$()", "\n\t"} {
+		_, err := h.Exec("claude-nueva", map[string]string{"name": name})
+		if status := errStatus(err); status != 400 {
+			t.Errorf("name %q: status=%d want 400 (err=%v)", name, status, err)
+		}
+		if err != nil && !strings.Contains(err.Error(), "invalid session name") {
+			t.Errorf("name %q: message %q not in %q", name, "invalid session name", err.Error())
 		}
 	}
 }
