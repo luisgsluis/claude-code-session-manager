@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [3.0.0] — 2026-08-18
 
 ### Added
 - **Voice dictation that produces a prompt, not a transcript.** A 🎤 button in the live chat
@@ -74,6 +74,22 @@
   message is never "dead silence". Chat view only; the terminal view is untouched. The word is
   detected by its `…(elapsed · tokens)` shape, not the footer hints (`paneWorking`), so it
   survives footer format changes.
+- **The end-of-turn notification could fire mid-generation.** The turn watcher decided
+  "working" with a footer-hint heuristic that reads a single pane line; on an 80-column pane
+  the long working footer wraps and the trailing fragment read as idle, so `turn_complete`
+  fired as soon as the assistant message id appeared in the transcript instead of when the
+  turn finished. `session-status` now derives `working` from the generation status line — the
+  same version-independent word the chat uses — and the word regex is language-agnostic
+  (`\p{L}`), so accented verbs from a localized UI still count as working.
+- **The active-profile tick could be wrong or duplicated.** `is_active` in `/api/profiles` is
+  now decided in a single place (`activeProfileName`), so at most one profile is flagged even
+  when two catalog files carry identical content, always faithful to `settings.json`; the ✓ in
+  the change-profile dropdown and the advanced-session profile select come from the same helper
+  and now agree with each other.
+- **Session names are normalized instead of rejected.** The tmux name is normalized
+  server-side and in the UI (accents stripped, any other character folded to `-`, runs
+  collapsed, truncated to 32); only a name that leaves nothing valid is refused, instead of
+  a strict-ASCII rule rejecting valid Spanish names outright.
 
 ## [1.5.2] — 2026-08-16
 
