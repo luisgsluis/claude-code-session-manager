@@ -807,17 +807,41 @@ function ccsmApp() {
     // Page offset saved while an overlay holds the scroll lock; null = unlocked.
     scrollLock: null,
 
-    // Follows the visualViewport: when the mobile keyboard opens/closes, limit
-    // the modal height (live.maxH) so it never leaves the visible area.
+    // Keeps the live modal inside the visible area when the mobile keyboard
+    // opens/closes. WebKit on iOS (incl. Edge, which is WebKit there) does NOT
+    // reflow position:fixed elements on the keyboard opening, so a backdrop
+    // sized by dvh alone hangs at the old full height and the card, centered
+    // in it, slides under the keyboard. The visualViewport is the source of
+    // truth, but its height can lag behind innerHeight (and vice versa on
+    // some engines), so the visible height is the min of both. Pinning the
+    // overlay's height to it keeps the whole modal inside the visible area.
+    pinLiveToViewport() {
+      const vv = window.visualViewport;
+      const vvh = (vv && vv.height) ? vv.height : window.innerHeight;
+      const off = (vv && typeof vv.offsetTop === 'number' && vv.offsetTop > 0) ? vv.offsetTop : 0;
+      // Floor so a transient bad read can never collapse the backdrop and
+      // expose the page underneath.
+      const h = Math.max(200, Math.min(vvh, window.innerHeight));
+      this.live.maxH = Math.round(h * 0.8);
+      const ov = this.$refs && this.$refs.liveOverlay;
+      if (ov) {
+        // position:fixed anchors to the LAYOUT viewport, which never shrinks.
+        // When the keyboard opens, iOS pans the VISUAL viewport down (offsetTop)
+        // to reveal the focused field; an overlay left at top:0 then sits above
+        // the visible area and the page shows through below it. Anchor the
+        // overlay to the visual viewport itself: same offset, same height, so
+        // the backdrop always covers exactly what is on screen.
+        ov.style.height = h + 'px';
+        ov.style.top = off + 'px';
+      }
+    },
     initViewportTrack() {
-      const setH = () => {
-        const vv = window.visualViewport;
-        const h = (vv && vv.height) ? vv.height : window.innerHeight;
-        this.live.maxH = Math.round(h * 0.8);
-      };
-      setH();
-      if (window.visualViewport) window.visualViewport.addEventListener('resize', setH);
-      window.addEventListener('resize', setH);
+      this.pinLiveToViewport();
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', () => this.pinLiveToViewport());
+        window.visualViewport.addEventListener('scroll', () => this.pinLiveToViewport());
+      }
+      window.addEventListener('resize', () => this.pinLiveToViewport());
     },
 
     // Keeps grid.narrow in sync with the (max-width: 1023px) breakpoint the
@@ -1128,6 +1152,7 @@ function ccsmApp() {
     openLive(s) {
       this.closeLive();
       this.live.open = true;
+      this.pinLiveToViewport(); // clear any stale keyboard-anchored position
       this.live.name = s.name;
       this.live.content = '';
       this.live.status = '';
@@ -1176,6 +1201,40 @@ function ccsmApp() {
       const w = this.live.meta && this.live.meta.modes;
       if (w && w.length) return w;
       return ['auto', 'plan', 'accept-edits', 'manual'];
+    },
+
+    // The mode/model dropdowns must always offer the session's CURRENT values
+    // (meta.mode / meta.model, read from the pane) as selectable, highlighted
+    // options — even when they aren't in the discovered wheel / configured
+    // model list. Otherwise the browser picks the first option for display and
+    // the dropdown disagrees with the status line. Prepending guarantees the
+    // real value is both present and selected.
+    liveModeOptions() {
+      const base = this.modeOptions().slice();
+      const m = this.live.meta && this.live.meta.mode;
+      if (m && !base.includes(m)) base.unshift(m);
+      return base;
+    },
+    liveModelOptions() {
+      const base = this.live.models.slice();
+      const m = this.live.meta && this.live.meta.model;
+      if (m && !base.includes(m)) base.unshift(m);
+      return base;
+    },
+
+    // NOTE: deliberately NO scrollIntoView here or in pinLiveToViewport. On
+    // iOS WebKit, scrollIntoView on a field whose scroll container doesn't
+    // need scrolling scrolls the DOCUMENT — which, with the body pinned
+    // position:fixed by setBodyLock, pans the whole fixed layer and throws the
+    // overlay off the visible area ("the overlay goes very far", page showing
+    // through behind it). Correct SIZING is what keeps the field above the
+    // keyboard: pinLiveToViewport anchors the overlay to the visible height,
+    // so the card centers inside it and the focused input needs no scroll.
+    // The delayed re-pin catches the keyboard slide-in, which can land after
+    // the focus event (the visual viewport resize fires mid-animation; the
+    // re-check picks up the final height regardless).
+    liveFocusIn() {
+      setTimeout(() => this.pinLiveToViewport(), 350);
     },
 
     // Changes the session mode. /mode does not exist in Claude Code (2.1.227):
@@ -1615,6 +1674,29 @@ function ccsmApp() {
       return ['auto', 'plan', 'accept-edits', 'manual'];
     },
 
+    // Current mode/model of a tile (empty until the session's been calibrated).
+    // The header selects show these instead of a fixed "Modo"/"Modelo"
+    // placeholder, so the active values stay visible without opening the
+    // dropdown — and the header keeps its single row with no separate
+    // mode/model text.
+    tileMetaMode(name) {
+      const t = this.grid.tiles[name];
+      return t && t.meta && t.meta.mode ? t.meta.mode : '';
+    },
+    tileMetaModel(name) {
+      const t = this.grid.tiles[name];
+      return t && t.meta && t.meta.model ? t.meta.model : '';
+    },
+
+    // Fit a header select to the value it is showing. width:auto would size to
+    // the WIDEST option, not the selected one, so the width is derived from the
+    // value's length instead — capped so a long model name can only push the
+    // header into its horizontal scroll (the documented fallback), never wrap
+    // it onto a second line. Empty value → '' → the CSS width applies.
+    tileSelectWidth(v) {
+      return v ? 'width:' + Math.min(Math.max(v.length * 0.32 + 1.4, 3.75), 8) + 'rem' : '';
+    },
+
     async setTileMode(name, mode) {
       if (!mode) return;
       if (await this.postSessionSend(name, { mode })) {
@@ -1735,6 +1817,21 @@ function ccsmApp() {
       e.preventDefault();      // Enter: send
       this.sendTileText(name);
     },
+
+    // Tile prompt input: while focused it opens up to three lines and takes the
+    // whole bar width on its own row (the controls drop to one compact row
+    // beneath — .tgrid-prompt:focus-within in terminal-grid.css). Growing is JS
+    // (scrollHeight, capped well below the live chat's 128px); the CSS
+    // min-height holds the three lines while the box is empty. On blur the
+    // inline height is cleared so a long prompt doesn't leave the bar
+    // permanently tall after the input loses focus.
+    tileInputGrow(el) {
+      if (!el) return;
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 84) + 'px';
+    },
+    tileInputFocus(el) { this.tileInputGrow(el); },
+    tileInputBlur(el) { if (el) el.style.height = ''; },
 
     // --- Settings panel ---
     async openSettings() {

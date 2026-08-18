@@ -74,7 +74,12 @@
 @media (max-width: 1023px) {
   .tgrid-tile-header { gap: 0.25rem; }
   .tgrid-tile-header button { padding-left: 0.375rem; padding-right: 0.375rem; }
-  .tgrid-tile-header .tgrid-select { width: 3.25rem; }
+  /* !important: beats the inline width tileSelectWidth() sets for the desktop
+     adaptive-width selects (an inline style otherwise outranks any stylesheet
+     rule) — on a phone-width header the select must stay compact regardless
+     of how long the current mode/model value is, or it pushes the row into a
+     horizontal scroll that can hide the minimize button off-screen. */
+  .tgrid-tile-header .tgrid-select { width: 3.25rem !important; }
   .tgrid-tile-name {
     display: inline-block;
     max-width: 4.5rem;
@@ -141,6 +146,50 @@
 .tgrid-input::placeholder { color: var(--term-placeholder); }
 .tgrid-input:focus { outline: none; }
 
+/* --- Tile prompt bar (input + controls) ---
+   Unfocused it is the pre-existing single row: prompt glyph, growing textarea
+   on the right of the controls. While anything inside has focus (:focus-within)
+   the bar flips to two rows so the input gets the whole width to itself — the
+   textarea (min 3 lines tall, the prompt glyph hidden) on its own row, and the
+   controls (mic / rewrite / stop, plus approve/skip when waiting) on a single
+   compact row beneath. The controls must never spread over several rows: on a
+   phone with the keyboard up, that eats more than the keyboard already took.
+   The row switch is CSS-only, so clicking a control while typing (which moves
+   focus to the button) keeps the layout put instead of collapsing mid-action. */
+.tgrid-prompt {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+.tgrid-prompt-main {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex: 1;
+  min-width: 0;
+}
+.tgrid-prompt-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-shrink: 0;
+}
+.tgrid-prompt:focus-within {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+.tgrid-prompt:focus-within .tgrid-prompt-prefix { display: none; }
+.tgrid-prompt:focus-within .tgrid-prompt-actions { justify-content: flex-end; }
+/* Generic textarea selector, not just .tgrid-input: the live single-session
+   modal's chat input reuses this same tgrid-prompt structure but keeps its
+   own bubble-style textarea classes (border, rounded-xl, bg-bg) rather than
+   the grid tile's bare .tgrid-input, so both need to expand on focus. */
+.tgrid-prompt:focus-within textarea {
+  min-height: 4.2em; /* 3 lines at line-height 1.4 */
+}
+
 /* Compact mode/model pickers in the tile header row. Fixed narrow width (not
    Tailwind's max-w-* utilities, unused elsewhere so absent from app.css) so
    the two selects plus the icon buttons still fit the single header row the
@@ -158,8 +207,28 @@
   color: var(--term-select-fg);
   font-size: 0.65rem;
   line-height: 1rem;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
 }
 .tgrid-select:focus { outline: none; border-color: var(--term-select-focus-border); }
+
+/* Single-session live modal controls row: one row that scrolls horizontally
+   as a last resort (same rule as a grid tile's header), but WITHOUT that
+   header's forced-compact select widths — the modal spans the full width, so
+   its mode/model pickers size to their value (tileSelectWidth in app.js) and
+   stay readable on a phone instead of collapsing to tiny fixed widths. */
+.tgrid-live-controls {
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+}
+/* The mode/model pickers size to their value (tileSelectWidth), but a short
+   value like "auto" would otherwise leave the select at the 3.75rem base,
+   which reads tiny in the full-width modal. A floor keeps both readable
+   without needing the grid header's fixed compact width. min-width wins over
+   the inline width when the value is short; long values just grow past it. */
+.tgrid-live-controls .tgrid-select { min-width: 4.75rem; }
 
 /* --- ANSI palette (rendered by ansiToHtml), themed per skin via CSS vars —
    :root has the dark set (also covers contrast/solarized), [data-skin=light]

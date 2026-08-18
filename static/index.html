@@ -636,9 +636,22 @@
   </div>
 </div>
 
-<!-- Live view modal: Terminal + Chat -->
-<div x-show="live.open" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center z-[95] p-4" @click.self="closeLive()">
-  <div class="flex flex-col w-full max-w-3xl h-[80vh] bg-bg-card border border-gray-700 rounded-2xl overflow-hidden" :style="'height:min(80vh,80dvh,' + (live.maxH || 10000) + 'px)'">
+<!-- Live view modal: Terminal + Chat.
+     tgrid-overlay (height:100dvh, see terminal-grid.css) instead of relying on
+     `fixed inset-0` alone: on mobile the layout viewport doesn't shrink when
+     the keyboard opens, so a backdrop sized only by inset-0 stays pinned to
+     the OLD full-screen height while the visible area shrinks underneath it —
+     the modal card, vertically centered in that stale height, drifts off the
+     now-smaller visible area and whatever is behind the backdrop (the page
+     underneath) shows through at the bottom. dvh tracks the real visible
+     height, so the backdrop (and the centering that keys off it) shrinks
+     with the keyboard instead of leaving a gap. -->
+<div x-show="live.open" x-transition x-ref="liveOverlay" class="tgrid-overlay fixed inset-0 bg-black/70 flex items-center justify-center z-[95] p-4" @click.self="closeLive()">
+  <!-- The card is the modal's scroll container (overflow-y-auto + the
+       @focusin handler above): when iOS opens the keyboard it scrolls this
+       card to reveal the focused field instead of panning the fixed overlay,
+       so the modal never slides off the visible area. -->
+  <div class="flex flex-col w-full max-w-3xl h-[80vh] bg-bg-card border border-gray-700 rounded-2xl overflow-x-hidden overflow-y-auto" @focusin="liveFocusIn($event)" :style="'height:min(80vh,80dvh,' + (live.maxH || 10000) + 'px)'" style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
     <div class="flex items-center justify-between p-4 border-b border-gray-800 shrink-0">
       <div class="flex items-center gap-3">
         <h3 class="font-semibold" x-text="t('live_title', [live.name])"></h3>
@@ -650,20 +663,29 @@
       <button @click="closeLive()" class="text-fg-muted hover:text-fg text-xl leading-none">&times;</button>
     </div>
 
-    <!-- Controls: scroll / mode / model / interrupt (works on both tabs) -->
-    <div class="flex items-center gap-1 px-3 py-2 border-b border-gray-800 shrink-0 flex-wrap">
-      <button @click="scrollLive(-1)" :title="t('live_scroll_up')" class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg transition-colors">⏶</button>
-      <button @click="scrollLive(1)" :title="t('live_scroll_end')" class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg transition-colors">⏬</button>
-      <select @change="setMode($event.target.value); $event.target.value=''" :title="t('mode_label')" class="px-2 py-1 rounded border border-gray-700 bg-bg-card text-fg text-xs focus:outline-none focus:border-accent transition-colors">
-        <option value="" selected disabled x-text="t('mode_label')"></option>
-        <template x-for="m in modeOptions()" :key="m">
-          <option :value="m" x-text="m"></option>
+    <!-- Controls: scroll / mode / model / interrupt (works on both tabs).
+         tgrid-live-controls keeps this to one row (scrolling horizontally as
+         a last resort, like a grid tile's header) but WITHOUT that header's
+         forced-compact select widths — this modal spans the full width, so
+         its mode/model pickers size to their value (tileSelectWidth) and stay
+         readable on a phone. -->
+    <div class="tgrid-live-controls flex items-center gap-1 px-3 py-2 border-b border-gray-800 shrink-0 overflow-x-auto">
+      <button @click="scrollLive(-1)" :title="t('live_scroll_up')" class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg transition-colors">⏶</button>
+      <button @click="scrollLive(1)" :title="t('live_scroll_end')" class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg transition-colors">⏬</button>
+      <select @change="setMode($event.target.value); $event.target.value=''" :title="t('mode_label')" class="tgrid-select shrink-0" :style="tileSelectWidth(live.meta && live.meta.mode ? live.meta.mode : '')">
+        <template x-if="!live.meta || !live.meta.mode">
+          <option value="" disabled x-text="t('mode_label')"></option>
+        </template>
+        <template x-for="m in liveModeOptions()" :key="m">
+          <option :value="m" :selected="live.meta && live.meta.mode === m" x-text="m"></option>
         </template>
       </select>
-      <select @change="setModel($event.target.value); $event.target.value=''" :title="t('model_label')" class="px-2 py-1 rounded border border-gray-700 bg-bg-card text-fg text-xs focus:outline-none focus:border-accent transition-colors max-w-[160px]">
-        <option value="" selected disabled x-text="t('model_label')"></option>
-        <template x-for="mo in live.models" :key="mo">
-          <option :value="mo" x-text="mo"></option>
+      <select @change="setModel($event.target.value); $event.target.value=''" :title="t('model_label')" class="tgrid-select shrink-0" :style="tileSelectWidth(live.meta && live.meta.model ? live.meta.model : '')">
+        <template x-if="!live.meta || !live.meta.model">
+          <option value="" disabled x-text="t('model_label')"></option>
+        </template>
+        <template x-for="mo in liveModelOptions()" :key="mo">
+          <option :value="mo" :selected="live.meta && live.meta.model === mo" x-text="mo"></option>
         </template>
       </select>
       <span class="flex-1"></span>
@@ -721,14 +743,14 @@
           <span x-show="live.meta && live.meta.waiting === 'approval'" class="text-warn font-medium">⚠ <span x-text="t('chat_status_waiting')"></span></span>
           <span x-show="live.meta && live.meta.waiting === 'choice'" class="text-warn font-medium">⚠ <span x-text="t('chat_status_choice')"></span></span>
           <span x-show="live.meta && live.meta.waiting === 'setup'" class="text-warn font-medium">⚠ <span x-text="t('chat_status_setup')"></span></span>
-          <span x-show="live.meta && live.meta.mode" x-text="live.meta && live.meta.mode ? t('chat_status_mode', [live.meta.mode]) : ''"></span>
-          <span x-show="live.meta && live.meta.model" x-text="live.meta && live.meta.model ? t('chat_status_model', [live.meta.model]) : ''"></span>
+          <!-- Mode/model are no longer shown here: the header dropdowns above
+               display the current values, so repeating them in this status row
+               is redundant (and risks disagreeing with the dropdowns). -->
           <span x-show="live.meta && live.meta.created" x-text="t('chat_status_elapsed', [live.elapsed])"></span>
           <span class="ml-auto"></span>
           <button x-show="live.meta && live.meta.is_alive" @click="reconnectRC()"
             class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg transition-colors"
-            :title="t('rc_reconnect_title')"
-            x-text="live.meta && live.meta.status === 'rc_connected' ? t('rc_reconnect_on') : t('rc_reconnect_off')"></button>
+            :title="t('rc_reconnect_title')">🔁</button>
           <!-- Choice dialog (AskUserQuestion): navigate with ↑/↓, pick with Enter. -->
           <template x-if="live.meta && live.meta.is_alive && live.meta.waiting === 'choice'">
             <span class="flex items-center gap-1">
@@ -763,23 +785,30 @@
           <span x-text="live.meta && live.meta.status_text ? live.meta.status_text : ''"></span>
         </div>
 
-        <!-- Input bar -->
-        <div class="p-3 border-t border-gray-800 flex items-end gap-2 shrink-0">
-          <!-- Dictate: records, transcribes AND rewrites in one action, then
-               opens the review panel. There is deliberately no transcribe-only
-               mode. -->
-          <button x-show="canDictate()" @click="toggleVoice('chat')" :disabled="!!voice.stage && !voice.recording"
-            :title="voice.recording ? t('voice_dictate_stop') : t('voice_dictate')"
-            :class="voice.recording ? 'shrink-0 px-2 py-1 rounded border border-gray-700 bg-warn/15 text-warn transition-colors voice-recording' : 'shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg transition-colors'"
-            x-text="voice.recording ? '⏺' : '🎤'"></button>
-          <!-- Rewrite only: works on whatever is already in the input, so it
-               needs no microphone and works in every browser. -->
-          <button x-show="canRewrite()" @click="runRewrite('chat')" :disabled="!!voice.stage"
-            :title="t('voice_rewrite')"
-            class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg transition-colors disabled:opacity-50">✨</button>
-          <textarea x-model="live.input" rows="1" @keydown.enter="onChatKeydown($event)" @input="autoGrow($event.target)" :placeholder="t('chat_placeholder')"
-            class="flex-1 bg-bg border border-gray-700 rounded-xl px-3 py-2 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors resize-none max-h-32"></textarea>
-          <button @click="sendChat()" :disabled="live.sending" class="shrink-0 bg-accent text-white rounded-xl px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity" x-text="t('chat_send')"></button>
+        <!-- Input bar: same tgrid-prompt pattern as a grid tile's — full width
+             on its own row while focused, controls (mic / rewrite / send)
+             dropping to a single compact row beneath instead of ever
+             wrapping across several (see terminal-grid.css). -->
+        <div class="tgrid-prompt shrink-0 p-3 border-t border-gray-800">
+          <div class="tgrid-prompt-main">
+            <textarea x-model="live.input" rows="1" @keydown.enter="onChatKeydown($event)" @input="autoGrow($event.target)" :placeholder="t('chat_placeholder')"
+              class="flex-1 bg-bg border border-gray-700 rounded-xl px-3 py-2 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors resize-none max-h-32"></textarea>
+          </div>
+          <div class="tgrid-prompt-actions">
+            <!-- Dictate: records, transcribes AND rewrites in one action, then
+                 opens the review panel. There is deliberately no transcribe-only
+                 mode. -->
+            <button x-show="canDictate()" @click="toggleVoice('chat')" :disabled="!!voice.stage && !voice.recording"
+              :title="voice.recording ? t('voice_dictate_stop') : t('voice_dictate')"
+              :class="voice.recording ? 'shrink-0 px-2 py-1 rounded border border-gray-700 bg-warn/15 text-warn transition-colors voice-recording' : 'shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg transition-colors'"
+              x-text="voice.recording ? '⏺' : '🎤'"></button>
+            <!-- Rewrite only: works on whatever is already in the input, so it
+                 needs no microphone and works in every browser. -->
+            <button x-show="canRewrite()" @click="runRewrite('chat')" :disabled="!!voice.stage"
+              :title="t('voice_rewrite')"
+              class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg transition-colors disabled:opacity-50">✨</button>
+            <button @click="sendChat()" :disabled="live.sending" :title="t('chat_send')" class="shrink-0 bg-accent text-white rounded-xl px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity">➤</button>
+          </div>
         </div>
       </div>
     </template>
@@ -992,17 +1021,21 @@
             <span class="w-2 h-2 rounded-full shrink-0" :class="tileRcConnected(name) ? 'bg-success' : 'bg-warn'"></span>
             <span class="tgrid-tile-name font-mono text-sm shrink-0" x-text="name" :title="name"></span>
             <select @change="setTileMode(name, $event.target.value); $event.target.value=''"
-              :title="t('mode_label')" class="tgrid-select shrink-0">
-              <option value="" selected disabled x-text="t('mode_label')"></option>
+              :title="t('mode_label')" class="tgrid-select shrink-0" :style="tileSelectWidth(tileMetaMode(name))">
+              <template x-if="!tileMetaMode(name)">
+                <option value="" disabled x-text="t('mode_label')"></option>
+              </template>
               <template x-for="m in tileModeOptions(name)" :key="m">
-                <option :value="m" :selected="grid.tiles[name].meta && grid.tiles[name].meta.mode === m" x-text="m"></option>
+                <option :value="m" :selected="tileMetaMode(name) === m" x-text="m"></option>
               </template>
             </select>
             <select @change="setTileModel(name, $event.target.value); $event.target.value=''"
-              :title="t('model_label')" class="tgrid-select shrink-0">
-              <option value="" selected disabled x-text="t('model_label')"></option>
+              :title="t('model_label')" class="tgrid-select shrink-0" :style="tileSelectWidth(tileMetaModel(name))">
+              <template x-if="!tileMetaModel(name)">
+                <option value="" disabled x-text="t('model_label')"></option>
+              </template>
               <template x-for="mo in live.models" :key="mo">
-                <option :value="mo" :selected="grid.tiles[name].meta && grid.tiles[name].meta.model === mo" x-text="mo"></option>
+                <option :value="mo" :selected="tileMetaModel(name) === mo" x-text="mo"></option>
               </template>
             </select>
             <span class="flex-1"></span>
@@ -1059,30 +1092,41 @@
             </div>
           </template>
 
-          <!-- Terminal prompt: a real input, not a chat bubble -->
-          <div class="shrink-0 flex items-center gap-2 px-3 py-2 border-t border-gray-800">
-            <span x-show="grid.tiles[name].meta && grid.tiles[name].meta.waiting === 'approval'" class="text-warn text-xs shrink-0">⚠</span>
-            <button x-show="grid.tiles[name].meta && grid.tiles[name].meta.waiting === 'approval'"
-              @click="sendTileKey(name, 'enter')" :title="t('chat_approve_title')"
-              class="shrink-0 px-2 py-1 rounded border border-gray-700 bg-warn/15 text-warn hover:bg-bg-hover text-xs transition-colors">✓ <span x-text="t('chat_approve')"></span></button>
-            <!-- Auto-mode setup wizard: Enter only toggles its focused checkbox,
-                 it never confirms, so the only working dismissal is Escape. -->
-            <span x-show="grid.tiles[name].meta && grid.tiles[name].meta.waiting === 'setup'" class="text-warn text-xs shrink-0">⚠</span>
-            <button x-show="grid.tiles[name].meta && grid.tiles[name].meta.waiting === 'setup'"
-              @click="sendTileKey(name, 'escape')" :title="t('chat_skip_title')"
-              class="shrink-0 px-2 py-1 rounded border border-gray-700 bg-warn/15 text-warn hover:bg-bg-hover text-xs transition-colors">⏭ <span x-text="t('chat_skip')"></span></button>
-            <span class="text-accent font-mono text-sm shrink-0">❯</span>
-            <textarea x-model="grid.tiles[name].input" rows="1" :placeholder="t('term_tile_prompt')"
-              @keydown.enter="onTileKeydown($event, name)" :disabled="grid.tiles[name].sending"
-              class="flex-1 min-w-0 font-mono tgrid-input disabled:opacity-50"></textarea>
-            <button x-show="canDictate()" @click="toggleVoice(name)" :disabled="!!voice.stage && !voice.recording"
-              :title="voice.recording ? t('voice_dictate_stop') : t('voice_dictate')"
-              :class="voice.recording && voice.target === name ? 'shrink-0 px-2 py-1 rounded border border-gray-700 bg-warn/15 text-warn text-xs transition-colors voice-recording' : 'shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors'"
-              x-text="voice.recording && voice.target === name ? '⏺' : '🎤'"></button>
-            <button x-show="canRewrite()" @click="runRewrite(name)" :disabled="!!voice.stage" :title="t('voice_rewrite')"
-              class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors disabled:opacity-50">✨</button>
-            <button @click="sendTileKey(name, 'escape')" :title="t('chat_stop_title')"
-              class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors">⏹</button>
+          <!-- Terminal prompt: a real input, not a chat bubble. While focused the
+               textarea takes the whole width on its own row, three lines tall,
+               and the controls drop to a single compact row beneath — see
+               .tgrid-prompt:focus-within in terminal-grid.css. The controls
+               never spread across several rows: on a keyboard-open phone that
+               would eat more space than the keyboard already took. -->
+          <div class="tgrid-prompt shrink-0 px-3 py-2 border-t border-gray-800">
+            <div class="tgrid-prompt-main">
+              <span class="tgrid-prompt-prefix text-accent font-mono text-sm shrink-0">❯</span>
+              <textarea x-model="grid.tiles[name].input" rows="1" :placeholder="t('term_tile_prompt')"
+                @keydown.enter="onTileKeydown($event, name)" :disabled="grid.tiles[name].sending"
+                @focus="tileInputFocus($event.target)" @blur="tileInputBlur($event.target)"
+                @input="tileInputGrow($event.target)"
+                class="flex-1 min-w-0 font-mono tgrid-input disabled:opacity-50"></textarea>
+            </div>
+            <div class="tgrid-prompt-actions">
+              <span x-show="grid.tiles[name].meta && grid.tiles[name].meta.waiting === 'approval'" class="text-warn text-xs shrink-0">⚠</span>
+              <button x-show="grid.tiles[name].meta && grid.tiles[name].meta.waiting === 'approval'"
+                @click="sendTileKey(name, 'enter')" :title="t('chat_approve_title')"
+                class="shrink-0 px-2 py-1 rounded border border-gray-700 bg-warn/15 text-warn hover:bg-bg-hover text-xs transition-colors">✓ <span x-text="t('chat_approve')"></span></button>
+              <!-- Auto-mode setup wizard: Enter only toggles its focused checkbox,
+                   it never confirms, so the only working dismissal is Escape. -->
+              <span x-show="grid.tiles[name].meta && grid.tiles[name].meta.waiting === 'setup'" class="text-warn text-xs shrink-0">⚠</span>
+              <button x-show="grid.tiles[name].meta && grid.tiles[name].meta.waiting === 'setup'"
+                @click="sendTileKey(name, 'escape')" :title="t('chat_skip_title')"
+                class="shrink-0 px-2 py-1 rounded border border-gray-700 bg-warn/15 text-warn hover:bg-bg-hover text-xs transition-colors">⏭ <span x-text="t('chat_skip')"></span></button>
+              <button x-show="canDictate()" @click="toggleVoice(name)" :disabled="!!voice.stage && !voice.recording"
+                :title="voice.recording ? t('voice_dictate_stop') : t('voice_dictate')"
+                :class="voice.recording && voice.target === name ? 'shrink-0 px-2 py-1 rounded border border-gray-700 bg-warn/15 text-warn text-xs transition-colors voice-recording' : 'shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors'"
+                x-text="voice.recording && voice.target === name ? '⏺' : '🎤'"></button>
+              <button x-show="canRewrite()" @click="runRewrite(name)" :disabled="!!voice.stage" :title="t('voice_rewrite')"
+                class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors disabled:opacity-50">✨</button>
+              <button @click="sendTileKey(name, 'escape')" :title="t('chat_stop_title')"
+                class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors">⏹</button>
+            </div>
           </div>
         </div>
         </template>

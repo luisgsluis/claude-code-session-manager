@@ -179,3 +179,66 @@ test('terminal grid: restoring a tile opens scrolled to the bottom, not the top'
   await page.locator('div[x-show="grid.open"]').getByText('×', { exact: true }).click();
   await page.locator('.group').filter({ hasText: 'sesión grid-scroll' }).getByTitle('Archivar sesión').click();
 });
+
+test('terminal grid: focused prompt takes the full row at 3 lines, controls stay one compact row; header selects show current mode/model', async ({ page }) => {
+  page.on('dialog', (d) => d.accept());
+  await page.setViewportSize({ width: 375, height: 700 });
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await createSession(page, 'grid-focus');
+  await page.getByRole('button', { name: /Modo terminal/ }).click();
+  const chip = page.getByRole('button', { name: /grid-focus/ });
+  await expect(chip).toBeVisible(); // grid.tiles['grid-focus'] exists once its chip renders
+  await chip.click();
+  const tile = page.locator('.tgrid-tile', { hasText: 'grid-focus' });
+  await expect(tile).toBeVisible();
+  await expect(page.getByText(/pane-of-grid-focus/)).toBeVisible(); // first stream frame
+
+  // Simulate a session that already calibrated its mode/model (what /meta and
+  // the turn watcher deliver on a real one). Injected after the initial stream
+  // burst settles: applyTileChat replaces the whole tile.meta on every /chat
+  // payload, so injecting before that just gets overwritten.
+  await page.waitForTimeout(1000);
+  await page.evaluate(() => {
+    const data = window.Alpine.$data(document.body);
+    const t = data.grid.tiles['grid-focus'];
+    t.meta = { ...(t.meta || {}), mode: 'auto', model: 'claude-sonnet-5' };
+    if (!data.live.models.includes('claude-sonnet-5')) data.live.models = data.live.models.concat('claude-sonnet-5');
+  });
+
+  // The header selects display the active values, not the "Modo"/"Modelo"
+  // placeholders (Alpine :selected on the matching option, x-if placeholder).
+  const selects = tile.locator('.tgrid-tile-header select');
+  await expect(selects.nth(0)).toHaveValue('auto');
+  await expect(selects.nth(1)).toHaveValue('claude-sonnet-5');
+
+  const input = tile.getByPlaceholder('Escribe y pulsa Enter…');
+  const bar = tile.locator('.tgrid-prompt');
+  const lineH = parseFloat(await input.evaluate((el) => getComputedStyle(el).lineHeight));
+
+  // Unfocused: the input is its single line.
+  let box = await input.boundingBox();
+  expect(box.height).toBeLessThan(lineH * 2);
+
+  // Focus: expands to at least three lines and takes the whole bar width on
+  // its own row (nothing else shares it); the controls drop below as one
+  // compact row — never wrapping onto several lines.
+  await input.focus();
+  box = await input.boundingBox();
+  expect(box.height).toBeGreaterThanOrEqual(lineH * 3 - 1);
+  const barBox = await bar.boundingBox();
+  expect(box.width).toBeGreaterThanOrEqual(barBox.width - 32);
+  const actions = tile.locator('.tgrid-prompt-actions');
+  const actionsBox = await actions.boundingBox();
+  expect(actionsBox.y).toBeGreaterThanOrEqual(box.y + box.height - 1);
+  const btnH = await actions.locator('button:visible').first().evaluate((el) => el.getBoundingClientRect().height);
+  expect(actionsBox.height).toBeLessThan(btnH * 2);
+
+  // Blur collapses the input back to one line (a long prompt must not leave
+  // the bar permanently tall).
+  await input.blur();
+  box = await input.boundingBox();
+  expect(box.height).toBeLessThan(lineH * 2);
+
+  await page.locator('div[x-show="grid.open"]').getByText('×', { exact: true }).click();
+  await page.locator('.group').filter({ hasText: 'sesión grid-focus' }).getByTitle('Archivar sesión').click();
+});

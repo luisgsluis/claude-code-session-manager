@@ -169,9 +169,10 @@ function startMockServer() {
     const t0 = Date.now();
     // Scoped to the live modal: the voice review panel has its own "Enviar"
     // button, and it sits after this one in the DOM, so a bare .last() picks
-    // the hidden one and waits forever.
+    // the hidden one and waits forever. The send button is icon-only (➤), so
+    // it's found by its title, not its text.
     await page.locator('div[x-show="live.open"]')
-      .locator('button:has-text("Send"), button:has-text("Enviar")').last().click();
+      .locator('button[title="Send"], button[title="Enviar"]').last().click();
     await page.waitForFunction((txt) => {
       const el = document.querySelector('[x-ref="liveChat"]');
       if (!el) return false;
