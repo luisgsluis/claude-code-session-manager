@@ -86,6 +86,12 @@ test('login asks for the TOTP code and only then opens the app', async ({ page }
 
   await expect(overlay).toBeHidden();
   await expect(page.getByRole('button', { name: /Nueva sesión rápida/ })).toBeVisible();
+
+  // No credential anchor may remain in the DOM once authenticated: a password
+  // field still present would make Chrome pair the search box with it and open
+  // the password manager there (login and user-modal fields are template x-if,
+  // so both are gone when their overlay/modal is closed).
+  await expect(page.locator('input[type="password"]')).toHaveCount(0);
 });
 
 test('a wrong TOTP code keeps the app closed', async ({ page }) => {
