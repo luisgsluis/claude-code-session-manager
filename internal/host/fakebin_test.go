@@ -733,6 +733,43 @@ func TestActiveProfileNameNoMatch(t *testing.T) {
 	}
 }
 
+// TestSessionStatusWorkingUsesStatusWord: the turn watcher's "working" signal
+// comes from the generation status word line ("✻ cooking… (4m · ↓ tokens)"),
+// not from the footer-hint heuristic of paneWorking. A status word present
+// means working; an idle footer — even the real one that hugs the 80-col edge
+// and ends in a wrapped "/rc" fragment — means not. The footer heuristic read
+// only the last non-blank line and, when the long working footer wrapped, got
+// a bare fragment back, so it reported idle mid-generation and the watcher
+// announced turn_complete as soon as the assistant message id appeared.
+func TestSessionStatusWorkingUsesStatusWord(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{"status word present → working", "  ✻ Razzle-dazzling… (4m 39s · ↓ 23.9k tokens)", true},
+		// The verb is matched by shape, not language: an accented status word
+		// from a localized UI still reads as working.
+		{"accented status word → working", "  ✻ Préparant… (2m · ↓ 5.1k tokens)", true},
+		{"idle footer (wrapped /rc tail) → not working", "  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents    /rc", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := fakeHost(t, map[string]string{
+				"FAKE_TMUX_LINE": c.line,
+				"FAKE_TMUX_LIST": "3\t2024-01-01 10:00:00\tclaude\tprojects/ccsm\n",
+			})
+			out, err := h.sessionStatus("3")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := out["working"]; got != c.want {
+				t.Errorf("working = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
 func TestAliveConversations(t *testing.T) {
 	binDir := filepath.Join(t.TempDir(), "bin")
 	os.MkdirAll(binDir, 0700)

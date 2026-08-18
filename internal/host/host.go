@@ -2544,15 +2544,23 @@ func (h *Host) sessionChat(name string) (map[string]any, error) {
 // the last assistant message id + text preview from the transcript tail. It
 // reads only the tail so polling every few seconds stays cheap on large
 // transcripts (the full re-read happens in sessionChat).
+//
+// working comes from the generation status word line ("✻ cooking… (4m · ↓
+// tokens)"), not the footer-hint heuristic of paneWorking: the footer wraps on
+// a narrow pane and the trailing fragment reads as idle mid-generation, which
+// made the watcher announce turn_complete when the assistant message ARRIVED
+// rather than when the turn completed. The status word is version-independent
+// and is the same signal the chat indicator uses.
 func (h *Host) sessionStatus(name string) (map[string]any, error) {
 	if !h.sessionAlive(name) {
 		return nil, errNotFound("session not found: %s", name)
 	}
 	waiting, choice, waitID := h.paneWaitingDetail(name)
 	lastID, lastText := h.lastAssistant(name)
+	_, working := h.paneStatusWord(name)
 	return map[string]any{
 		"session":             name,
-		"working":             h.paneWorking(name),
+		"working":             working,
 		"waiting":             waiting,
 		"waiting_id":          waitID,
 		"choice":              choice,
@@ -2699,8 +2707,11 @@ func (h *Host) paneStatusWord(name string) (string, bool) {
 // tokens)" — which is what distinguishes it from the subagent tree lines
 // ("◯ name  Searching… 1m · ↓ 10k tokens" have the same word+"…" shape but no
 // parens) and from arbitrary response text. The word can't start with a digit
-// (choice-picker lines are "❯ N. …").
-var statusWordLine = regexp.MustCompile(`(?m)^[ \t]*\S[ \t]+([A-Za-z][A-Za-z' -]*…)[ \t]*\(`)
+// (choice-picker lines are "❯ N. …"). The verb is matched by shape, not by
+// language: \p{L} accepts any letter, so a localized/configured Claude whose
+// status verb carries accents ("Préparant…", "準備中…") still registers as
+// working — [A-Za-z] alone would miss it.
+var statusWordLine = regexp.MustCompile(`(?m)^[ \t]*\S[ \t]+([\p{L}][\p{L}' -]*…)[ \t]*\(`)
 
 // parsePaneStatusWord is paneStatusWord's pure parsing half (testable against
 // pane-text fixtures). It returns the LAST status line in the visible screen —
