@@ -127,27 +127,41 @@ test.describe('review panel', () => {
     await expect(page.locator('.voice-compose-panel')).toBeVisible({ timeout: 10000 });
   }
 
-  test('clarifying questions can be answered', async ({ page }) => {
+  // The stub (AMBIGUO) walks two rounds: an options question, then a
+  // free-text one, then stops — proving the panel actually loops (asks
+  // again after an answer) rather than only handling a single round.
+  test('clarifying questions are asked one at a time, in sequence', async ({ page }) => {
     await rewriteInChat(page, 'esto es AMBIGUO del todo');
-
-    const questions = page.locator('.voice-question');
-    await expect(questions).toHaveCount(2);
     await expect(page.locator('textarea.voice-compose-text')).toHaveValue(/PROMPT PROVISIONAL/);
 
-    await questions.first().locator('input').fill('el de la Pi');
+    // Round 1: an options question.
+    await expect(page.getByText('¿El sonarr de la Pi o el del NAS?')).toBeVisible();
+    await page.locator('.voice-compose-panel button:has-text("el de la Pi")').click();
+
+    // Round 2: a free-text question, no options.
+    await expect(page.getByText('¿Qué episodio concreto?')).toBeVisible({ timeout: 10000 });
+    await page.locator('.voice-question input[type="text"]').fill('el 4x08');
     await page.locator('.voice-compose-panel button:has-text("Responder")').click();
 
-    // The second pass folds the answer in and asks nothing further.
-    await expect(page.locator('.voice-question')).toHaveCount(0, { timeout: 10000 });
+    // Round 3: nothing further to ask, and both answers reached the model.
+    await expect(page.locator('.voice-question')).toBeHidden({ timeout: 10000 });
+    await expect(page.locator('textarea.voice-compose-text')).toHaveValue(/PROMPT FINAL/);
     await expect(page.locator('textarea.voice-compose-text')).toHaveValue(/el de la Pi/);
   });
 
-  test('clarifying questions can be skipped', async ({ page }) => {
+  test('a clarifying question can be skipped without asking the model again', async ({ page }) => {
+    const calls = [];
+    page.on('request', (r) => { if (r.url().includes('/api/voice/rewrite')) calls.push(r); });
+
     await rewriteInChat(page, 'esto es AMBIGUO del todo');
-    await expect(page.locator('.voice-question')).toHaveCount(2);
+    await expect(page.getByText('¿El sonarr de la Pi o el del NAS?')).toBeVisible();
+    const before = calls.length;
+
     await page.locator('.voice-compose-panel button:has-text("Omitir")').click();
-    await expect(page.locator('.voice-question')).toHaveCount(0);
-    // The provisional prompt is still usable after skipping.
+    await expect(page.locator('.voice-question')).toBeHidden();
+    // Skipping does not call the rewriter again: the provisional prompt
+    // already shown is the model's best attempt.
+    expect(calls.length).toBe(before);
     await expect(page.locator('textarea.voice-compose-text')).toHaveValue(/PROMPT PROVISIONAL/);
   });
 
@@ -268,49 +282,78 @@ test.describe('meta-prompt editor', () => {
     await expect(page.locator('#prompt-editor-text')).toBeVisible({ timeout: 10000 });
   }
 
-  test('opens with the shipped prompt and lists its sections', async ({ page }) => {
+  const versionSelect = (page) => page.locator('.voice-editor-panel select').nth(1);
+  const activeBadge = (page) => page.locator('.voice-editor-panel span:has-text("Activa:")');
+
+  test('opens with the shipped original active, and lists its sections', async ({ page }) => {
     await openEditor(page);
     const content = await page.locator('#prompt-editor-text').inputValue();
     expect(content).toContain('# Base');
     expect(content).toContain('# Role: devops');
-    // Marked as the project original until it is edited.
-    await expect(page.locator('.voice-editor-panel span:has-text("original del proyecto")')).toBeVisible();
+    // The original is active by default, and it is the only entry.
+    await expect(activeBadge(page)).toHaveText('Activa: Original');
+    expect(await versionSelect(page).locator('option').count()).toBe(1);
+    // Overwriting the original is not offered — only saving as new is.
+    await expect(page.locator('.voice-editor-panel button:has-text("Guardar cambios")')).toBeHidden();
+    await expect(page.locator('.voice-editor-panel button:has-text("Guardar como nueva")')).toBeVisible();
   });
 
   // The validation that stops a role reaching the model with no instructions.
-  test('rejects a prompt whose role has no section, and keeps the old one', async ({ page }) => {
+  test('rejects a prompt whose role has no section, and saves nothing', async ({ page }) => {
     await openEditor(page);
     const editor = page.locator('#prompt-editor-text');
     await editor.fill('---\nroles:\n  - {id: devops, es: D, en: D}\n---\n# Base\n\nsin bloque\n');
-    await page.locator('.voice-editor-panel button:has-text("Guardar")').click();
+
+    page.on('dialog', (d) => d.accept('rota'));
+    await page.locator('.voice-editor-panel button:has-text("Guardar como nueva")').click();
 
     // The error names exactly what is wrong, because the user has to fix it.
     await expect(page.locator('text=/# Role: devops/')).toBeVisible({ timeout: 10000 });
 
-    // Reopening shows the previous prompt: nothing was written.
+    // Reopening shows only the original: nothing was written.
     await page.reload();
     await openEditor(page);
     expect(await page.locator('#prompt-editor-text').inputValue()).toContain('# Role: devops');
+    expect(await versionSelect(page).locator('option').count()).toBe(1);
   });
 
-  test('saves an edit, then restores the original', async ({ page }) => {
+  test('saves an edit as a new named version without activating it, then applies it', async ({ page }) => {
     await openEditor(page);
     const editor = page.locator('#prompt-editor-text');
     const original = await editor.inputValue();
 
     await editor.fill(original.replace('# Base', '# Base\n\nLINEA DE PRUEBA E2E.'));
-    await page.locator('.voice-editor-panel button:has-text("Guardar")').click();
-    await expect(page.locator('.voice-editor-panel span:has-text("modificado")')).toBeVisible({ timeout: 10000 });
+    page.on('dialog', (d) => d.accept('Versión E2E'));
+    await page.locator('.voice-editor-panel button:has-text("Guardar como nueva")').click();
 
-    page.on('dialog', (d) => d.accept());
-    await page.locator('.voice-editor-panel button:has-text("Restaurar original")').click();
-    await expect(page.locator('.voice-editor-panel span:has-text("original del proyecto")')).toBeVisible({ timeout: 10000 });
-    expect(await editor.inputValue()).not.toContain('LINEA DE PRUEBA E2E');
+    // Saving alone must not activate it: the original is still in effect.
+    await expect(page.getByText('Versión guardada')).toBeVisible({ timeout: 10000 });
+    await expect(activeBadge(page)).toHaveText('Activa: Original');
+    await expect(versionSelect(page)).toHaveText(/Versión E2E/);
+
+    // Now apply it: the badge and the active check mark both move.
+    await page.locator('.voice-editor-panel button:has-text("Aplicar esta versión")').click();
+    await expect(activeBadge(page)).toHaveText('Activa: Versión E2E', { timeout: 10000 });
+    await expect(page.locator('.voice-editor-panel button:has-text("Aplicar esta versión")')).toBeDisabled();
+
+    // Reloading proves it stuck server-side, and the saved version was not
+    // discarded by activating something else earlier in the same session.
+    await page.reload();
+    await openEditor(page);
+    expect(await editor.inputValue()).toContain('LINEA DE PRUEBA E2E');
+    await expect(activeBadge(page)).toHaveText('Activa: Versión E2E');
+
+    // Applying is non-destructive: switching back to the original keeps the
+    // saved version around, still selectable.
+    await versionSelect(page).selectOption({ label: 'Original' });
+    await page.locator('.voice-editor-panel button:has-text("Aplicar esta versión")').click();
+    await expect(activeBadge(page)).toHaveText('Activa: Original', { timeout: 10000 });
+    expect(await versionSelect(page).locator('option').count()).toBe(2);
   });
 
-  // Roles live in the prompt, so adding one there must reach the dropdown with
-  // no rebuild.
-  test('a role added to the prompt shows up in the panel dropdown', async ({ page }) => {
+  // Roles live in the prompt, so adding one there and applying it must reach
+  // the rewrite panel's dropdown with no rebuild.
+  test('a role added to the prompt and applied shows up in the panel dropdown', async ({ page }) => {
     await openEditor(page);
     const editor = page.locator('#prompt-editor-text');
     const original = await editor.inputValue();
@@ -319,8 +362,11 @@ test.describe('meta-prompt editor', () => {
       .replace('# Role: software', '# Role: seguridad\n\nThreat modelling.\n\n# Role: software');
 
     await editor.fill(withRole);
-    await page.locator('.voice-editor-panel button:has-text("Guardar")').click();
-    await expect(page.locator('.voice-editor-panel span:has-text("modificado")')).toBeVisible({ timeout: 10000 });
+    page.on('dialog', (d) => d.accept('con seguridad'));
+    await page.locator('.voice-editor-panel button:has-text("Guardar como nueva")').click();
+    await expect(page.getByText('Versión guardada')).toBeVisible({ timeout: 10000 });
+    await page.locator('.voice-editor-panel button:has-text("Aplicar esta versión")').click();
+    await expect(activeBadge(page)).toHaveText('Activa: con seguridad', { timeout: 10000 });
 
     await page.reload();
     await openChat(page);
@@ -330,5 +376,32 @@ test.describe('meta-prompt editor', () => {
 
     const options = await page.locator('.voice-compose-panel select').first().locator('option').allTextContents();
     expect(options.join(',')).toContain('Seguridad');
+  });
+
+  // This runs after the earlier tests in the file have already saved their
+  // own versions into the same server-side prompts directory, so it asserts
+  // on the CHANGE in option count rather than an absolute one.
+  test('editing an existing (non-original) version can overwrite it in place', async ({ page }) => {
+    await openEditor(page);
+    const editor = page.locator('#prompt-editor-text');
+    const original = await editor.inputValue();
+    const countBefore = await versionSelect(page).locator('option').count();
+
+    page.on('dialog', (d) => d.accept('borrador'));
+    await editor.fill(original.replace('# Base', '# Base\n\nBORRADOR V1.'));
+    await page.locator('.voice-editor-panel button:has-text("Guardar como nueva")').click();
+    await expect(page.getByText('Versión guardada')).toBeVisible({ timeout: 10000 });
+    expect(await versionSelect(page).locator('option').count()).toBe(countBefore + 1);
+
+    // Now viewing "borrador" (savePromptAsNew switches to it): overwrite is
+    // offered, and editing it again keeps the same name and id rather than
+    // creating yet another version.
+    await expect(page.locator('.voice-editor-panel button:has-text("Guardar cambios")')).toBeVisible();
+    await editor.fill((await editor.inputValue()).replace('BORRADOR V1', 'BORRADOR V2'));
+    await page.locator('.voice-editor-panel button:has-text("Guardar cambios")').click();
+    await expect(page.getByText('Versión guardada')).toBeVisible({ timeout: 10000 });
+    expect(await versionSelect(page).locator('option').count()).toBe(countBefore + 1);
+    await expect(versionSelect(page)).toHaveText(/borrador/);
+    expect(await editor.inputValue()).toContain('BORRADOR V2');
   });
 });

@@ -6,7 +6,8 @@
 // It is deliberately scriptable through the text it receives, which is what
 // lets one stub cover every branch the UI has to handle:
 //
-//   "AMBIGUO"  -> the rewrite comes back with clarifying questions
+//   "AMBIGUO"  -> the rewrite asks two questions, one per round: an options
+//                 question first, then a free-text one, then stops
 //   "LARGO"    -> the rewrite comes back over the send limit
 //   "FALLO"    -> the provider answers 500, so the UI must surface an error
 //   "BASURA"   -> the model answers prose instead of JSON (the tolerant parser)
@@ -77,23 +78,41 @@ const server = http.createServer(async (req, res) => {
     }
     if (user.includes('BASURA')) {
       res.end(chatReply('Sure! Here is what you asked for:\n' +
-        JSON.stringify({ role: 'devops', questions: [], prompt: 'RESCATADO DE PROSA' }) +
+        JSON.stringify({ role: 'devops', question: null, prompt: 'RESCATADO DE PROSA' }) +
         '\nHope that helps.'));
       return;
     }
     if (user.includes('LARGO')) {
       res.end(chatReply(JSON.stringify({
-        role: 'devops', questions: [], prompt: 'X'.repeat(20000),
+        role: 'devops', question: null, prompt: 'X'.repeat(20000),
       })));
       return;
     }
-    // Second pass: the server appends this section and forbids more questions.
-    const secondPass = system.includes('second pass');
-    if (user.includes('AMBIGUO') && !secondPass) {
+    // AMBIGUO walks the sequential clarification loop: one question per
+    // round, counted from how many "- Q:" answer lines the client folded
+    // into the request so far, so the stub proves the UI actually loops
+    // (asks again after an answer) instead of only handling a single round.
+    if (user.includes('AMBIGUO')) {
+      const round = (user.match(/^- Q:/gm) || []).length;
+      if (round === 0) {
+        res.end(chatReply(JSON.stringify({
+          role: 'devops',
+          question: { text: '¿El sonarr de la Pi o el del NAS?', options: ['el de la Pi', 'el del NAS'] },
+          prompt: 'PROMPT PROVISIONAL sobre sonarr',
+        })));
+        return;
+      }
+      if (round === 1) {
+        res.end(chatReply(JSON.stringify({
+          role: 'devops',
+          question: { text: '¿Qué episodio concreto?' },
+          prompt: 'PROMPT PROVISIONAL sobre sonarr (destino confirmado)',
+        })));
+        return;
+      }
       res.end(chatReply(JSON.stringify({
-        role: 'devops',
-        questions: ['¿El sonarr de la Pi o el del NAS?', '¿Qué episodio concreto?'],
-        prompt: 'PROMPT PROVISIONAL sobre sonarr',
+        role: 'devops', question: null,
+        prompt: 'PROMPT FINAL sobre sonarr :: ' + user.replace(/\s+/g, ' ').trim().slice(0, 300),
       })));
       return;
     }
@@ -111,7 +130,7 @@ const server = http.createServer(async (req, res) => {
 
     res.end(chatReply(JSON.stringify({
       role: hasDocs && !hasDevops ? 'docs' : 'devops',
-      questions: [],
+      question: null,
       prompt: 'PROMPT REESCRITO :: ' + blocks + ' :: ' +
         user.replace(/\s+/g, ' ').trim().slice(0, 300),
     })));

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -105,40 +106,37 @@ func (h *VoiceHandler) Rewrite(w http.ResponseWriter, r *http.Request) {
 }
 
 // promptResponse is what the meta-prompt editor needs to render: the active
-// text, the pristine original to diff against or restore, the version history,
-// and the role list the dropdown is built from.
+// version's text, the full version list (each flagged original/active for the
+// dropdown's check mark), and the role list the dropdown is built from.
 type promptResponse struct {
-	Content  string       `json:"content"`
-	Original string       `json:"original"`
-	Custom   bool         `json:"custom"`
-	Roles    []voice.Role `json:"roles"`
-	Versions []int        `json:"versions"`
+	Content  string              `json:"content"`
+	Roles    []voice.Role        `json:"roles"`
+	Versions []voice.VersionInfo `json:"versions"`
 }
 
-// GetPrompt returns the active meta-prompt.
+// GetPrompt returns the active meta-prompt, or one specific version's content
+// when asked for by id (0 = the embedded original) — used to populate the
+// editor when the dropdown selects a version to view.
 func (h *VoiceHandler) GetPrompt(w http.ResponseWriter, r *http.Request) {
-	// A specific archived version, for previewing before rolling back.
 	if v := r.URL.Query().Get("version"); v != "" {
-		n, err := atoiPositive(v)
+		id, err := atoiNonNegative(v)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid version")
 			return
 		}
-		content, err := h.Store.Version(n)
+		content, err := h.Store.VersionContent(id)
 		if err != nil {
 			writeError(w, http.StatusNotFound, "version not found")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"content": content, "version": n})
+		writeJSON(w, http.StatusOK, map[string]any{"content": content, "version": id})
 		return
 	}
 
-	content, custom := h.Store.Load()
+	content, _ := h.Store.Load()
 	resp := promptResponse{
 		Content:  content,
-		Original: voice.Original(),
-		Custom:   custom,
-		Versions: h.Store.Versions(),
+		Versions: h.Store.List(),
 	}
 	// Roles come from whatever is actually active, so the dropdown can never
 	// offer a role the model was not given instructions for.
@@ -150,9 +148,14 @@ func (h *VoiceHandler) GetPrompt(w http.ResponseWriter, r *http.Request) {
 
 type putPromptRequest struct {
 	Content string `json:"content"`
+	Version int    `json:"version"` // which version to overwrite; ignored when New is true
+	Name    string `json:"name"`    // name for the new version; only used when New is true
+	New     bool   `json:"new"`
 }
 
-// PutPrompt validates and saves a new meta-prompt, archiving the previous one.
+// PutPrompt validates and saves a meta-prompt, either over an existing
+// version (New false, Version > 0) or as a brand-new named one (New true).
+// Saving never changes which version is active — see PromptStore.SaveNew.
 func (h *VoiceHandler) PutPrompt(w http.ResponseWriter, r *http.Request) {
 	var req putPromptRequest
 	if !decodeJSON(w, r, &req) {
@@ -162,25 +165,50 @@ func (h *VoiceHandler) PutPrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "empty prompt")
 		return
 	}
-	if err := h.Store.Save(req.Content); err != nil {
+
+	var id int
+	var err error
+	if req.New {
+		id, err = h.Store.SaveNew(req.Content, req.Name)
+	} else if req.Version > 0 {
+		id, err = req.Version, h.Store.SaveOver(req.Version, req.Content)
+	} else {
+		err = fmt.Errorf("the original prompt cannot be modified; save it as a new version instead")
+	}
+	if err != nil {
 		// Validation failures are the user's editing mistakes and must be
 		// readable — "role X is declared but has no section" is actionable in
 		// a way that "bad request" is not.
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	audit(h.Audit, "voice_prompt_save", UserFrom(r), "")
-	h.GetPrompt(w, r)
+
+	audit(h.Audit, "voice_prompt_save", UserFrom(r), fmt.Sprintf("version=%d new=%v", id, req.New))
+	writeJSON(w, http.StatusOK, map[string]any{"content": req.Content, "version": id, "versions": h.Store.List()})
 }
 
-// ResetPrompt drops the override and returns to the prompt shipped in the
-// binary. Archived versions are kept.
-func (h *VoiceHandler) ResetPrompt(w http.ResponseWriter, r *http.Request) {
-	if err := h.Store.Reset(); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not restore the original prompt")
+type activatePromptRequest struct {
+	Version int `json:"version"` // 0 = the embedded original
+}
+
+// ActivatePrompt makes one saved version (or the embedded original, id 0) the
+// one dictation actually uses. It never touches content, so it is always
+// reversible by activating a different version — there is no separate
+// "restore" operation because of it.
+func (h *VoiceHandler) ActivatePrompt(w http.ResponseWriter, r *http.Request) {
+	var req activatePromptRequest
+	if !decodeJSON(w, r, &req) {
 		return
 	}
-	audit(h.Audit, "voice_prompt_reset", UserFrom(r), "")
+	if req.Version < 0 {
+		writeError(w, http.StatusBadRequest, "invalid version")
+		return
+	}
+	if err := h.Store.SetActive(req.Version); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	audit(h.Audit, "voice_prompt_activate", UserFrom(r), fmt.Sprintf("version=%d", req.Version))
 	h.GetPrompt(w, r)
 }
 
@@ -219,7 +247,9 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
-func atoiPositive(s string) (int, error) {
+// atoiNonNegative parses a version id: 0 (the embedded original) is valid,
+// unlike the ids elsewhere in this file that must be positive.
+func atoiNonNegative(s string) (int, error) {
 	n := 0
 	if s == "" {
 		return 0, errInvalid

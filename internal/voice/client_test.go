@@ -67,12 +67,17 @@ func fakeProvider(t *testing.T, cap *capture, status int, reply string) *httptes
 	return srv
 }
 
-// newService wires a Service against a fake provider with a known-good prompt.
+// newService wires a Service against a fake provider with a known-good prompt
+// saved and applied, so tests can assert on validPrompt's own text.
 func newService(t *testing.T, url string, mutate func(*config.VoiceConfig)) *Service {
 	t.Helper()
 	dir := t.TempDir()
 	store := PromptStore{Dir: dir}
-	if err := store.Save(validPrompt); err != nil {
+	id, err := store.SaveNew(validPrompt, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetActive(id); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.VoiceConfig{
@@ -82,7 +87,7 @@ func newService(t *testing.T, url string, mutate func(*config.VoiceConfig)) *Ser
 			Mode: "whisper", Provider: "p", Vocabulary: "sonarr, tmux, macvlan",
 		},
 		Rewrite: config.VoiceRewriteConfig{
-			Enabled: true, Provider: "p", MaxQuestions: 3, DefaultRole: "auto",
+			Enabled: true, Provider: "p", DefaultRole: "auto",
 		},
 		Providers: map[string]config.VoiceProvider{
 			"p": {BaseURL: url, APIKey: "sk-test", STTModel: "whisper-x", ChatModel: "chat-x"},
@@ -223,7 +228,7 @@ func chatReply(content string) string {
 
 func TestRewriteForcedRole(t *testing.T) {
 	var cap capture
-	srv := fakeProvider(t, &cap, 0, chatReply(`{"role":"devops","questions":[],"prompt":"Reinicia sonarr en la Pi."}`))
+	srv := fakeProvider(t, &cap, 0, chatReply(`{"role":"devops","question":null,"prompt":"Reinicia sonarr en la Pi."}`))
 	s := newService(t, srv.URL, nil)
 
 	res, err := s.Rewrite("pues eh reinicia el sonarr ese", "devops", nil)
@@ -255,7 +260,7 @@ func TestRewriteForcedRole(t *testing.T) {
 
 func TestRewriteAutoRoleShowsEveryBlock(t *testing.T) {
 	var cap capture
-	srv := fakeProvider(t, &cap, 0, chatReply(`{"role":"docs","questions":[],"prompt":"x"}`))
+	srv := fakeProvider(t, &cap, 0, chatReply(`{"role":"docs","question":null,"prompt":"x"}`))
 	s := newService(t, srv.URL, nil)
 
 	res, err := s.Rewrite("actualiza el claude.md", "auto", nil)
@@ -276,26 +281,33 @@ func TestRewriteAutoRoleShowsEveryBlock(t *testing.T) {
 	}
 }
 
-// TestRewriteSecondPassCannotAskAgain pins the one-round rule: with answers in
-// hand the model is told not to ask, and anything it asks anyway is dropped.
-// Without both halves the panel could bounce questions forever.
-func TestRewriteSecondPassCannotAskAgain(t *testing.T) {
+// TestRewriteContinuesAskingMidLoop: one answer in hand is not the end of the
+// loop — the model may still ask another question, one at a time, and the UI
+// relies on that to show the next round.
+func TestRewriteContinuesAskingMidLoop(t *testing.T) {
 	var cap capture
 	srv := fakeProvider(t, &cap, 0,
-		chatReply(`{"role":"devops","questions":["¿y esto?"],"prompt":"listo"}`))
+		chatReply(`{"role":"devops","question":{"text":"¿y esto?","options":["a","b"]},"prompt":"provisional"}`))
 	s := newService(t, srv.URL, nil)
 
 	res, err := s.Rewrite("haz algo", "devops", []Answer{{Question: "¿cuál?", Answer: "el de la Pi"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Questions) != 0 {
-		t.Errorf("second pass must return no questions, got %v", res.Questions)
+	if res.Question == nil || res.Question.Text != "¿y esto?" {
+		t.Errorf("a mid-loop question must reach the caller, got %+v", res.Question)
 	}
+	if len(res.Question.Options) != 2 {
+		t.Errorf("options must survive parsing, got %v", res.Question.Options)
+	}
+
 	msgs := cap.chatReq["messages"].([]any)
 	system := msgs[0].(map[string]any)["content"].(string)
-	if !strings.Contains(system, "second pass") {
-		t.Error("the model was not told this is the second pass")
+	if !strings.Contains(system, "Continuing clarification") {
+		t.Error("the model was not told this is a continuation")
+	}
+	if strings.Contains(system, "last round") {
+		t.Error("a mid-loop round must not be told it is the last one")
 	}
 	user := msgs[1].(map[string]any)["content"].(string)
 	if !strings.Contains(user, "el de la Pi") {
@@ -303,24 +315,38 @@ func TestRewriteSecondPassCannotAskAgain(t *testing.T) {
 	}
 }
 
-func TestRewriteCapsQuestions(t *testing.T) {
+// TestRewriteCapsRounds pins the loop guard: once the caller has accumulated
+// maxClarifyRounds answers, the model is told to stop, and anything it asks
+// anyway is dropped. Without this a model that keeps finding things to ask
+// could bounce the panel forever.
+func TestRewriteCapsRounds(t *testing.T) {
 	var cap capture
 	srv := fakeProvider(t, &cap, 0,
-		chatReply(`{"role":"devops","questions":["a","b","c","d","e"],"prompt":"x"}`))
-	s := newService(t, srv.URL, func(c *config.VoiceConfig) { c.Rewrite.MaxQuestions = 2 })
+		chatReply(`{"role":"devops","question":{"text":"¿otra más?"},"prompt":"listo"}`))
+	s := newService(t, srv.URL, nil)
 
-	res, err := s.Rewrite("algo", "devops", nil)
+	answers := make([]Answer, maxClarifyRounds)
+	for i := range answers {
+		answers[i] = Answer{Question: "q", Answer: "a"}
+	}
+
+	res, err := s.Rewrite("haz algo", "devops", answers)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Questions) != 2 {
-		t.Errorf("questions = %v, want 2 after the cap", res.Questions)
+	if res.Question != nil {
+		t.Errorf("the round cap must drop any question the model still asks, got %+v", res.Question)
+	}
+	msgs := cap.chatReq["messages"].([]any)
+	system := msgs[0].(map[string]any)["content"].(string)
+	if !strings.Contains(system, "last round") {
+		t.Error("the model was not told this is the last round")
 	}
 }
 
 func TestRewriteUnknownRoleFromModelFallsBack(t *testing.T) {
 	var cap capture
-	srv := fakeProvider(t, &cap, 0, chatReply(`{"role":"invented","questions":[],"prompt":"x"}`))
+	srv := fakeProvider(t, &cap, 0, chatReply(`{"role":"invented","question":null,"prompt":"x"}`))
 	s := newService(t, srv.URL, nil)
 
 	res, err := s.Rewrite("algo", "devops", nil)
@@ -407,7 +433,7 @@ func TestParseRewrite(t *testing.T) {
 	bad := []struct{ name, in string }{
 		{"empty", "   "},
 		{"not json at all", "I cannot help with that."},
-		{"json without a prompt", `{"role":"devops","questions":[]}`},
+		{"json without a prompt", `{"role":"devops","question":null}`},
 		{"prompt is only whitespace", `{"role":"devops","prompt":"   "}`},
 	}
 	for _, c := range bad {
@@ -418,13 +444,33 @@ func TestParseRewrite(t *testing.T) {
 		})
 	}
 
-	t.Run("blank questions dropped", func(t *testing.T) {
-		res, err := parseRewrite(`{"role":"devops","prompt":"x","questions":["  ","real question","" ]}`)
+	t.Run("a question with blank text is treated as no question", func(t *testing.T) {
+		res, err := parseRewrite(`{"role":"devops","prompt":"x","question":{"text":"   "}}`)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(res.Questions) != 1 || res.Questions[0] != "real question" {
-			t.Errorf("questions = %v", res.Questions)
+		if res.Question != nil {
+			t.Errorf("question = %+v, want nil", res.Question)
+		}
+	})
+
+	t.Run("blank options are dropped, real ones kept", func(t *testing.T) {
+		res, err := parseRewrite(`{"role":"devops","prompt":"x","question":{"text":"¿cuál?","options":["  ","real option",""]}}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Question == nil || len(res.Question.Options) != 1 || res.Question.Options[0] != "real option" {
+			t.Errorf("question = %+v", res.Question)
+		}
+	})
+
+	t.Run("no question key means nothing is unclear", func(t *testing.T) {
+		res, err := parseRewrite(`{"role":"devops","prompt":"x"}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Question != nil {
+			t.Errorf("question = %+v, want nil", res.Question)
 		}
 	})
 }

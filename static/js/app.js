@@ -263,7 +263,8 @@ const I18N = {
     compose_title: 'Revisar antes de enviar',
     compose_role: 'Rol',
     compose_role_auto_detected: 'detectado',
-    compose_questions_title: '\u00bfFalta algo? (opcional)',
+    compose_question_title: '\u00bfNecesita aclarar algo?',
+    compose_question_free: 'Tu respuesta\u2026',
     compose_answer: 'Responder',
     compose_skip: 'Omitir',
     compose_show_raw: 'Ver lo que dict\u00e9',
@@ -283,7 +284,6 @@ const I18N = {
     cfg_voice_rewrite_enabled: 'Reescribir',
     cfg_voice_rewrite_provider: 'Proveedor de reescritura',
     cfg_voice_rewrite_model: 'Modelo',
-    cfg_voice_max_questions: 'M\u00e1x. preguntas',
     cfg_voice_default_role: 'Rol por defecto',
     cfg_voice_prompt_edit: 'Editar meta-prompt\u2026',
     cfg_voice_no_providers: 'Sin proveedores en config.yaml',
@@ -292,15 +292,15 @@ const I18N = {
     cfg_voice_mode_webspeech: 'Navegador (Web Speech)',
     cfg_voice_mode_whisper_fallback: 'Whisper con respaldo del navegador',
     prompt_title: 'Meta-prompt de reescritura',
-    prompt_save: 'Guardar',
-    prompt_reset: 'Restaurar original',
+    prompt_save_over: 'Guardar cambios',
+    prompt_save_new: 'Guardar como nueva\u2026',
+    prompt_name_new: 'Nombre de la nueva versi\u00f3n:',
+    prompt_apply: 'Aplicar esta versi\u00f3n',
+    prompt_applied: 'Versi\u00f3n aplicada',
     prompt_versions: 'Versiones',
-    prompt_version_current: 'actual',
-    prompt_saved: 'Meta-prompt guardado',
-    prompt_reset_done: 'Meta-prompt restaurado al original',
-    prompt_custom: 'modificado',
-    prompt_original: 'original del proyecto',
-    prompt_confirm_reset: 'Se descartar\u00e1 tu meta-prompt y volver\u00e1 el original del proyecto. Las versiones guardadas se conservan. \u00bfSeguir?',
+    prompt_active_label: 'Activa:',
+    prompt_original_name: 'Original',
+    prompt_saved: 'Versi\u00f3n guardada',
     prompt_section: 'Ir a secci\u00f3n',
   },
   en: {
@@ -562,7 +562,8 @@ const I18N = {
     compose_title: 'Review before sending',
     compose_role: 'Role',
     compose_role_auto_detected: 'detected',
-    compose_questions_title: 'Anything missing? (optional)',
+    compose_question_title: 'Needs clarifying?',
+    compose_question_free: 'Your answer…',
     compose_answer: 'Answer',
     compose_skip: 'Skip',
     compose_show_raw: 'Show what I said',
@@ -582,7 +583,6 @@ const I18N = {
     cfg_voice_rewrite_enabled: 'Rewrite',
     cfg_voice_rewrite_provider: 'Rewrite provider',
     cfg_voice_rewrite_model: 'Model',
-    cfg_voice_max_questions: 'Max. questions',
     cfg_voice_default_role: 'Default role',
     cfg_voice_prompt_edit: 'Edit meta-prompt\u2026',
     cfg_voice_no_providers: 'No providers in config.yaml',
@@ -591,15 +591,15 @@ const I18N = {
     cfg_voice_mode_webspeech: 'Browser (Web Speech)',
     cfg_voice_mode_whisper_fallback: 'Whisper with browser fallback',
     prompt_title: 'Rewriting meta-prompt',
-    prompt_save: 'Save',
-    prompt_reset: 'Restore original',
+    prompt_save_over: 'Save changes',
+    prompt_save_new: 'Save as new\u2026',
+    prompt_name_new: 'Name for the new version:',
+    prompt_apply: 'Apply this version',
+    prompt_applied: 'Version applied',
     prompt_versions: 'Versions',
-    prompt_version_current: 'current',
-    prompt_saved: 'Meta-prompt saved',
-    prompt_reset_done: 'Meta-prompt restored to the original',
-    prompt_custom: 'modified',
-    prompt_original: 'project original',
-    prompt_confirm_reset: 'Your meta-prompt will be discarded and the project original restored. Saved versions are kept. Continue?',
+    prompt_active_label: 'Active:',
+    prompt_original_name: 'Original',
+    prompt_saved: 'Version saved',
     prompt_section: 'Go to section',
   },
 };
@@ -680,11 +680,15 @@ function ccsmApp() {
     // the chat one is a single row and the tile one is 1.4em tall.
     compose: {
       open: false, target: '', role: 'auto', detected: '', raw: '', text: '',
-      questions: [], answers: [], showRaw: false, busy: false, answered: false,
+      // question: the one thing (if anything) the rewriter still finds
+      // unclear this round; answerHistory: every question answered so far in
+      // this session, sent back on each call so the model does not repeat
+      // itself. See composeAnswer.
+      question: null, answerHistory: [], freeAnswer: '', showRaw: false, busy: false,
     },
     promptEditor: {
-      open: false, loading: false, saving: false, content: '', original: '',
-      custom: false, versions: [], viewing: 0,
+      open: false, loading: false, saving: false, content: '',
+      versions: [], viewing: 0,
     },
     voiceForm: null,
     live: { open: false, name: '', view: 'chat', chatStatus: '', ces: null, timer: null, msgs: [], termHist: '', meta: null, input: '', sending: false, elapsed: '', models: [], maxH: null },
@@ -2895,7 +2899,7 @@ function ccsmApp() {
       const target = this.voice.target;
       if (!this.canRewrite()) {
         this.voice.stage = '';
-        this.openCompose(target, text, { role: '', prompt: text, questions: [] });
+        this.openCompose(target, text, { role: '', prompt: text, question: null });
         return;
       }
       this.voice.stage = 'voice_stage_rewriting';
@@ -2955,43 +2959,53 @@ function ccsmApp() {
       this.compose.text = res.prompt || raw;
       this.compose.detected = res.role || '';
       this.compose.role = res.role || this.voice.defaultRole;
-      this.compose.questions = res.questions || [];
-      this.compose.answers = (res.questions || []).map(() => '');
+      this.compose.question = res.question || null;
+      this.compose.answerHistory = [];
+      this.compose.freeAnswer = '';
       this.compose.showRaw = false;
-      this.compose.answered = false;
       this.compose.busy = false;
     },
 
     closeCompose() {
       this.compose.open = false;
-      this.compose.questions = [];
-      this.compose.answers = [];
+      this.compose.question = null;
+      this.compose.answerHistory = [];
+      this.compose.freeAnswer = '';
       this.compose.raw = '';
       this.compose.text = '';
     },
 
-    // Answering re-runs the rewrite with the replies folded in. The server
-    // forbids a second round of questions, so this cannot bounce forever.
-    async composeAnswer() {
-      const answers = this.compose.questions
-        .map((q, i) => ({ question: q, answer: (this.compose.answers[i] || '').trim() }))
-        .filter(a => a.answer !== '');
-      if (!answers.length) { this.composeSkip(); return; }
+    // Answering re-runs the rewrite with every answer so far folded in, and
+    // the reply may itself carry another question — the clarification is a
+    // loop of one question per round, not a single batch, so this both
+    // answers the current one and asks for the next. The server's own round
+    // cap (maxClarifyRounds) is what stops this from bouncing forever, not
+    // anything client-side.
+    //
+    // choice is the option button's label, when one was clicked; undefined
+    // means the free-text field was used instead (composeAnswer() with no
+    // argument, from the input's Enter or the Responder button).
+    async composeAnswer(choice) {
+      const q = this.compose.question;
+      if (!q) return;
+      const answer = (choice != null ? choice : this.compose.freeAnswer).trim();
+      if (!answer) { this.composeSkip(); return; }
+      this.compose.answerHistory.push({ question: q.text, answer: answer });
+      this.compose.freeAnswer = '';
       this.compose.busy = true;
-      const res = await this.callRewrite(this.compose.raw, this.compose.role, answers);
+      const res = await this.callRewrite(this.compose.raw, this.compose.role, this.compose.answerHistory);
       this.compose.busy = false;
-      if (!res) return;
+      if (!res) { this.compose.answerHistory.pop(); return; }
       this.compose.text = res.prompt || this.compose.text;
       this.compose.detected = res.role || this.compose.detected;
-      this.compose.questions = [];
-      this.compose.answers = [];
-      this.compose.answered = true;
+      this.compose.question = res.question || null;
     },
 
+    // Skipping drops the current question without answering it and asks
+    // nothing further: the provisional prompt above is already the model's
+    // best attempt, so there is nothing to re-run.
     composeSkip() {
-      this.compose.questions = [];
-      this.compose.answers = [];
-      this.compose.answered = true;
+      this.compose.question = null;
     },
 
     // Retry rewrites from the ORIGINAL transcription, not from the edited
@@ -3005,9 +3019,8 @@ function ccsmApp() {
       if (!res) return;
       this.compose.text = res.prompt || this.compose.text;
       this.compose.detected = res.role || '';
-      this.compose.questions = res.questions || [];
-      this.compose.answers = (res.questions || []).map(() => '');
-      this.compose.answered = false;
+      this.compose.question = res.question || null;
+      this.compose.answerHistory = [];
     },
 
     composeCount() { return (this.compose.text || '').length; },
@@ -3056,7 +3069,6 @@ function ccsmApp() {
         rewriteEnabled: !!(v.rewrite && v.rewrite.enabled),
         rewriteProvider: (v.rewrite && v.rewrite.provider) || '',
         model: (v.rewrite && v.rewrite.model) || '',
-        maxQuestions: (v.rewrite && v.rewrite.max_questions) || 0,
         defaultRole: (v.rewrite && v.rewrite.default_role) || 'auto',
         providers: v.providers || [],
       };
@@ -3071,7 +3083,7 @@ function ccsmApp() {
           stt: { mode: f.mode, provider: f.sttProvider, vocabulary: f.vocabulary },
           rewrite: {
             enabled: f.rewriteEnabled, provider: f.rewriteProvider, model: f.model,
-            max_questions: Number(f.maxQuestions), default_role: f.defaultRole,
+            default_role: f.defaultRole,
           },
         },
       };
@@ -3099,24 +3111,52 @@ function ccsmApp() {
     },
 
     // --- Meta-prompt editor ---
+    //
+    // Versions are named and independent of which one is active: saving
+    // (over the one being viewed, or as a brand-new one) and applying (which
+    // only moves the active pointer) are two separate actions. The original
+    // shipped with the project is version id 0 and can never be overwritten,
+    // only viewed, applied, or edited-and-saved-as-new.
 
     async openPromptEditor() {
       this.promptEditor.open = true;
       this.promptEditor.loading = true;
-      this.promptEditor.viewing = 0;
       try {
         const resp = await fetch('/api/voice/prompt');
         if (!resp.ok) throw new Error('cannot read the meta-prompt');
         const data = await resp.json();
         this.promptEditor.content = data.content || '';
-        this.promptEditor.original = data.original || '';
-        this.promptEditor.custom = !!data.custom;
         this.promptEditor.versions = data.versions || [];
         this.voice.roles = data.roles || this.voice.roles;
+        // Open on whichever version is actually active — that is what
+        // dictation is using right now, not always the original.
+        const active = this.promptEditor.versions.find(v => v.active);
+        this.promptEditor.viewing = active ? active.id : 0;
       } catch (e) {
         this.toastError(e.message);
       }
       this.promptEditor.loading = false;
+    },
+
+    // Label for one dropdown option / the active badge: a check mark when it
+    // is the version actually in effect, and the project's own name for the
+    // original rather than whatever an empty string would render as.
+    promptVersionLabel(v) {
+      const name = v.original ? this.t('prompt_original_name') : v.name;
+      return (v.active ? '✓ ' : '') + name;
+    },
+
+    promptActiveVersion() {
+      return (this.promptEditor.versions || []).find(v => v.active) || null;
+    },
+
+    promptViewingIsOriginal() {
+      return this.promptEditor.viewing === 0;
+    },
+
+    promptViewingIsActive() {
+      const v = (this.promptEditor.versions || []).find(v => v.id === this.promptEditor.viewing);
+      return !!(v && v.active);
     },
 
     // The section list drives a jump menu. Editing a 4 KB document in a phone
@@ -3141,20 +3181,31 @@ function ccsmApp() {
       el.scrollTop = Math.max(0, (before - 1) * 18);
     },
 
-    async savePrompt() {
+    async viewPromptVersion(id) {
+      id = Number(id);
+      try {
+        const resp = await fetch('/api/voice/prompt?version=' + encodeURIComponent(id));
+        if (!resp.ok) throw new Error('version not found');
+        const data = await resp.json();
+        this.promptEditor.content = data.content || '';
+        this.promptEditor.viewing = id;
+      } catch (e) {
+        this.toastError(e.message);
+      }
+    },
+
+    async doSavePrompt(opts) {
       this.promptEditor.saving = true;
       try {
         const resp = await fetch('/api/voice/prompt', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: this.promptEditor.content }),
+          body: JSON.stringify(Object.assign({ content: this.promptEditor.content }, opts)),
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || 'invalid meta-prompt');
-        this.promptEditor.content = data.content || this.promptEditor.content;
-        this.promptEditor.custom = !!data.custom;
-        this.promptEditor.versions = data.versions || [];
-        this.voice.roles = data.roles || this.voice.roles;
+        this.promptEditor.versions = data.versions || this.promptEditor.versions;
+        this.promptEditor.viewing = data.version;
         this.toastSuccess(this.t('prompt_saved'));
       } catch (e) {
         // The message names the exact problem (a role with no section, broken
@@ -3164,31 +3215,37 @@ function ccsmApp() {
       this.promptEditor.saving = false;
     },
 
-    async resetPrompt() {
-      if (!confirm(this.t('prompt_confirm_reset'))) return;
-      try {
-        const resp = await fetch('/api/voice/prompt/reset', { method: 'POST' });
-        if (!resp.ok) throw new Error('could not restore the original');
-        const data = await resp.json();
-        this.promptEditor.content = data.content || '';
-        this.promptEditor.custom = !!data.custom;
-        this.promptEditor.versions = data.versions || [];
-        this.voice.roles = data.roles || this.voice.roles;
-        this.promptEditor.viewing = 0;
-        this.toastSuccess(this.t('prompt_reset_done'));
-      } catch (e) {
-        this.toastError(e.message);
-      }
+    // Overwrites the version currently open in the editor. The original (id
+    // 0) never reaches this: its button is hidden, see promptViewingIsOriginal.
+    savePromptOver() {
+      if (this.promptEditor.viewing === 0) return;
+      return this.doSavePrompt({ version: this.promptEditor.viewing, new: false });
     },
 
-    async viewPromptVersion(n) {
-      if (!n) { await this.openPromptEditor(); return; }
+    // Saves the edited text as a brand-new named version, asking for the
+    // name — the only way an edit of the original becomes reusable, since
+    // the original itself can never be overwritten.
+    savePromptAsNew() {
+      const name = window.prompt(this.t('prompt_name_new'));
+      if (name === null) return; // cancelled
+      return this.doSavePrompt({ new: true, name: name });
+    },
+
+    // Applying only moves the active pointer server-side (PromptStore.SetActive);
+    // it never touches any version's content, so it is safe to call for any
+    // version at any time and there is no separate "restore" action.
+    async applyPromptVersion(id) {
       try {
-        const resp = await fetch('/api/voice/prompt?version=' + encodeURIComponent(n));
-        if (!resp.ok) throw new Error('version not found');
-        const data = await resp.json();
-        this.promptEditor.content = data.content || '';
-        this.promptEditor.viewing = n;
+        const resp = await fetch('/api/voice/prompt/activate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ version: Number(id) }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || 'could not apply the version');
+        this.promptEditor.versions = data.versions || this.promptEditor.versions;
+        this.voice.roles = data.roles || this.voice.roles;
+        this.toastSuccess(this.t('prompt_applied'));
       } catch (e) {
         this.toastError(e.message);
       }

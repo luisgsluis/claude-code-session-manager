@@ -1,5 +1,28 @@
 # Changelog
 
+## [3.1.3] — 2026-08-21
+
+### Changed
+- **Meta-prompt version management redesigned.** Versions are now named and independent of
+  which one is active: saving (over the version being viewed, or as a brand-new named one) and
+  applying (moving the active pointer) are two separate actions, so writing an edit never
+  silently activates it. The version dropdown checks off whichever one is actually in effect,
+  any version can be applied from there (not just the newest edit vs. the shipped default), and
+  the confusing "Restaurar original" button is gone — restoring the original is just applying
+  version 0 like any other, and it was never destructive to begin with. The original itself can
+  never be overwritten, only viewed or edited-and-saved-as-new. A directory left by the old
+  scheme (a single active override plus auto-numbered, unnamed archives) migrates in place the
+  first time it is read.
+- **The rewriter's clarifying questions are no longer a batch capped by a configured number.**
+  The old `max_questions` (0–10) setting encouraged the model to fill a quota rather than
+  actually judge whether something was unclear, and delivered every question in one screen. It
+  now asks at most one question per round — with a short set of options when the ambiguity is a
+  choice between known readings, free text otherwise — and only when something in the request
+  genuinely can't be disambiguated, never to gather additional detail the receiving engineer
+  could infer or would work out anyway. Answering may bring up another round, looping until
+  nothing is left unclear or a fixed internal safety cap is hit; there is no longer a "how many
+  questions" setting to configure.
+
 ## [3.1.2] — 2026-08-20
 
 ### Fixed

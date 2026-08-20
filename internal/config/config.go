@@ -78,11 +78,10 @@ type VoiceSTTConfig struct {
 
 // VoiceRewriteConfig selects who turns dictated text into a prompt.
 type VoiceRewriteConfig struct {
-	Enabled      bool   `yaml:"enabled"`
-	Provider     string `yaml:"provider"`
-	Model        string `yaml:"model"`
-	MaxQuestions int    `yaml:"max_questions"`
-	DefaultRole  string `yaml:"default_role"`
+	Enabled     bool   `yaml:"enabled"`
+	Provider    string `yaml:"provider"`
+	Model       string `yaml:"model"`
+	DefaultRole string `yaml:"default_role"`
 }
 
 // VoiceProvider is one OpenAI-compatible endpoint. Groq and DeepSeek both
@@ -199,9 +198,6 @@ func (v *VoiceConfig) validate() error {
 		return fmt.Errorf("voice.stt.mode must be one of %s, got %q",
 			strings.Join(VoiceSTTModes, ", "), v.STT.Mode)
 	}
-	if v.Rewrite.MaxQuestions < 0 || v.Rewrite.MaxQuestions > 10 {
-		return fmt.Errorf("voice.rewrite.max_questions must be 0-10, got %d", v.Rewrite.MaxQuestions)
-	}
 	for name, p := range v.Providers {
 		if !regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`).MatchString(name) {
 			return fmt.Errorf("invalid voice provider name: %s", name)
@@ -267,7 +263,7 @@ func Defaults() *Config {
 			// install that has neither should not show a button that 502s.
 			Enabled:     false,
 			STT:         VoiceSTTConfig{Mode: "whisper_fallback"},
-			Rewrite:     VoiceRewriteConfig{Enabled: true, MaxQuestions: 3, DefaultRole: "auto"},
+			Rewrite:     VoiceRewriteConfig{Enabled: true, DefaultRole: "auto"},
 			PromptsPath: "auto",
 		},
 	}

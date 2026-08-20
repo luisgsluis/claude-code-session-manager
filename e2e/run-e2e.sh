@@ -50,7 +50,6 @@ voice:
     enabled: true
     provider: stub
     model: stub-chat
-    max_questions: 3
     default_role: auto
   providers:
     stub:

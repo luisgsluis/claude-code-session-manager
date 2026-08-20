@@ -460,11 +460,6 @@
           </select>
         </label>
 
-        <label class="voice-setting" x-show="voiceForm.rewriteEnabled">
-          <span x-text="t('cfg_voice_max_questions')"></span>
-          <input type="number" min="0" max="10" x-model.number="voiceForm.maxQuestions">
-        </label>
-
         <div class="voice-setting" x-show="!voiceForm.providers.length">
           <span class="text-warn" x-text="t('cfg_voice_no_providers')"></span>
         </div>
@@ -1185,19 +1180,30 @@
       </div>
     </div>
 
-    <!-- Clarifying questions. Optional by design: the prompt below is already
-         usable, so answering is an improvement rather than a gate. -->
-    <div x-show="compose.questions.length" class="px-4 py-3 border-b border-gray-800 bg-bg shrink-0">
-      <p class="text-xs font-semibold text-warn mb-1" x-text="t('compose_questions_title')"></p>
-      <template x-for="(q, i) in compose.questions" :key="i">
-        <label class="voice-question">
-          <span class="text-xs text-fg" x-text="q"></span>
-          <input type="text" x-model="compose.answers[i]" @keydown.enter.prevent="composeAnswer()">
-        </label>
-      </template>
+    <!-- Clarifying question. Optional by design: the prompt below is already
+         usable, so answering is an improvement rather than a gate. At most
+         one at a time — answering (or skipping) may bring up another round,
+         up to the server's own safety cap, see internal/voice/client.go. -->
+    <div x-show="compose.question" class="px-4 py-3 border-b border-gray-800 bg-bg shrink-0">
+      <p class="text-xs font-semibold text-warn mb-1" x-text="t('compose_question_title')"></p>
+      <p class="text-sm text-fg mb-2" x-text="compose.question && compose.question.text"></p>
+
+      <!-- A short set of known readings, when the model offered one. -->
+      <div x-show="compose.question && compose.question.options && compose.question.options.length" class="flex flex-wrap gap-2 mb-2">
+        <template x-for="opt in (compose.question && compose.question.options) || []" :key="opt">
+          <button @click="composeAnswer(opt)" :disabled="compose.busy"
+            class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover hover:border-accent text-xs transition-colors disabled:opacity-50" x-text="opt"></button>
+        </template>
+      </div>
+
+      <!-- Free text stays available even alongside options: none of them
+           might be the right answer. -->
+      <label class="voice-question">
+        <input type="text" x-model="compose.freeAnswer" :placeholder="t('compose_question_free')" @keydown.enter.prevent="composeAnswer()">
+      </label>
       <div class="flex items-center gap-2 justify-end mt-2">
         <button @click="composeSkip()" class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors" x-text="t('compose_skip')"></button>
-        <button @click="composeAnswer()" :disabled="compose.busy" class="px-3 py-1 rounded bg-accent text-white text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-opacity" x-text="t('compose_answer')"></button>
+        <button @click="composeAnswer()" :disabled="compose.busy || !compose.freeAnswer.trim()" class="px-3 py-1 rounded bg-accent text-white text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-opacity" x-text="t('compose_answer')"></button>
       </div>
     </div>
 
@@ -1238,9 +1244,8 @@
     <div class="flex items-center justify-between gap-2 p-3 border-b border-gray-800 shrink-0">
       <div class="flex items-center gap-2 min-w-0">
         <span class="text-sm font-semibold shrink-0" x-text="t('prompt_title')"></span>
-        <span class="text-[0.65rem] px-1.5 py-0.5 rounded shrink-0"
-          :class="promptEditor.custom ? 'bg-warn/15 text-warn' : 'bg-success/15 text-success'"
-          x-text="promptEditor.custom ? t('prompt_custom') : t('prompt_original')"></span>
+        <span x-show="promptActiveVersion()" class="text-[0.65rem] px-1.5 py-0.5 rounded shrink-0 bg-success/15 text-success truncate"
+          x-text="t('prompt_active_label') + ' ' + (promptActiveVersion() ? (promptActiveVersion().original ? t('prompt_original_name') : promptActiveVersion().name) : '')"></span>
       </div>
       <button @click="promptEditor.open = false" class="text-fg-muted hover:text-fg text-xl leading-none px-1">&times;</button>
     </div>
@@ -1254,13 +1259,17 @@
           <option :value="sec.index" x-text="sec.label"></option>
         </template>
       </select>
-      <span x-show="promptEditor.versions.length" class="text-xs text-fg-muted ml-2" x-text="t('prompt_versions')"></span>
-      <select x-show="promptEditor.versions.length" x-model.number="promptEditor.viewing" @change="viewPromptVersion(promptEditor.viewing)" class="tgrid-select">
-        <option :value="0" x-text="t('prompt_version_current')"></option>
-        <template x-for="v in promptEditor.versions" :key="v">
-          <option :value="v" x-text="'v' + v"></option>
+      <!-- The version being viewed/edited here is independent of which one is
+           active (the ✓ inside each label, from promptVersionLabel) — picking
+           one only loads it for viewing, see viewPromptVersion. -->
+      <span class="text-xs text-fg-muted ml-2" x-text="t('prompt_versions')"></span>
+      <select x-model.number="promptEditor.viewing" @change="viewPromptVersion(promptEditor.viewing)" class="tgrid-select">
+        <template x-for="v in promptEditor.versions" :key="v.id">
+          <option :value="v.id" x-text="promptVersionLabel(v)"></option>
         </template>
       </select>
+      <button @click="applyPromptVersion(promptEditor.viewing)" :disabled="promptViewingIsActive()"
+        class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors disabled:opacity-50" x-text="t('prompt_apply')"></button>
     </div>
 
     <div class="flex-1 overflow-y-auto p-4" style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
@@ -1268,10 +1277,17 @@
       <textarea x-show="!promptEditor.loading" id="prompt-editor-text" x-model="promptEditor.content" spellcheck="false" class="voice-prompt-editor"></textarea>
     </div>
 
-    <div class="flex items-center justify-end gap-2 p-3 border-t border-gray-800 shrink-0">
-      <button @click="resetPrompt()" class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors" x-text="t('prompt_reset')"></button>
-      <button @click="savePrompt()" :disabled="promptEditor.saving"
-        class="bg-accent text-white rounded-xl px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity" x-text="t('prompt_save')"></button>
+    <!-- Two ways to keep an edit: overwrite the version being viewed (not
+         offered for the original, which can never be modified — see
+         PromptStore.SaveOver), or save it as a new named one. Applying is a
+         separate action above, not a side effect of saving. -->
+    <div class="flex items-center justify-end gap-2 p-3 border-t border-gray-800 shrink-0 flex-wrap">
+      <button x-show="!promptViewingIsOriginal()" @click="savePromptOver()" :disabled="promptEditor.saving"
+        class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors disabled:opacity-50" x-text="t('prompt_save_over')"></button>
+      <button @click="savePromptAsNew()" :disabled="promptEditor.saving"
+        class="rounded-xl px-4 py-2 text-sm font-medium transition-opacity disabled:opacity-50"
+        :class="promptViewingIsOriginal() ? 'bg-accent text-white hover:opacity-90' : 'border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs px-3 py-1'"
+        x-text="t('prompt_save_new')"></button>
     </div>
   </div>
 </div>

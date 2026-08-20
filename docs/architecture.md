@@ -154,15 +154,23 @@ which provider is used but never define one.
 **The meta-prompt is data, not code.** One Markdown file: front matter declaring the roles,
 a `# Base` section of shared rules, and a `# Role: <id>` block each. The server assembles
 Base + the chosen block, or Base + every block for `auto` (the model cannot classify into
-roles it has not seen). The pristine copy is embedded in the binary with `go:embed`; an
-override and its numbered versions live in `voice.prompts_path`. Saving validates both
-directions — a declared role with no block, a block nobody declared — and refuses to write
-on failure, so a bad edit never displaces a working prompt.
+roles it has not seen). The pristine copy is embedded in the binary with `go:embed` and is
+version id `0`, which can never be overwritten. Anything saved from the editor lives in
+`voice.prompts_path` as a named `voice.VersionInfo`, independent of which one is active —
+saving (over an existing version, or as a new one) and activating (`SetActive`, which only
+moves a pointer in `versions.json`) are two separate calls, so applying a version is always
+non-destructive and every version stays around afterward. Saving validates both directions —
+a declared role with no block, a block nobody declared — and refuses to write on failure, so
+a bad edit never displaces a working prompt.
 
-**The rewrite may ask before answering.** When the request is genuinely ambiguous the model
-returns up to `max_questions` questions alongside its best attempt. Answering re-runs the
-rewrite with the replies folded in, and that second pass is told it may not ask again — one
-round, so the UI cannot bounce forever.
+**The rewrite asks one question at a time, only when genuinely unclear.** The model is not
+told a target number of questions — that would turn "is this ambiguous" into "fill a quota".
+When something actually blocks a good rewrite it returns one `question` (optionally a short
+set of `options`) alongside its best attempt so far; the UI shows it, the caller answers, and
+`Rewrite` is called again with the answer folded into `answers`, possibly returning another
+question. `maxClarifyRounds` is a fixed loop guard, not a setting — past it the model is told
+to stop asking and return its best rewrite, so a model that keeps finding things to ask
+cannot loop the UI forever.
 
 ### Rename gotcha
 

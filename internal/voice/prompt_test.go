@@ -16,7 +16,7 @@ roles:
 ---
 # Base
 
-Shared rules. Ask at most MAX_QUESTIONS questions.
+Shared rules.
 
 # Role: auto
 
@@ -44,13 +44,13 @@ func TestOriginalIsValid(t *testing.T) {
 			t.Errorf("shipped meta-prompt is missing the %q role", want)
 		}
 	}
-	if !strings.Contains(p.Base, "MAX_QUESTIONS") {
-		t.Error("Base never mentions MAX_QUESTIONS, so the question cap is not passed to the model")
-	}
 	// The whole point of writing the meta-prompt in English is that it still
 	// answers in whatever language was dictated.
 	if !strings.Contains(strings.ToLower(p.Base), "language") {
 		t.Error("Base gives the model no instruction about the output language")
+	}
+	if !strings.Contains(strings.ToLower(p.Base), "genuinely unclear") {
+		t.Error("Base does not tell the model to disambiguate rather than gather more information")
 	}
 }
 
@@ -121,30 +121,24 @@ func TestSystemAssembly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	forced := p.System("devops", 3)
+	forced := p.System("devops")
 	if !strings.Contains(forced, "Operate running systems") {
 		t.Error("forced role is missing its own block")
 	}
 	if strings.Contains(forced, "Write documentation") {
 		t.Error("forced role leaked another role's block")
 	}
-	if !strings.Contains(forced, "Ask at most 3 questions") {
-		t.Errorf("MAX_QUESTIONS was not substituted: %q", forced)
-	}
 
-	auto := p.System(AutoRole, 2)
+	auto := p.System(AutoRole)
 	for _, want := range []string{"Pick a role", "Operate running systems", "Write documentation"} {
 		if !strings.Contains(auto, want) {
 			t.Errorf("auto mode is missing %q", want)
 		}
 	}
-	if !strings.Contains(auto, "Ask at most 2 questions") {
-		t.Error("MAX_QUESTIONS was not substituted in auto mode")
-	}
 
 	// An unknown role degrades to showing everything rather than sending a
 	// system prompt with no role guidance at all.
-	if got := p.System("nonexistent", 1); !strings.Contains(got, "Operate running systems") {
+	if got := p.System("nonexistent"); !strings.Contains(got, "Operate running systems") {
 		t.Error("an unknown role should fall back to the full set")
 	}
 }
@@ -159,101 +153,176 @@ func TestPromptStoreFallsBackToOriginal(t *testing.T) {
 	if raw != Original() {
 		t.Error("an empty directory must serve the embedded original")
 	}
-	if len(s.Versions()) != 0 {
-		t.Error("an empty directory has no versions")
+	versions := s.List()
+	if len(versions) != 1 || !versions[0].Original || !versions[0].Active {
+		t.Errorf("an empty directory has only the original, active: %+v", versions)
 	}
 }
 
-func TestPromptStoreSaveArchivesAndReset(t *testing.T) {
+// TestPromptStoreSaveNewNeverActivates is the core of the new version model:
+// saving and applying are two separate calls, so writing a new version must
+// not change what dictation is actually using.
+func TestPromptStoreSaveNewNeverActivates(t *testing.T) {
 	dir := t.TempDir()
 	s := PromptStore{Dir: dir}
 
 	v1 := strings.Replace(validPrompt, "Shared rules.", "Shared rules v1.", 1)
-	if err := s.Save(v1); err != nil {
-		t.Fatalf("save v1: %v", err)
+	id, err := s.SaveNew(v1, "Mi versión 1")
+	if err != nil {
+		t.Fatalf("save new: %v", err)
+	}
+	if id == 0 {
+		t.Fatal("a saved version must never be assigned id 0 (reserved for the original)")
+	}
+
+	if raw, custom := s.Load(); custom || raw != Original() {
+		t.Error("saving a new version must not activate it")
+	}
+
+	content, err := s.VersionContent(id)
+	if err != nil || !strings.Contains(content, "v1") {
+		t.Errorf("version content mismatch: %v / %q", err, content)
+	}
+
+	versions := s.List()
+	if len(versions) != 2 {
+		t.Fatalf("expected original + 1 saved version, got %+v", versions)
+	}
+	if !versions[0].Original || !versions[0].Active {
+		t.Errorf("original should still be active: %+v", versions[0])
+	}
+	if versions[1].ID != id || versions[1].Name != "Mi versión 1" || versions[1].Active {
+		t.Errorf("saved version should carry its name and not be active: %+v", versions[1])
+	}
+}
+
+func TestPromptStoreSaveNewDefaultName(t *testing.T) {
+	s := PromptStore{Dir: t.TempDir()}
+	id, err := s.SaveNew(validPrompt, "   ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	versions := s.List()
+	if versions[1].Name == "" {
+		t.Error("a blank name must fall back to a default, not an empty label")
+	}
+	if !strings.Contains(versions[1].Name, "1") && versions[1].ID != id {
+		t.Errorf("unexpected default name: %q", versions[1].Name)
+	}
+}
+
+func TestPromptStoreSetActive(t *testing.T) {
+	dir := t.TempDir()
+	s := PromptStore{Dir: dir}
+	v1 := strings.Replace(validPrompt, "Shared rules.", "Shared rules v1.", 1)
+	id, err := s.SaveNew(v1, "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SetActive(id); err != nil {
+		t.Fatalf("set active: %v", err)
 	}
 	if raw, custom := s.Load(); !custom || !strings.Contains(raw, "v1") {
-		t.Fatalf("v1 not active: custom=%v", custom)
+		t.Errorf("v1 should now be active: custom=%v raw=%q", custom, raw)
 	}
-	// Nothing to archive on the first save: there was no previous override.
-	if got := s.Versions(); len(got) != 0 {
-		t.Errorf("first save should archive nothing, got %v", got)
+	for _, v := range s.List() {
+		if v.ID == id && !v.Active {
+			t.Error("the version list disagrees with Load about which is active")
+		}
+		if v.Original && v.Active {
+			t.Error("the original must not also be marked active once another version is")
+		}
+	}
+
+	// Applying is non-destructive: switching back to the original must not
+	// have discarded the saved version.
+	if err := s.SetActive(0); err != nil {
+		t.Fatalf("set active back to original: %v", err)
+	}
+	if raw, custom := s.Load(); custom || raw != Original() {
+		t.Error("activating 0 must restore the original")
+	}
+	if content, err := s.VersionContent(id); err != nil || !strings.Contains(content, "v1") {
+		t.Errorf("the saved version must still exist after switching away from it: %v / %q", err, content)
+	}
+
+	if err := s.SetActive(9999); err == nil {
+		t.Error("activating a version that does not exist must fail")
+	}
+}
+
+func TestPromptStoreSaveOver(t *testing.T) {
+	dir := t.TempDir()
+	s := PromptStore{Dir: dir}
+	id, err := s.SaveNew(validPrompt, "mine")
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	v2 := strings.Replace(validPrompt, "Shared rules.", "Shared rules v2.", 1)
-	if err := s.Save(v2); err != nil {
-		t.Fatalf("save v2: %v", err)
+	if err := s.SaveOver(id, v2); err != nil {
+		t.Fatalf("save over: %v", err)
 	}
-	if raw, _ := s.Load(); !strings.Contains(raw, "v2") {
-		t.Error("v2 is not the active prompt")
+	content, err := s.VersionContent(id)
+	if err != nil || !strings.Contains(content, "v2") {
+		t.Errorf("save over did not update the content: %v / %q", err, content)
 	}
-	versions := s.Versions()
-	if len(versions) != 1 || versions[0] != 1 {
-		t.Fatalf("expected exactly version 1 archived, got %v", versions)
-	}
-	archived, err := s.Version(1)
-	if err != nil || !strings.Contains(archived, "v1") {
-		t.Errorf("archived version 1 should hold the v1 text: %v / %q", err, archived)
+	versions := s.List()
+	if len(versions) != 2 || versions[1].Name != "mine" {
+		t.Errorf("save over must not rename or duplicate the version: %+v", versions)
 	}
 
-	v3 := strings.Replace(validPrompt, "Shared rules.", "Shared rules v3.", 1)
-	if err := s.Save(v3); err != nil {
-		t.Fatalf("save v3: %v", err)
+	if err := s.SaveOver(0, v2); err == nil {
+		t.Error("the original must never be overwritable")
 	}
-	// Newest first, so the UI lists the most recent rollback target at the top.
-	if got := s.Versions(); len(got) != 2 || got[0] != 2 || got[1] != 1 {
-		t.Errorf("versions should be newest-first [2 1], got %v", got)
-	}
-
-	if err := s.Reset(); err != nil {
-		t.Fatalf("reset: %v", err)
-	}
-	if raw, custom := s.Load(); custom || raw != Original() {
-		t.Error("reset must restore the embedded original")
-	}
-	// History survives a reset: going back to the default is not a reason to
-	// throw away what was tried.
-	if got := s.Versions(); len(got) != 2 {
-		t.Errorf("reset must keep the archived versions, got %v", got)
-	}
-	if err := s.Reset(); err != nil {
-		t.Errorf("reset must be idempotent: %v", err)
+	if err := s.SaveOver(9999, v2); err == nil {
+		t.Error("overwriting a version that does not exist must fail")
 	}
 }
 
 // TestPromptStoreRejectsInvalidWithoutTouchingDisk is the important one: a bad
-// edit from the UI must leave the working prompt in place, not archive it and
-// then fail with nothing active.
+// edit from the UI must leave the working version in place, not overwrite it
+// and then fail with nothing usable.
 func TestPromptStoreRejectsInvalidWithoutTouchingDisk(t *testing.T) {
 	dir := t.TempDir()
 	s := PromptStore{Dir: dir}
-	if err := s.Save(validPrompt); err != nil {
+	id, err := s.SaveNew(validPrompt, "mine")
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	broken := "---\nroles:\n  - {id: devops, es: D, en: D}\n---\n# Base\n\nno block for devops\n"
-	if err := s.Save(broken); err == nil {
-		t.Fatal("expected an invalid prompt to be rejected")
+	if err := s.SaveOver(id, broken); err == nil {
+		t.Fatal("expected an invalid overwrite to be rejected")
 	}
-	raw, custom := s.Load()
-	if !custom || raw != validPrompt {
-		t.Error("a rejected save must leave the previous prompt exactly as it was")
+	content, err := s.VersionContent(id)
+	if err != nil || content != validPrompt {
+		t.Error("a rejected overwrite must leave the previous content exactly as it was")
 	}
-	if got := s.Versions(); len(got) != 0 {
-		t.Errorf("a rejected save must not archive anything, got %v", got)
+
+	if _, err := s.SaveNew(broken, "broken"); err == nil {
+		t.Fatal("expected an invalid new version to be rejected")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "rewrite.md.tmp")); !os.IsNotExist(err) {
+	if versions := s.List(); len(versions) != 2 {
+		t.Errorf("a rejected save must not add a version, got %+v", versions)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "versions.json.tmp")); !os.IsNotExist(err) {
 		t.Error("a temp file was left behind")
 	}
 }
 
-// TestActiveFallsBackWhenOverrideIsCorrupt: Save cannot write a broken file,
-// but somebody editing it by hand on the host can. That must not take the
-// dictation button down.
+// TestActiveFallsBackWhenOverrideIsCorrupt: SaveOver/SaveNew cannot write a
+// broken file, but somebody editing versions.json or a version file by hand
+// on the host can. That must not take the dictation button down.
 func TestActiveFallsBackWhenOverrideIsCorrupt(t *testing.T) {
 	dir := t.TempDir()
 	s := PromptStore{Dir: dir}
-	if err := os.WriteFile(filepath.Join(dir, "rewrite.md"), []byte("garbage, no front matter"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "rewrite.v1.md"), []byte("garbage, no front matter"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	meta := `{"active":1,"next_id":2,"versions":[{"id":1,"name":"hand-edited","created_at":"2020-01-01T00:00:00Z"}]}`
+	if err := os.WriteFile(filepath.Join(dir, "versions.json"), []byte(meta), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -271,10 +340,94 @@ func TestPromptStoreWithoutDir(t *testing.T) {
 	if raw, custom := s.Load(); custom || raw != Original() {
 		t.Error("an unconfigured store serves the original")
 	}
-	if err := s.Save(validPrompt); err == nil {
-		t.Error("an unconfigured store cannot save")
+	if _, err := s.SaveNew(validPrompt, "x"); err == nil {
+		t.Error("an unconfigured store cannot save a new version")
 	}
-	if err := s.Reset(); err == nil {
-		t.Error("an unconfigured store cannot reset")
+	if err := s.SaveOver(1, validPrompt); err == nil {
+		t.Error("an unconfigured store cannot overwrite a version")
+	}
+	if err := s.SetActive(1); err == nil {
+		t.Error("an unconfigured store cannot activate a version it does not have")
+	}
+	if err := s.SetActive(0); err != nil {
+		t.Error("activating the original on an unconfigured store is a harmless no-op")
+	}
+}
+
+// TestPromptStoreMigratesLegacyLayout covers upgrading a directory written by
+// the old scheme (a single "rewrite.md" override plus auto-numbered
+// "rewrite.vN.md" archives, no names, no explicit active pointer) into the
+// current one, the first time it is read.
+func TestPromptStoreMigratesLegacyLayout(t *testing.T) {
+	dir := t.TempDir()
+	archived1 := strings.Replace(validPrompt, "Shared rules.", "Shared rules archived 1.", 1)
+	archived2 := strings.Replace(validPrompt, "Shared rules.", "Shared rules archived 2.", 1)
+	active := strings.Replace(validPrompt, "Shared rules.", "Shared rules active override.", 1)
+	for name, content := range map[string]string{
+		"rewrite.v1.md": archived1,
+		"rewrite.v2.md": archived2,
+		"rewrite.md":    active,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s := PromptStore{Dir: dir}
+	raw, custom := s.Load()
+	if !custom || !strings.Contains(raw, "active override") {
+		t.Fatalf("migration should activate the old override: custom=%v raw=%q", custom, raw)
+	}
+
+	versions := s.List()
+	if len(versions) != 4 { // original + 2 archives + the old active override
+		t.Fatalf("expected 4 versions after migration, got %+v", versions)
+	}
+	var sawArchive1, sawArchive2, sawMigratedActive bool
+	for _, v := range versions {
+		switch {
+		case v.Original:
+		case strings.Contains(v.Name, "1 (migrada)"):
+			sawArchive1 = true
+			if v.Active {
+				t.Error("an old archive must not come back active")
+			}
+		case strings.Contains(v.Name, "2 (migrada)"):
+			sawArchive2 = true
+		case strings.Contains(v.Name, "Migrada del editor anterior"):
+			sawMigratedActive = true
+			if !v.Active {
+				t.Error("the old override should become the active version")
+			}
+		}
+	}
+	if !sawArchive1 || !sawArchive2 || !sawMigratedActive {
+		t.Errorf("migration missed an entry: %+v", versions)
+	}
+
+	// The old scheme's files must not linger once migrated: the override is
+	// folded into a version and removed, and versions.json now exists so a
+	// second read does not migrate again.
+	if _, err := os.Stat(filepath.Join(dir, "rewrite.md")); !os.IsNotExist(err) {
+		t.Error("the old active override file should be removed after migration")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "versions.json")); err != nil {
+		t.Error("migration should persist versions.json so it only runs once")
+	}
+}
+
+func TestPromptStoreMigrationSkipsUnparseableArchives(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rewrite.v1.md"), []byte("garbage"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "rewrite.v2.md"), []byte(validPrompt), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := PromptStore{Dir: dir}
+	versions := s.List()
+	if len(versions) != 2 { // original + the one valid archive
+		t.Errorf("the broken archive should be skipped, not block migration: %+v", versions)
 	}
 }

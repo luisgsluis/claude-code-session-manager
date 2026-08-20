@@ -231,7 +231,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/voice/rewrite", s.auth(s.voiceHdlr.Rewrite))
 	s.mux.HandleFunc("GET /api/voice/prompt", s.auth(s.voiceHdlr.GetPrompt))
 	s.mux.HandleFunc("PUT /api/voice/prompt", s.auth(s.voiceHdlr.PutPrompt))
-	s.mux.HandleFunc("POST /api/voice/prompt/reset", s.auth(s.voiceHdlr.ResetPrompt))
+	s.mux.HandleFunc("POST /api/voice/prompt/activate", s.auth(s.voiceHdlr.ActivatePrompt))
 }
 
 // resolveVoicePromptsPath expands the "auto" default the same way the other
@@ -566,11 +566,10 @@ func (s *Server) voiceInfo() map[string]any {
 			"modes":      config.VoiceSTTModes,
 		},
 		"rewrite": map[string]any{
-			"enabled":       v.Rewrite.Enabled,
-			"provider":      v.Rewrite.Provider,
-			"model":         v.Rewrite.Model,
-			"max_questions": v.Rewrite.MaxQuestions,
-			"default_role":  v.Rewrite.DefaultRole,
+			"enabled":      v.Rewrite.Enabled,
+			"provider":     v.Rewrite.Provider,
+			"model":        v.Rewrite.Model,
+			"default_role": v.Rewrite.DefaultRole,
 		},
 		"providers": providers,
 		// The UI needs the send cap to show a counter and stop an over-long
@@ -686,11 +685,10 @@ type patchVoiceSTT struct {
 }
 
 type patchVoiceRewrite struct {
-	Enabled      *bool   `json:"enabled"`
-	Provider     *string `json:"provider"`
-	Model        *string `json:"model"`
-	MaxQuestions *int    `json:"max_questions"`
-	DefaultRole  *string `json:"default_role"`
+	Enabled     *bool   `json:"enabled"`
+	Provider    *string `json:"provider"`
+	Model       *string `json:"model"`
+	DefaultRole *string `json:"default_role"`
 }
 
 var voiceModelPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:\[\]-]{0,63}$`)
@@ -851,13 +849,6 @@ func (s *Server) patchVoice(p *patchVoiceConfig) ([]string, string) {
 			}
 			v.Rewrite.Model = *p.Rewrite.Model
 			updated = append(updated, "voice.rewrite.model")
-		}
-		if p.Rewrite.MaxQuestions != nil {
-			if *p.Rewrite.MaxQuestions < 0 || *p.Rewrite.MaxQuestions > 10 {
-				return nil, "voice.rewrite.max_questions must be 0-10"
-			}
-			v.Rewrite.MaxQuestions = *p.Rewrite.MaxQuestions
-			updated = append(updated, "voice.rewrite.max_questions")
 		}
 		if p.Rewrite.DefaultRole != nil {
 			// Checked against the roles the ACTIVE meta-prompt declares, not a

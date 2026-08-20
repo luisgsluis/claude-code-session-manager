@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -41,7 +42,7 @@ func newVoiceServer(t *testing.T, mutate func(*config.Config)) (*Server, string)
 			Mode: "whisper", Provider: "groq", Vocabulary: "sonarr, tmux",
 		},
 		Rewrite: config.VoiceRewriteConfig{
-			Enabled: true, Provider: "groq", MaxQuestions: 3, DefaultRole: "auto",
+			Enabled: true, Provider: "groq", DefaultRole: "auto",
 		},
 		Providers: map[string]config.VoiceProvider{
 			"groq": {
@@ -145,7 +146,7 @@ func TestPatchVoiceHotReload(t *testing.T) {
 	w := doJSON(t, srv, "PATCH", "/api/config", map[string]any{
 		"voice": map[string]any{
 			"stt":     map[string]any{"mode": "webspeech", "vocabulary": "macvlan"},
-			"rewrite": map[string]any{"provider": "chatonly", "model": "chat-y", "max_questions": 1},
+			"rewrite": map[string]any{"provider": "chatonly", "model": "chat-y"},
 		},
 	})
 	if w.Code != 200 {
@@ -160,9 +161,6 @@ func TestPatchVoiceHotReload(t *testing.T) {
 	}
 	if got.Rewrite.Provider != "chatonly" || got.Rewrite.Model != "chat-y" {
 		t.Errorf("rewrite = %+v", got.Rewrite)
-	}
-	if got.Rewrite.MaxQuestions != 1 {
-		t.Errorf("max_questions = %d", got.Rewrite.MaxQuestions)
 	}
 	// The provider's credentials must survive a patch that never mentioned
 	// them: a hot switch must not blank the key it is switching away from.
@@ -203,11 +201,6 @@ func TestPatchVoiceRejections(t *testing.T) {
 			"invalid mode",
 			map[string]any{"stt": map[string]any{"mode": "telepathy"}},
 			"voice.stt.mode must be one of",
-		},
-		{
-			"max_questions out of range",
-			map[string]any{"rewrite": map[string]any{"max_questions": 99}},
-			"max_questions must be 0-10",
 		},
 		{
 			"unknown role",
@@ -252,7 +245,7 @@ roles:
 ---
 # Base
 
-Rules. Ask at most MAX_QUESTIONS questions.
+Rules.
 
 # Role: auto
 
@@ -262,8 +255,20 @@ Classify.
 
 Threat modelling.
 `
-	if w := doJSON(t, srv, "PUT", "/api/voice/prompt", map[string]string{"content": custom}); w.Code != 200 {
+	w := doJSON(t, srv, "PUT", "/api/voice/prompt", map[string]any{"content": custom, "new": true, "name": "con seguridad"})
+	if w.Code != 200 {
 		t.Fatalf("saving the prompt: %d %s", w.Code, w.Body.String())
+	}
+	var saved struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &saved); err != nil {
+		t.Fatal(err)
+	}
+	// Saving never activates: the role only becomes selectable once the new
+	// version is actually applied.
+	if w := doJSON(t, srv, "POST", "/api/voice/prompt/activate", map[string]any{"version": saved.Version}); w.Code != 200 {
+		t.Fatalf("activating the new version: %d %s", w.Code, w.Body.String())
 	}
 	if w := doJSON(t, srv, "PATCH", "/api/config", map[string]any{
 		"voice": map[string]any{"rewrite": map[string]any{"default_role": "seguridad"}},
@@ -281,57 +286,74 @@ Threat modelling.
 func TestVoicePromptEndpoints(t *testing.T) {
 	srv, _ := newVoiceServer(t, nil)
 
-	// GET serves the embedded original when nothing has been saved.
+	// GET serves the embedded original when nothing has been saved: it is
+	// version 0, and it starts active.
 	w := doJSON(t, srv, "GET", "/api/voice/prompt", nil)
 	if w.Code != 200 {
 		t.Fatalf("status %d", w.Code)
 	}
 	var got struct {
-		Content  string       `json:"content"`
-		Original string       `json:"original"`
-		Custom   bool         `json:"custom"`
-		Roles    []voice.Role `json:"roles"`
-		Versions []int        `json:"versions"`
+		Content  string              `json:"content"`
+		Roles    []voice.Role        `json:"roles"`
+		Versions []voice.VersionInfo `json:"versions"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Custom {
-		t.Error("a fresh install must not report a custom prompt")
+	if got.Content != voice.Original() {
+		t.Error("a fresh install must serve the embedded original")
 	}
-	if got.Content != got.Original {
-		t.Error("content should equal the original before any edit")
+	if len(got.Versions) != 1 || !got.Versions[0].Original || !got.Versions[0].Active {
+		t.Errorf("a fresh install should list only the original, active: %+v", got.Versions)
 	}
 	if len(got.Roles) < 5 {
 		t.Errorf("expected the shipped roles, got %d", len(got.Roles))
 	}
 
-	// PUT saves and echoes the new state.
-	edited := strings.Replace(got.Original, "# Base", "# Base\n\nEXTRA LINE.", 1)
-	w = doJSON(t, srv, "PUT", "/api/voice/prompt", map[string]string{"content": edited})
+	// PUT with new:true saves a brand-new version, without activating it.
+	edited := strings.Replace(got.Content, "# Base", "# Base\n\nEXTRA LINE.", 1)
+	w = doJSON(t, srv, "PUT", "/api/voice/prompt", map[string]any{"content": edited, "new": true, "name": "mi versión"})
 	if w.Code != 200 {
 		t.Fatalf("PUT: %d %s", w.Code, w.Body.String())
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+	var saved struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &saved); err != nil {
 		t.Fatal(err)
 	}
-	if !got.Custom || !strings.Contains(got.Content, "EXTRA LINE") {
-		t.Error("PUT did not activate the edited prompt")
+	if saved.Version == 0 {
+		t.Fatal("a saved version must never be assigned id 0, reserved for the original")
 	}
-	if got.Original == got.Content {
-		t.Error("the original must still be served alongside the edit")
+	w = doJSON(t, srv, "GET", "/api/voice/prompt", nil)
+	json.Unmarshal(w.Body.Bytes(), &got)
+	if strings.Contains(got.Content, "EXTRA LINE") {
+		t.Error("saving a new version must not activate it")
 	}
 
-	// Reset goes back to the original.
-	w = doJSON(t, srv, "POST", "/api/voice/prompt/reset", nil)
+	// Activating makes it the one served.
+	w = doJSON(t, srv, "POST", "/api/voice/prompt/activate", map[string]any{"version": saved.Version})
 	if w.Code != 200 {
-		t.Fatalf("reset: %d", w.Code)
+		t.Fatalf("activate: %d %s", w.Code, w.Body.String())
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatal(err)
+	json.Unmarshal(w.Body.Bytes(), &got)
+	if !strings.Contains(got.Content, "EXTRA LINE") {
+		t.Error("activating did not switch the served content")
 	}
-	if got.Custom || strings.Contains(got.Content, "EXTRA LINE") {
-		t.Error("reset did not restore the original")
+
+	// Activating 0 goes back to the original — non-destructively: the saved
+	// version must still be there, fetchable by id.
+	w = doJSON(t, srv, "POST", "/api/voice/prompt/activate", map[string]any{"version": 0})
+	if w.Code != 200 {
+		t.Fatalf("activate original: %d", w.Code)
+	}
+	json.Unmarshal(w.Body.Bytes(), &got)
+	if got.Content != voice.Original() {
+		t.Error("activating 0 did not restore the original")
+	}
+	w = doJSON(t, srv, "GET", "/api/voice/prompt?version="+strconv.Itoa(saved.Version), nil)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "EXTRA LINE") {
+		t.Errorf("the saved version must still be fetchable after switching away from it: %d %s", w.Code, w.Body.String())
 	}
 }
 
@@ -341,7 +363,7 @@ func TestVoicePromptRejectionIsActionable(t *testing.T) {
 	srv, _ := newVoiceServer(t, nil)
 
 	broken := "---\nroles:\n  - {id: devops, es: D, en: D}\n---\n# Base\n\nno block\n"
-	w := doJSON(t, srv, "PUT", "/api/voice/prompt", map[string]string{"content": broken})
+	w := doJSON(t, srv, "PUT", "/api/voice/prompt", map[string]any{"content": broken, "new": true, "name": "x"})
 	if w.Code != 400 {
 		t.Fatalf("status %d, want 400", w.Code)
 	}
@@ -349,10 +371,24 @@ func TestVoicePromptRejectionIsActionable(t *testing.T) {
 		t.Errorf("the error should name the missing section: %s", w.Body.String())
 	}
 
-	// And the previous prompt is untouched.
+	// And nothing was saved.
 	w = doJSON(t, srv, "GET", "/api/voice/prompt", nil)
 	if strings.Contains(w.Body.String(), "no block") {
 		t.Error("a rejected save reached disk")
+	}
+}
+
+// TestVoicePromptOverwriteRejectsTheOriginal: PUT without new:true and
+// without a positive version id must not silently fall through to editing
+// the embedded original.
+func TestVoicePromptOverwriteRejectsTheOriginal(t *testing.T) {
+	srv, _ := newVoiceServer(t, nil)
+	w := doJSON(t, srv, "PUT", "/api/voice/prompt", map[string]any{"content": voice.Original()})
+	if w.Code != 400 {
+		t.Fatalf("status %d, want 400", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "cannot be modified") {
+		t.Errorf("the error should explain why: %s", w.Body.String())
 	}
 }
 
@@ -360,25 +396,45 @@ func TestVoicePromptVersionEndpoint(t *testing.T) {
 	srv, _ := newVoiceServer(t, nil)
 	orig := voice.Original()
 
+	var ids []int
 	for _, marker := range []string{"MARK-ONE", "MARK-TWO"} {
 		edited := strings.Replace(orig, "# Base", "# Base\n\n"+marker+".", 1)
-		if w := doJSON(t, srv, "PUT", "/api/voice/prompt", map[string]string{"content": edited}); w.Code != 200 {
-			t.Fatalf("PUT %s: %d", marker, w.Code)
+		w := doJSON(t, srv, "PUT", "/api/voice/prompt", map[string]any{"content": edited, "new": true, "name": marker})
+		if w.Code != 200 {
+			t.Fatalf("PUT %s: %d %s", marker, w.Code, w.Body.String())
 		}
+		var saved struct {
+			Version int `json:"version"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &saved); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, saved.Version)
 	}
 
-	w := doJSON(t, srv, "GET", "/api/voice/prompt?version=1", nil)
+	w := doJSON(t, srv, "GET", "/api/voice/prompt?version="+strconv.Itoa(ids[0]), nil)
 	if w.Code != 200 {
-		t.Fatalf("version 1: %d %s", w.Code, w.Body.String())
+		t.Fatalf("first saved version: %d %s", w.Code, w.Body.String())
 	}
 	if !strings.Contains(w.Body.String(), "MARK-ONE") {
-		t.Error("version 1 should hold the first edit")
+		t.Error("the first saved version should hold the first edit")
 	}
-	if w := doJSON(t, srv, "GET", "/api/voice/prompt?version=99", nil); w.Code != 404 {
+	// version=0 is always the embedded original, whatever else has been saved.
+	w = doJSON(t, srv, "GET", "/api/voice/prompt?version=0", nil)
+	if w.Code != 200 {
+		t.Fatalf("original: %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), "MARK-ONE") {
+		t.Error("version 0 must always be the untouched original")
+	}
+	if w := doJSON(t, srv, "GET", "/api/voice/prompt?version=99999", nil); w.Code != 404 {
 		t.Errorf("a missing version should 404, got %d", w.Code)
 	}
 	if w := doJSON(t, srv, "GET", "/api/voice/prompt?version=abc", nil); w.Code != 400 {
 		t.Errorf("a non-numeric version should 400, got %d", w.Code)
+	}
+	if w := doJSON(t, srv, "GET", "/api/voice/prompt?version=-1", nil); w.Code != 400 {
+		t.Errorf("a negative version should 400, got %d", w.Code)
 	}
 }
 
@@ -435,7 +491,7 @@ func TestVoiceEndpointsRequireAuth(t *testing.T) {
 		{"POST", "/api/voice/rewrite"},
 		{"GET", "/api/voice/prompt"},
 		{"PUT", "/api/voice/prompt"},
-		{"POST", "/api/voice/prompt/reset"},
+		{"POST", "/api/voice/prompt/activate"},
 	} {
 		req := httptest.NewRequest(ep.method, ep.path, bytes.NewReader([]byte("{}")))
 		req.Header.Set("Content-Type", "application/json")

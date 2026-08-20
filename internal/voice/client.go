@@ -153,11 +153,22 @@ func (s *Service) Transcribe(audio []byte, contentType, filename string) (string
 	return strings.TrimSpace(out.Text), nil
 }
 
-// RewriteResult is what the rewriter produces.
+// RewriteQuestion is the one thing, if anything, the model found genuinely
+// unclear in the request. Options is a short set of known readings for the
+// UI to offer as buttons; empty means the answer is open-ended, so the UI
+// falls back to free text.
+type RewriteQuestion struct {
+	Text    string   `json:"text"`
+	Options []string `json:"options,omitempty"`
+}
+
+// RewriteResult is what the rewriter produces. Question is nil once nothing
+// is left unclear — the normal case, and the only case once maxClarifyRounds
+// is reached.
 type RewriteResult struct {
-	Role      string   `json:"role"`
-	Prompt    string   `json:"prompt"`
-	Questions []string `json:"questions"`
+	Role     string           `json:"role"`
+	Prompt   string           `json:"prompt"`
+	Question *RewriteQuestion `json:"question,omitempty"`
 }
 
 // Answer is one clarifying question and what the user replied.
@@ -166,11 +177,21 @@ type Answer struct {
 	Answer   string `json:"answer"`
 }
 
+// maxClarifyRounds bounds how many times the UI will loop asking one question
+// and calling Rewrite again with it answered. It exists only so a model stuck
+// finding new things to ask cannot loop the UI forever — it is not a setting
+// for "how many questions to ask": the model decides that per request, asking
+// one at a time for as long as something is genuinely unclear and stopping
+// the moment it is not.
+const maxClarifyRounds = 6
+
 // Rewrite turns dictated text into a structured prompt.
 //
-// When answers are supplied this is the second pass of the clarification
-// round, and the model is told it may not ask again — one round only, so a
-// model that keeps finding things to ask cannot loop the UI forever.
+// len(answers) is which round this is: 0 is the first pass, and each answered
+// question the caller has accumulated advances it by one. Past
+// maxClarifyRounds the model is told this is the last round and may not ask
+// again, so a model that keeps finding things to ask cannot loop the UI
+// forever.
 func (s *Service) Rewrite(text, role string, answers []Answer) (*RewriteResult, error) {
 	cfg := s.Cfg()
 	if !cfg.Enabled {
@@ -212,16 +233,17 @@ func (s *Service) Rewrite(text, role string, answers []Answer) (*RewriteResult, 
 			role, strings.Join(prompt.RoleIDs(), ", "))
 	}
 
-	maxQ := cfg.Rewrite.MaxQuestions
+	system := prompt.System(role)
 	if len(answers) > 0 {
-		maxQ = 0
+		system += "\n\n# Continuing clarification\n\n" +
+			"The user has answered your previous question(s), included in order below the " +
+			"request. Fold them into the rewrite and, only if something is STILL genuinely " +
+			"unclear, ask ONE more question — never repeat one already answered."
 	}
-	system := prompt.System(role, maxQ)
-	if len(answers) > 0 {
-		system += "\n\n# This is the second pass\n\n" +
-			"The user has answered your clarifying questions; their answers are included " +
-			"below the request. Fold them into the rewrite. You may not ask anything " +
-			`further: return "questions": [].`
+	final := len(answers) >= maxClarifyRounds
+	if final {
+		system += "\n\nThis is the last round: you may not ask anything further. Return " +
+			`"question": null and give your best possible rewrite with what you have.`
 	}
 	if v := strings.TrimSpace(cfg.STT.Vocabulary); v != "" {
 		system += "\n\n# Vocabulary\n\nThese are the correct spellings of terms this " +
@@ -232,7 +254,7 @@ func (s *Service) Rewrite(text, role string, answers []Answer) (*RewriteResult, 
 	var user strings.Builder
 	user.WriteString(text)
 	if len(answers) > 0 {
-		user.WriteString("\n\n---\nAnswers to your questions:\n")
+		user.WriteString("\n\n---\nAnswers so far, in order:\n")
 		for _, a := range answers {
 			fmt.Fprintf(&user, "- Q: %s\n  A: %s\n", a.Question, a.Answer)
 		}
@@ -284,11 +306,8 @@ func (s *Service) Rewrite(text, role string, answers []Answer) (*RewriteResult, 
 		// report the role that was asked for rather than failing the request.
 		res.Role = role
 	}
-	if len(answers) > 0 {
-		res.Questions = nil
-	}
-	if maxQ >= 0 && len(res.Questions) > maxQ {
-		res.Questions = res.Questions[:maxQ]
+	if final {
+		res.Question = nil
 	}
 	return res, nil
 }
@@ -318,22 +337,33 @@ func parseRewrite(content string) (*RewriteResult, error) {
 		}
 		s = s[start : end+1]
 	}
-	var res RewriteResult
-	if err := json.Unmarshal([]byte(s), &res); err != nil {
+	var raw struct {
+		Role     string `json:"role"`
+		Prompt   string `json:"prompt"`
+		Question *struct {
+			Text    string   `json:"text"`
+			Options []string `json:"options"`
+		} `json:"question"`
+	}
+	if err := json.Unmarshal([]byte(s), &raw); err != nil {
 		return nil, fmt.Errorf("response was not JSON")
 	}
-	res.Prompt = strings.TrimSpace(res.Prompt)
+	res := &RewriteResult{Role: raw.Role, Prompt: strings.TrimSpace(raw.Prompt)}
 	if res.Prompt == "" {
 		return nil, fmt.Errorf("response carried no prompt")
 	}
-	kept := res.Questions[:0]
-	for _, q := range res.Questions {
-		if q = strings.TrimSpace(q); q != "" {
-			kept = append(kept, q)
+	if raw.Question != nil {
+		if text := strings.TrimSpace(raw.Question.Text); text != "" {
+			var opts []string
+			for _, o := range raw.Question.Options {
+				if o = strings.TrimSpace(o); o != "" {
+					opts = append(opts, o)
+				}
+			}
+			res.Question = &RewriteQuestion{Text: text, Options: opts}
 		}
 	}
-	res.Questions = kept
-	return &res, nil
+	return res, nil
 }
 
 // do runs a request and returns its body, mapping any failure to an Error.
