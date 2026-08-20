@@ -721,10 +721,13 @@
           </template>
         </div>
 
-        <!-- AskUserQuestion choice dialog: question + selectable options.
-             x-if (not x-show) so the subtree is not evaluated while hidden:
-             when live.meta.choice is null the inner bindings would throw. -->
-        <template x-if="live.meta && live.meta.waiting === 'choice' && live.meta.choice">
+        <!-- AskUserQuestion choice dialog, and command/file-edit/"trust this
+             folder?" approval dialogs: question + selectable options (both
+             render through the exact same numbered picker, so both carry the
+             same live.meta.choice shape — see parsePaneWaitingDetail). x-if
+             (not x-show) so the subtree is not evaluated while hidden: when
+             live.meta.choice is null the inner bindings would throw. -->
+        <template x-if="live.meta && (live.meta.waiting === 'choice' || live.meta.waiting === 'approval') && live.meta.choice">
           <div class="px-4 py-3 border-t border-gray-800 bg-bg/60 shrink-0 space-y-2">
             <div class="text-sm text-fg" x-text="live.meta.choice.question"></div>
             <div class="flex flex-col gap-1">
@@ -1072,8 +1075,12 @@
             <pre class="p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words"><code x-html="tileText(name)"></code></pre>
           </div>
 
-          <!-- Approval / choice: the extra value CCSM adds on top of the raw pane -->
-          <template x-if="grid.tiles[name].meta && grid.tiles[name].meta.waiting === 'choice' && grid.tiles[name].meta.choice">
+          <!-- Approval / choice: the extra value CCSM adds on top of the raw
+               pane. Both waiting reasons render through the same numbered
+               picker and carry the same choice shape (see
+               parsePaneWaitingDetail), so both show the question here instead
+               of a content-less approve button. -->
+          <template x-if="grid.tiles[name].meta && (grid.tiles[name].meta.waiting === 'choice' || grid.tiles[name].meta.waiting === 'approval') && grid.tiles[name].meta.choice">
             <div class="shrink-0 px-3 py-2 border-t border-gray-800 bg-warn/5">
               <div class="text-xs text-fg mb-1" x-text="grid.tiles[name].meta.choice.question"></div>
               <div class="flex flex-wrap gap-1">

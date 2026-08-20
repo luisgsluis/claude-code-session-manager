@@ -311,6 +311,46 @@ test('chat box: approval notice with Approve and Stop buttons', async ({ page })
   }
 });
 
+// Regression (the reported bug): an approval dialog (command/file-edit,
+// "trust this folder?", …) only ever showed a bare "Aprobar" button with no
+// hint of what was being approved — the backend now populates `choice` for
+// waiting=approval too (not just choice), so the panel must render the
+// question and its options must be real, clickable buttons, exactly like an
+// AskUserQuestion choice dialog.
+test('chat box: approval dialog shows what is being approved, and its options are clickable', async ({ page }) => {
+  const { server, state } = await startMockServer();
+  const port = server.address().port;
+  try {
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+
+    state.payload.waiting = 'approval';
+    state.payload.choice = {
+      question: '¿Confías en los archivos de esta carpeta?',
+      options: ['Sí, confío', 'No'],
+      selected: 0,
+    };
+    await page.goto(`http://127.0.0.1:${port}/`);
+    await page.waitForSelector('text=👁️', { timeout: 10000 });
+    await page.click('button[title]:has-text("👁️")');
+
+    const question = page.getByText('¿Confías en los archivos de esta carpeta?');
+    await expect(question).toBeVisible({ timeout: 10000 });
+
+    const noBtn = page.getByRole('button', { name: /No/ });
+    await expect(noBtn).toBeVisible();
+    await noBtn.click();
+    await page.waitForTimeout(500);
+
+    expect(state.choiceHistory, 'clicking "No" on an approval dialog should post {choice: 1}').toEqual([1]);
+    expect(state.keyHistory, 'the click must not fall back to a blind key press').not.toContain('enter');
+
+    expect(errors, errors.join('\n')).toEqual([]);
+  } finally {
+    server.close();
+  }
+});
+
 // The processing indicator (chat view only): while the assistant is working
 // (the pane carries the live status line) a compact animated row with the
 // status word appears above the input; it stays for the whole turn (even while
@@ -451,6 +491,45 @@ test('terminal grid: clicking a tile choice option posts its own index, not a bl
     await page.waitForTimeout(500);
 
     expect(state.choiceHistory, 'clicking "Ensalada" in a tile should post {choice: 1}').toEqual([1]);
+    expect(state.keyHistory, 'the tile click must not fall back to a blind key press').not.toContain('enter');
+
+    expect(errors, errors.join('\n')).toEqual([]);
+  } finally {
+    server.close();
+  }
+});
+
+// Grid-tile mirror of "chat box: approval dialog shows what is being
+// approved…" — same regression, same fix, other surface.
+test('terminal grid: a tile approval dialog shows its question and its options are clickable', async ({ page }) => {
+  const { server, state } = await startMockServer();
+  const port = server.address().port;
+  try {
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+
+    state.payload.waiting = 'approval';
+    state.payload.choice = {
+      question: '¿Confías en los archivos de esta carpeta?',
+      options: ['Sí, confío', 'No'],
+      selected: 0,
+    };
+    await page.goto(`http://127.0.0.1:${port}/`);
+    await page.waitForSelector('text=👁️', { timeout: 10000 });
+
+    await page.getByRole('button', { name: /Modo terminal/ }).click();
+    const tile = page.locator('.tgrid-tile');
+    await expect(tile).toBeVisible({ timeout: 10000 });
+
+    const question = page.getByText('¿Confías en los archivos de esta carpeta?');
+    await expect(question).toBeVisible({ timeout: 10000 });
+
+    const noBtn = tile.getByRole('button', { name: /No/ });
+    await expect(noBtn).toBeVisible();
+    await noBtn.click();
+    await page.waitForTimeout(500);
+
+    expect(state.choiceHistory, 'clicking "No" in a tile approval dialog should post {choice: 1}').toEqual([1]);
     expect(state.keyHistory, 'the tile click must not fall back to a blind key press').not.toContain('enter');
 
     expect(errors, errors.join('\n')).toEqual([]);

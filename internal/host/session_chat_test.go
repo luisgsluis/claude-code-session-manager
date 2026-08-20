@@ -364,6 +364,47 @@ func TestSessionChoice(t *testing.T) {
 			t.Error("expected an error when no choice dialog is open")
 		}
 	})
+
+	// An approval dialog (command/file-edit/"trust this folder?") renders
+	// through the identical numbered picker a "choice" dialog does — now that
+	// its content is actually shown to the user (see TestPaneWaitingDetailID),
+	// its option buttons must be real, not just the plain approve/Enter one:
+	// e.g. picking "No" on a file-edit approval instead of always confirming
+	// whichever option happens to be highlighted.
+	t.Run("approval dialog options are selectable too, not just choice", func(t *testing.T) {
+		os.Remove(sendkeys)
+		h := fakeHost(t, map[string]string{"FAKE_TMUX_SENDKEYS": sendkeys, "FAKE_TMUX_LINE": approvalPane(0)})
+		if _, err := h.sessionChoice("3", 2); err != nil {
+			t.Fatalf("sessionChoice on an approval dialog: %v", err)
+		}
+		data, _ := os.ReadFile(sendkeys)
+		lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+		if len(lines) != 3 {
+			t.Fatalf("expected 2 Down presses + 1 Enter, got %d: %q", len(lines), lines)
+		}
+		if lines[0] != lines[1] || !strings.HasSuffix(lines[0], "Down") {
+			t.Errorf("expected two Down presses, got %q, %q", lines[0], lines[1])
+		}
+	})
+}
+
+// approvalPane is a fixture file-edit approval picker (3 options, cursor on
+// index sel), matching Claude Code's real rendering (see
+// TestPaneWaitingDetailID's "edit" fixture) — same numbered-picker shape as
+// choicePane, different footer ("Esc to cancel · Tab to amend", no "Enter to
+// select"), which is what makes paneWaitingReason classify it as "approval"
+// instead of "choice".
+func approvalPane(sel int) string {
+	labels := []string{"Yes", "Yes, allow all edits during this session (shift+tab)", "No"}
+	pane := " Edit file\n claude.sh\n Do you want to make this edit to claude.sh?\n"
+	for i, l := range labels {
+		cursor := "  "
+		if i == sel {
+			cursor = "❯ "
+		}
+		pane += cursor + strconv.Itoa(i+1) + ". " + l + "\n"
+	}
+	return pane + "Esc to cancel · Tab to amend"
 }
 
 func TestPanePIDAndProcRead(t *testing.T) {

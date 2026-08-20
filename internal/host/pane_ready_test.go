@@ -88,3 +88,72 @@ func TestEnsurePaneReadyDisabledInTests(t *testing.T) {
 		t.Errorf("ensurePaneReady took %v with paneReadyTimeout=0, want ~instant", elapsed)
 	}
 }
+
+// TestSessionSendTextRejectedWhileApprovalBlocks reproduces the second half
+// of the production incident (see TestSessionSendWaitsForPaneReady's
+// docstring): ensurePaneReady alone treats a rendered approval dialog as
+// "ready" (its own frame IS rendered), so text sent while a "trust this
+// folder?"-style dialog is still up used to be typed straight into it — that
+// dialog reads raw keystrokes through its own picker, not a readline, so the
+// text just sat unread and merged with whatever was typed once the dialog
+// finally cleared, e.g. "/model sonnetempezamos un proyecto nuevo". Once the
+// dialog is still open past paneReadyTimeout, sessionSend must now refuse
+// the text outright instead of sending it into the still-blocked pane.
+func TestSessionSendTextRejectedWhileApprovalBlocks(t *testing.T) {
+	sends := filepath.Join(t.TempDir(), "sends")
+	if err := os.WriteFile(sends, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	h := fakeHost(t, map[string]string{
+		"FAKE_TMUX_LINE":         approvalPane(0), // stays blocked the whole poll window
+		"FAKE_TMUX_SENDKEYS":     sends,
+		"FAKE_TMUX_PANE_SESSION": "3",
+		"FAKE_TMUX_PANE_PID":     "12345",
+	})
+	h.paneReadyTimeout = 250 * time.Millisecond // short bound so the test stays fast
+
+	if _, err := h.Exec("session-send", map[string]string{"name": "3", "text": "/model sonnet"}); err == nil {
+		t.Fatal("expected session-send to reject text while an approval dialog blocks the pane, got no error")
+	}
+	sent, err := os.ReadFile(sends)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(sent), "/model sonnet") {
+		t.Errorf("text was sent into a still-blocked pane: %q", sent)
+	}
+}
+
+// TestSessionSendKeyNotBlockedByApproval is the flip side: a special key
+// aimed AT the dialog itself — the "Aprobar" button's Enter — must NOT wait
+// for paneTextSafe (which by definition never becomes true while the dialog
+// is up): it only needs ensurePaneReady's weaker "some frame is rendered"
+// bar, or approving a dialog would hang for paneReadyTimeout every time.
+func TestSessionSendKeyNotBlockedByApproval(t *testing.T) {
+	sends := filepath.Join(t.TempDir(), "sends")
+	if err := os.WriteFile(sends, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	h := fakeHost(t, map[string]string{
+		"FAKE_TMUX_LINE":         approvalPane(0),
+		"FAKE_TMUX_SENDKEYS":     sends,
+		"FAKE_TMUX_PANE_SESSION": "3",
+		"FAKE_TMUX_PANE_PID":     "12345",
+	})
+	h.paneReadyTimeout = 2 * time.Second // long enough that a wrongly-blocked call would fail this test's own timeout expectation
+
+	start := time.Now()
+	if _, err := h.Exec("session-send", map[string]string{"name": "3", "keys": "enter"}); err != nil {
+		t.Fatalf("session-send enter: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Errorf("approving took %v, want ~instant (must not wait on paneTextSafe)", elapsed)
+	}
+	sent, err := os.ReadFile(sends)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sent), "\r") {
+		t.Errorf("expected the approve Enter to reach tmux, got %q", sent)
+	}
+}

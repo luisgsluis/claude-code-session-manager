@@ -1,5 +1,24 @@
 # Changelog
 
+## [3.1.2] — 2026-08-20
+
+### Fixed
+- **A message sent right after a fresh session hit a "trust this folder?"-style approval
+  dialog could merge with the text typed next** (e.g. a model switch landing as
+  `/model sonnetempezamos un proyecto nuevo`). The dialog's own frame renders, so the
+  existing pre-first-frame guard waved the send through, but the dialog reads raw
+  keystrokes through its own picker rather than a readline — the text just sat unread and
+  merged with whatever was typed once it cleared. Text sends now wait specifically for the
+  pane to be clear of any known dialog (`ensureTextReady`), and — unlike the original
+  boot-race guard — refuse outright instead of sending into a pane still blocked past the
+  timeout.
+- **A pending approval (command, file edit, "trust this folder?", …) only ever showed a
+  bare "Aprobar" button with nothing to say what was being approved.** The backend already
+  parsed the dialog's question and options for the identical AskUserQuestion picker
+  shape but only surfaced it for choice dialogs; it now does the same for approval, so the
+  live chat and terminal-grid tiles show the actual question and let you click any option
+  (e.g. "No"), not just confirm whatever happens to be highlighted.
+
 ## [3.1.0] — 2026-08-20
 
 ### Added

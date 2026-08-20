@@ -1540,17 +1540,37 @@ func TestPaneWaitingReason(t *testing.T) {
 // falls back to the reason string itself.
 func TestPaneWaitingDetailID(t *testing.T) {
 	approval := " Verify [1m] applied\n This command requires approval\n Do you want to proceed?\n ❯ 1. Yes\n Esc to cancel · Tab to amend · ctrl+e to explain"
-	if _, _, id := parsePaneWaitingDetail(approval); id != "Do you want to proceed?" {
+	reason, c, id := parsePaneWaitingDetail(approval)
+	if id != "Do you want to proceed?" {
 		t.Errorf("approval id = %q, want the question line", id)
+	}
+	// The UI has nothing to show a pending approval's content with unless
+	// choice is populated for "approval" too, not just "choice" — see
+	// sessionChat's `choice` field and index.html's approval panel.
+	if reason != "approval" || c == nil {
+		t.Fatalf("approval reason/choice = %q/%v, want approval/non-nil", reason, c)
+	}
+	if q := c["question"]; q != "Do you want to proceed?" {
+		t.Errorf("approval choice.question = %q, want the question line", q)
+	}
+	if opts, _ := c["options"].([]string); len(opts) != 1 || opts[0] != "Yes" {
+		t.Errorf("approval choice.options = %v, want [Yes]", opts)
 	}
 
 	edit := " Edit file\n claude.sh\n Do you want to make this edit to claude.sh?\n ❯ 1. Yes\n   2. Yes, allow all edits during this session (shift+tab)\n   3. No\n Esc to cancel · Tab to amend"
-	if _, _, id := parsePaneWaitingDetail(edit); id != "Do you want to make this edit to claude.sh?" {
+	reason, c, id = parsePaneWaitingDetail(edit)
+	if id != "Do you want to make this edit to claude.sh?" {
 		t.Errorf("edit-approval id = %q, want the question line", id)
+	}
+	if reason != "approval" || c == nil {
+		t.Fatalf("edit-approval reason/choice = %q/%v, want approval/non-nil", reason, c)
+	}
+	if opts, _ := c["options"].([]string); len(opts) != 3 || opts[2] != "No" {
+		t.Errorf("edit-approval choice.options = %v, want 3 options ending in No", opts)
 	}
 
 	choice := "☐ Comentario\n¿Qué comentario quieres dejar en claude.sh?\n❯ 1. Mantener el actual\n  2. Describe acción exacta\nEnter to select · ↑/↓ to navigate · n to add notes · Esc to cancel"
-	reason, c, id := parsePaneWaitingDetail(choice)
+	reason, c, id = parsePaneWaitingDetail(choice)
 	if reason != "choice" || id != "¿Qué comentario quieres dejar en claude.sh?" {
 		t.Errorf("choice reason/id = %q/%q", reason, id)
 	}

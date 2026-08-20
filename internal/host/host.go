@@ -2930,7 +2930,12 @@ func parsePaneWaitingDetail(pane string) (reason string, choice map[string]any, 
 	if !ok {
 		return reason, nil, reason
 	}
-	if reason == "choice" {
+	// "approval" renders through the exact same numbered "❯ N. label" picker
+	// as "choice" (see this function's own docstring) — populate choice for
+	// it too, not just "choice", so the client can actually show what a
+	// pending approval (command, file edit, "trust this folder?", …) is
+	// asking, instead of a bare "approve" button with no visible content.
+	if reason == "choice" || reason == "approval" {
 		choice = map[string]any{"question": q, "options": opts, "selected": sel}
 	}
 	return reason, choice, q
@@ -3031,6 +3036,66 @@ func (h *Host) ensurePaneReady(name string) {
 	}
 }
 
+// paneTextSafe reports whether the pane is in its normal running state (mode
+// badge visible), as opposed to blocked on an approval/choice/setup dialog.
+// Those dialogs read raw keystrokes one at a time through Claude Code's own
+// picker (arrows, Enter, Escape) instead of through its normal readline —
+// literal text typed while one is up does not reach any field at all, exactly
+// like text typed before the TUI's first frame renders (see ensurePaneReady):
+// it sits unread in the pty's raw buffer and gets consumed as one line,
+// merged with whatever is typed next, the moment the dialog clears and the
+// readline finally activates. paneReady (any rendered frame, dialog included)
+// is the right gate for a key aimed AT the dialog itself (Enter to approve,
+// Escape, ↑/↓ — see sessionSend's key branch and sessionChoice); it is the
+// wrong one for literal text, which needs the badge specifically.
+func (h *Host) paneTextSafe(name string) bool {
+	// Checked first, not just as a fallback: modeFromBadge matches its
+	// keywords ("edit", "auto", "plan", …) as plain substrings, and a
+	// file-edit approval's own option text routinely contains one for real
+	// ("Yes, allow all edits during this session") — paneMode() alone would
+	// misread that as an idle "edit" mode badge and call the pane text-safe
+	// while it is still very much blocked on the dialog.
+	if w, _ := h.paneWaitingWithChoice(name); w != "" {
+		return false
+	}
+	return h.paneMode(name) != ""
+}
+
+// ensureTextReady waits (bounded by paneReadyTimeout) for a session's pane to
+// clear any blocking approval/choice/setup dialog before literal text is
+// typed into it — see paneTextSafe. Observed in production: a model switch
+// sent right after session creation, while Claude Code's own "trust this
+// folder" prompt was still up (its own frame is rendered, so ensurePaneReady
+// alone waves it through), merged with the user's next chat message into one
+// garbled command ("/model sonnetempezamos un proyecto nuevo") once the
+// dialog was dismissed and its buffered keystrokes finally reached the
+// readline together with the next ones. Unlike ensurePaneReady this does NOT
+// fail open when a known dialog is the reason the pane is still blocked past
+// the deadline: sending text into it would reproduce the exact corruption
+// this exists to prevent, so the caller gets a clear, actionable error
+// instead — the dialog's own content is now surfaced to the UI (see
+// sessionChat's `choice` field, populated for "approval" too, not just
+// "choice") so there is something for the user to act on. A pane that is
+// merely slow to boot (no known dialog matched, e.g. a heavy CLAUDE.md/MCP
+// project) keeps the old fail-open behaviour: blocking a message forever on
+// an unreadable pane would be worse than best-effort sending it.
+func (h *Host) ensureTextReady(name string) error {
+	if h.paneTextSafe(name) || h.paneReadyTimeout <= 0 {
+		return nil
+	}
+	deadline := time.Now().Add(h.paneReadyTimeout)
+	for time.Now().Before(deadline) {
+		time.Sleep(paneReadyPoll)
+		if h.paneTextSafe(name) {
+			return nil
+		}
+	}
+	if reason, _ := h.paneWaitingWithChoice(name); reason != "" {
+		return errBad("session is waiting on a %s dialog — resolve it before sending text", reason)
+	}
+	return nil
+}
+
 // sessionSend types a message into a live session (literal text + Enter) or
 // sends one whitelisted special key. Mirrors claudeRename's send-keys pattern.
 // Locked per session (sessionSendLock): the literal-text and Enter send-keys
@@ -3047,7 +3112,6 @@ func (h *Host) sessionSend(name, text, key string) (map[string]any, error) {
 	if !h.sessionAlive(name) {
 		return nil, errNotFound("session not found: %s", name)
 	}
-	h.ensurePaneReady(name)
 	if text == "" && key == "" {
 		return nil, errBad("nothing to send")
 	}
@@ -3055,11 +3119,15 @@ func (h *Host) sessionSend(name, text, key string) (map[string]any, error) {
 		if len([]rune(text)) > MaxSendLen {
 			return nil, errBad("text too long (max %d chars)", MaxSendLen)
 		}
+		if err := h.ensureTextReady(name); err != nil {
+			return nil, err
+		}
 		if err := h.sendText(name, text); err != nil {
 			return nil, err
 		}
 		return map[string]any{"session": name, "sent": "text"}, nil
 	}
+	h.ensurePaneReady(name)
 	tmuxKey, ok := tmuxKeyMap[key]
 	if !ok {
 		return nil, errBad("unsupported key: %s", key)
@@ -3091,16 +3159,21 @@ func (h *Host) pressEnter(session string) error {
 	return nil
 }
 
-// sessionChoice picks one option of an open AskUserQuestion picker by index
-// and confirms it — the atomic backend counterpart of clicking an option in
-// the UI. Before this, each option button sent the same sendKey('enter')
-// regardless of which one was clicked: it confirmed whatever the pane's
-// cursor already happened to be on, silently ignoring the option the user
-// actually picked unless it was already the highlighted one. Locked and
-// re-reading the pane itself (not trusting the client's last-known selected
-// index, which can be stale by the time the click arrives) makes clicking
-// any option move the cursor there before submitting, matching the picker's
-// own "Enter or click to select" hint.
+// sessionChoice picks one option of an open AskUserQuestion picker, or of an
+// approval dialog (command/file-edit/"trust this folder?" — same numbered
+// picker, see parsePaneWaitingDetail), by index and confirms it — the atomic
+// backend counterpart of clicking an option in the UI. Before this, each
+// option button sent the same sendKey('enter') regardless of which one was
+// clicked: it confirmed whatever the pane's cursor already happened to be
+// on, silently ignoring the option the user actually picked unless it was
+// already the highlighted one. Locked and re-reading the pane itself (not
+// trusting the client's last-known selected index, which can be stale by the
+// time the click arrives) makes clicking any option move the cursor there
+// before submitting, matching the picker's own "Enter or click to select"
+// hint. Accepting "approval" here too is what lets an approval dialog's
+// options be real buttons instead of plain text now that they are shown at
+// all — e.g. picking "No" instead of always confirming the highlighted
+// (usually "Yes") option via the plain approve button.
 func (h *Host) sessionChoice(name string, index int) (map[string]any, error) {
 	mu := h.sessionSendLock(name)
 	mu.Lock()
@@ -3110,7 +3183,7 @@ func (h *Host) sessionChoice(name string, index int) (map[string]any, error) {
 		return nil, errNotFound("session not found: %s", name)
 	}
 	reason, choice := h.paneWaitingWithChoice(name)
-	if reason != "choice" || choice == nil {
+	if (reason != "choice" && reason != "approval") || choice == nil {
 		return nil, errBad("no choice dialog is open")
 	}
 	options := choice["options"].([]string)
