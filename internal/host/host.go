@@ -484,8 +484,26 @@ func (h *Host) rcStatusLive(session string) string {
 // a perfilSinRC profile (deepseek, custom base URL), the process has no
 // Anthropic-facing bridge to report through, so the Claude app only sees the
 // connection drop, not an archive. Staged exactly like a launch
-// (lanzarConStaging): bootstrap the clean profile first, kill, then restore
-// the profile that was active.
+// (lanzarConStaging), but the wait it needs is NOT the bridge: the bridge is
+// established once at connect time and survives a profile switch (Phase 4 of
+// lanzarConStaging), so it's already up here — polling for it proves nothing
+// about whether the kill will report as an archive.
+//
+// The sequence is: apply the bootstrap profile → settle → kill → settle →
+// restore the target profile. Neither settle point has anything to poll for
+// from the host side — not the live process picking up settings.json (no
+// observable signal short of the process's own next turn), not the killed
+// process's shutdown (tmux forgets the session the instant the kill signal is
+// sent, well before the process finishes exiting, so has-session/sessionAlive
+// proves nothing there either) — so both are fixed pauses. These are their
+// own constants, deliberately not wired to config/flags like rcSettleSeconds
+// (the launch/resume settle): that one is a confirmation margin held while
+// polling a real signal (bridge+idle), this pair is not.
+var (
+	archiveSettleBeforeKill = 1 * time.Second
+	archiveSettleAfterKill  = 1 * time.Second
+)
+
 func (h *Host) tmuxKill(name string) error {
 	activo := h.activeProfileName()
 	staging := activo != "" && perfilSinRC(h.profilesPath+"/"+activo+".json") && h.stagingAvailable()
@@ -493,11 +511,18 @@ func (h *Host) tmuxKill(name string) error {
 		if err := h.applyProfile(h.rcBootstrap); err != nil {
 			return errServer("bootstrap profile: %v", err)
 		}
-		defer h.applyProfile(activo) // restore; best effort
+		time.Sleep(archiveSettleBeforeKill) // let the live process settle on the bootstrap profile before it's killed
 	}
 	out, err := exec.Command(h.tmuxBinary, "kill-session", "-t", "="+name).CombinedOutput()
 	if err != nil {
+		if staging {
+			h.applyProfile(activo) // restore; best effort
+		}
 		return errServer("tmux kill-session: %s", strings.TrimSpace(string(out)))
+	}
+	if staging {
+		time.Sleep(archiveSettleAfterKill) // let the killed process finish reporting the archive before restoring
+		h.applyProfile(activo)             // restore; best effort
 	}
 	return nil
 }

@@ -254,8 +254,14 @@ func TestSessionRcNoBootstrap(t *testing.T) {
 // TestTmuxKillArchiveStaging: archiving (killing) a session while the active
 // profile is perfilSinRC must stage through the bootstrap profile so the kill
 // reaches the Claude app as an archive, not a bare disconnect, then restore
-// the profile that was active.
+// the profile that was active. Settle margins zeroed here so this only checks
+// the end state (kill happened, target profile restored) — the timing itself
+// is covered separately below.
 func TestTmuxKillArchiveStaging(t *testing.T) {
+	old1, old2 := archiveSettleBeforeKill, archiveSettleAfterKill
+	archiveSettleBeforeKill, archiveSettleAfterKill = 0, 0
+	defer func() { archiveSettleBeforeKill, archiveSettleAfterKill = old1, old2 }()
+
 	kills := filepath.Join(t.TempDir(), "kills.txt")
 	h := fakeHost(t, map[string]string{"FAKE_TMUX_KILLS": kills})
 	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)
@@ -272,6 +278,43 @@ func TestTmuxKillArchiveStaging(t *testing.T) {
 		t.Errorf("kills marker: %q", got)
 	}
 	// The target profile must be restored after the staged kill.
+	if settings := h.readSettings(t); !strings.Contains(settings, "apiKeyHelper") {
+		t.Errorf("settings not restored to target after archive: %s", settings)
+	}
+}
+
+// TestTmuxKillArchiveStagingSettles: the staged archive is change → settle →
+// kill → settle → change back. Neither settle point has anything to poll for
+// from the host side (not the live process picking up settings.json, not the
+// killed process's own shutdown — tmux forgets the session the instant the
+// kill signal is sent, well before the process actually exits), so both are
+// fixed pauses (archiveSettleBeforeKill/archiveSettleAfterKill). Forcing them
+// down here proves both actually run — a plain apply→kill→restore with no
+// wait at all would finish in well under a millisecond.
+func TestTmuxKillArchiveStagingSettles(t *testing.T) {
+	old1, old2 := archiveSettleBeforeKill, archiveSettleAfterKill
+	archiveSettleBeforeKill, archiveSettleAfterKill = 50*time.Millisecond, 50*time.Millisecond
+	defer func() { archiveSettleBeforeKill, archiveSettleAfterKill = old1, old2 }()
+
+	kills := filepath.Join(t.TempDir(), "kills.txt")
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_KILLS": kills})
+	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)
+	h.writeProfile(t, "deepseek", `{"apiKeyHelper":"/x/claude-apikey"}`)
+	if err := h.applyProfile("deepseek"); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	if _, err := h.Exec("tmux-kill", map[string]string{"name": "3"}); err != nil {
+		t.Fatalf("tmux-kill: %v", err)
+	}
+	if d := time.Since(start); d < 90*time.Millisecond {
+		t.Errorf("staged archive took %v; want >= ~100ms (two 50ms settle margins, before and after the kill)", d)
+	}
+	got, _ := os.ReadFile(kills)
+	if !strings.Contains(string(got), "=3") {
+		t.Errorf("kills marker: %q", got)
+	}
 	if settings := h.readSettings(t); !strings.Contains(settings, "apiKeyHelper") {
 		t.Errorf("settings not restored to target after archive: %s", settings)
 	}
