@@ -1126,6 +1126,8 @@
                 class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors disabled:opacity-50">✨</button>
               <button @click="sendTileKey(name, 'escape')" :title="t('chat_stop_title')"
                 class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors">⏹</button>
+              <button @click="sendTileText(name)" :disabled="grid.tiles[name].sending" :title="t('chat_send')"
+                class="shrink-0 bg-accent text-white rounded-lg px-2 py-1 text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-opacity">➤</button>
             </div>
           </div>
         </div>

@@ -71,6 +71,33 @@ func TestSendTextShortUsesSendKeys(t *testing.T) {
 	}
 }
 
+// TestSendTextShortMultilineUsesPasteBuffer: a short message (well under
+// pasteThreshold) with embedded newlines — a paragraph typed with Shift+Enter
+// in the chat box — must still go through the paste transport, not send-keys.
+// send-keys -l ships embedded LF bytes completely untranslated (measured on
+// tmux 3.5a), and the TUI's keypress parser treats a bare LF as Enter just
+// like CR, so a short multi-line message sent as keystrokes is submitted once
+// per line instead of once as a whole. Only length used to gate the
+// transport; this is the regression that slipped through that gap.
+func TestSendTextShortMultilineUsesPasteBuffer(t *testing.T) {
+	p := newSendProbe(t, nil)
+	short := "línea 1\nlínea 2\nlínea 3" // well under pasteThreshold
+
+	if _, err := p.h.sessionSend("3", short, ""); err != nil {
+		t.Fatalf("sessionSend: %v", err)
+	}
+	if got := p.pasted(); got != short {
+		t.Errorf("short multi-line text did not go through paste-buffer: got %q, want %q", got, short)
+	}
+	args := p.pasteArgs()
+	if !strings.Contains(args, "-r") {
+		t.Errorf("paste-buffer must pass -r or every newline submits the message: %q", args)
+	}
+	if got := p.sentKeys(); strings.Contains(got, "línea 1") {
+		t.Errorf("short multi-line text leaked into send-keys instead of paste: %q", got)
+	}
+}
+
 // TestSendTextLongUsesPasteBuffer covers the new transport end to end: the
 // message reaches tmux through a buffer, and an Enter still follows so it is
 // actually submitted.

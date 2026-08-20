@@ -428,7 +428,7 @@ func TestRCStatusBranches(t *testing.T) {
 	}
 }
 
-func TestClaudeNewRCCleanProfile(t *testing.T) {
+func TestClaudeNewExplicitRCProfileAppliesGlobally(t *testing.T) {
 	h := fakeHost(t, map[string]string{"FAKE_TMUX_LINE": "/rc connected"})
 	h.writeProfile(t, "estandar", `{"model":"sonnet","remoteControlAtStartup":true}`)
 
@@ -440,9 +440,10 @@ func TestClaudeNewRCCleanProfile(t *testing.T) {
 	if out["session"] != "3" || out["status"] != "rc_connected" {
 		t.Errorf("out: %+v", out)
 	}
-	// RC-clean profile is applied per-session, settings.json stays untouched.
-	if _, err := os.Stat(h.settingsPath); !os.IsNotExist(err) {
-		t.Errorf("settings.json should not be written for RC-clean profiles")
+	// Picking a profile in advanced creation is exactly like switching it from
+	// the profile menu first: it becomes the active profile globally.
+	if got := h.readSettings(t); !strings.Contains(got, "sonnet") {
+		t.Errorf("settings.json not switched to the chosen profile: %s", got)
 	}
 }
 

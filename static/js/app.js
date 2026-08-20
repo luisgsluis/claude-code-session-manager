@@ -696,6 +696,13 @@ function ccsmApp() {
     // (see initGridNarrowTrack): below that width the mosaic layout is
     // unusable, so tiles default to minimized and only one is ever shown at
     // a time (openGridTile/restoreTile).
+    // Touch/coarse-pointer devices (phones, tablets) have no Shift key on
+    // their on-screen keyboard, so Enter-to-send can't be paired with
+    // Shift+Enter for a newline there: every bare Enter sent immediately,
+    // splitting one multi-line message typed on a phone into several. On
+    // these devices Enter always inserts a newline; sending is via the
+    // button only. Desktop keyboards keep Enter=send / Shift+Enter=newline.
+    coarsePointer: window.matchMedia('(pointer: coarse)').matches,
     grid: { open: false, zoomed: null, minimized: {}, tiles: {}, narrow: window.matchMedia('(max-width: 1023px)').matches },
     rename: { open: false, session: '', tmuxName: '', claudeName: '' },
     profViewer: { open: false, name: '', html: '' },
@@ -1433,8 +1440,9 @@ function ccsmApp() {
     // up inserting a newline without sending. So the decision is made here with
     // shiftKey instead of relying on .exact.
     onChatKeydown(e) {
-      if (e.shiftKey) return;   // Shift+Enter: default behaviour (newline)
-      e.preventDefault();       // Enter: stop the newline and send
+      if (e.shiftKey) return;          // Shift+Enter: default behaviour (newline)
+      if (this.coarsePointer) return;  // touch: no Shift key, Enter is always a newline
+      e.preventDefault();              // Enter: stop the newline and send
       this.sendChat();
     },
 
@@ -1813,8 +1821,9 @@ function ccsmApp() {
     },
 
     onTileKeydown(e, name) {
-      if (e.shiftKey) return;  // Shift+Enter: newline
-      e.preventDefault();      // Enter: send
+      if (e.shiftKey) return;          // Shift+Enter: newline
+      if (this.coarsePointer) return;  // touch: no Shift key, Enter is always a newline
+      e.preventDefault();              // Enter: send
       this.sendTileText(name);
     },
 

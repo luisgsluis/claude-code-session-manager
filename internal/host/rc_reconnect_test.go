@@ -251,6 +251,74 @@ func TestSessionRcNoBootstrap(t *testing.T) {
 	}
 }
 
+// TestTmuxKillArchiveStaging: archiving (killing) a session while the active
+// profile is perfilSinRC must stage through the bootstrap profile so the kill
+// reaches the Claude app as an archive, not a bare disconnect, then restore
+// the profile that was active.
+func TestTmuxKillArchiveStaging(t *testing.T) {
+	kills := filepath.Join(t.TempDir(), "kills.txt")
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_KILLS": kills})
+	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)
+	h.writeProfile(t, "deepseek", `{"apiKeyHelper":"/x/claude-apikey"}`)
+	if err := h.applyProfile("deepseek"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := h.Exec("tmux-kill", map[string]string{"name": "3"}); err != nil {
+		t.Fatalf("tmux-kill: %v", err)
+	}
+	got, _ := os.ReadFile(kills)
+	if !strings.Contains(string(got), "=3") {
+		t.Errorf("kills marker: %q", got)
+	}
+	// The target profile must be restored after the staged kill.
+	if settings := h.readSettings(t); !strings.Contains(settings, "apiKeyHelper") {
+		t.Errorf("settings not restored to target after archive: %s", settings)
+	}
+}
+
+// TestTmuxKillArchiveNoBootstrap: without the staging profile the archive
+// dance is impossible, so the kill must still go through untouched rather
+// than fail the whole archive over a missing bootstrap profile.
+func TestTmuxKillArchiveNoBootstrap(t *testing.T) {
+	kills := filepath.Join(t.TempDir(), "kills.txt")
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_KILLS": kills})
+	// No "estandar" bootstrap profile written.
+	h.writeProfile(t, "deepseek", `{"apiKeyHelper":"/x/claude-apikey"}`)
+	if err := h.applyProfile("deepseek"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := h.Exec("tmux-kill", map[string]string{"name": "3"}); err != nil {
+		t.Fatalf("tmux-kill sin bootstrap falló: %v", err)
+	}
+	got, _ := os.ReadFile(kills)
+	if !strings.Contains(string(got), "=3") {
+		t.Errorf("kills marker: %q", got)
+	}
+	if settings := h.readSettings(t); !strings.Contains(settings, "apiKeyHelper") {
+		t.Errorf("settings should stay untouched without a bootstrap profile: %s", settings)
+	}
+}
+
+// TestTmuxKillArchiveNoStagingWhenRCProfile: archiving under a profile that
+// already has RC (not perfilSinRC) must not touch settings.json at all.
+func TestTmuxKillArchiveNoStagingWhenRCProfile(t *testing.T) {
+	kills := filepath.Join(t.TempDir(), "kills.txt")
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_KILLS": kills})
+	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)
+	if err := h.applyProfile("estandar"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := h.Exec("tmux-kill", map[string]string{"name": "3"}); err != nil {
+		t.Fatalf("tmux-kill: %v", err)
+	}
+	if settings := h.readSettings(t); !strings.Contains(settings, "sonnet") {
+		t.Errorf("settings changed without needing staging: %s", settings)
+	}
+}
+
 // spawnRcSession starts a long-running shell whose argv carries --remote-control
 // and a pinned --session-id, as a CCSM-launched Claude does.
 func spawnRcSession(t *testing.T, id string) int {

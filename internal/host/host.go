@@ -480,7 +480,21 @@ func (h *Host) rcStatusLive(session string) string {
 	return "rc_pending"
 }
 
+// tmuxKill kills a tmux session — the "archive" action in the UI. Killed under
+// a perfilSinRC profile (deepseek, custom base URL), the process has no
+// Anthropic-facing bridge to report through, so the Claude app only sees the
+// connection drop, not an archive. Staged exactly like a launch
+// (lanzarConStaging): bootstrap the clean profile first, kill, then restore
+// the profile that was active.
 func (h *Host) tmuxKill(name string) error {
+	activo := h.activeProfileName()
+	staging := activo != "" && perfilSinRC(h.profilesPath+"/"+activo+".json") && h.stagingAvailable()
+	if staging {
+		if err := h.applyProfile(h.rcBootstrap); err != nil {
+			return errServer("bootstrap profile: %v", err)
+		}
+		defer h.applyProfile(activo) // restore; best effort
+	}
 	out, err := exec.Command(h.tmuxBinary, "kill-session", "-t", "="+name).CombinedOutput()
 	if err != nil {
 		return errServer("tmux kill-session: %s", strings.TrimSpace(string(out)))
@@ -527,29 +541,30 @@ func (h *Host) claudeNew(args map[string]string) (map[string]string, error) {
 	// its transcript jsonl right away (the id travels in the process argv).
 	sessionID := newUUID()
 
-	if profile == "" {
-		if activo := h.activeProfileName(); activo != "" && perfilSinRC(h.profilesPath+"/"+activo+".json") {
-			session, status, err = h.lanzarConStaging(activo, "--session-id "+sessionID, name, cwd)
-		} else {
-			waitRC = true
-			session, err = h.newSession("--remote-control --session-id "+sessionID, name, cwd)
-			if err == nil {
-				status = h.rcStatus(session)
-			}
-		}
+	// Picking a profile in advanced session creation is exactly like switching
+	// it from the profile menu first and then creating a plain session: it
+	// becomes the active profile globally (settings.json), not just a
+	// one-session override, so every other live session sees it too.
+	activo := profile
+	if activo == "" {
+		activo = h.activeProfileName()
 	} else {
 		profileFile := h.profilesPath + "/" + profile + ".json"
 		if _, statErr := os.Stat(profileFile); statErr != nil {
 			return nil, errNotFound("profile not found: %s", profile)
 		}
-		if perfilSinRC(profileFile) {
-			session, status, err = h.lanzarConStaging(profile, "--session-id "+sessionID, name, cwd)
-		} else {
-			waitRC = true
-			session, err = h.newSession("--settings "+profileFile+" --remote-control --session-id "+sessionID, name, cwd)
-			if err == nil {
-				status = h.rcStatus(session)
-			}
+		if err := h.applyProfile(profile); err != nil {
+			return nil, err
+		}
+	}
+
+	if activo != "" && perfilSinRC(h.profilesPath+"/"+activo+".json") {
+		session, status, err = h.lanzarConStaging(activo, "--session-id "+sessionID, name, cwd)
+	} else {
+		waitRC = true
+		session, err = h.newSession("--remote-control --session-id "+sessionID, name, cwd)
+		if err == nil {
+			status = h.rcStatus(session)
 		}
 	}
 
@@ -3482,12 +3497,21 @@ func (h *Host) claudeRename(session, title string) (map[string]string, error) {
 // keep arriving as keystrokes, because that is how the TUI recognises a slash
 // command, and pasting them risks landing as literal text instead.
 //
-// Two transports, split at pasteThreshold:
+// Two transports, chosen by content, not just length:
 //
-//   - <= pasteThreshold: send-keys, byte for byte what CCSM has always done.
-//     A slash command the user types as a chat message (/model sonnet) is far
-//     below the threshold, so it keeps its old behaviour.
-//   - >  pasteThreshold: through a tmux buffer, pasted with -d -p -r.
+//   - single line, <= pasteThreshold: send-keys, byte for byte what CCSM has
+//     always done. A slash command typed as a chat message (/model sonnet) is
+//     far below the threshold, so it keeps its old behaviour.
+//   - multi-line (any length), or > pasteThreshold: through a tmux buffer,
+//     pasted with -d -p -r.
+//
+// A multi-line message (Shift+Enter in the chat box, still well under
+// pasteThreshold) must NOT go through send-keys -l: tmux ships its literal
+// bytes verbatim, embedded LF included (measured on tmux 3.5a: a 2-newline
+// -l payload arrives as 2 raw 0x0a bytes, no translation at all), and the
+// TUI's keypress parser treats a bare LF as Enter same as CR — splitting the
+// one message into as many as it has lines. Only the paste transport is safe
+// for embedded newlines, which is why the split is on "\n", not just length.
 //
 // What each paste flag is load-bearing for:
 //
@@ -3510,7 +3534,7 @@ func (h *Host) claudeRename(session, title string) (map[string]string, error) {
 // TUI heuristic this project has repeatedly been bitten by.
 func (h *Host) sendText(session, text string) error {
 	text = sanitizePaneText(text)
-	if len([]rune(text)) <= pasteThreshold {
+	if len([]rune(text)) <= pasteThreshold && !strings.Contains(text, "\n") {
 		return h.sendKeys(session, text)
 	}
 	if err := h.pasteText(session, text); err != nil {

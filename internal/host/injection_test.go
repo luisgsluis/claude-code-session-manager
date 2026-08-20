@@ -238,9 +238,12 @@ exit 1
 	if strings.ContainsAny(inner, ";$`&|") {
 		t.Errorf("unexpected metacharacter in pane shell string: %s", inner)
 	}
-	for _, want := range []string{"--settings", "estandar.json", "--remote-control"} {
-		if !strings.Contains(inner, want) {
-			t.Errorf("pane shell string missing %q: %s", want, inner)
-		}
+	// Picking "estandar" applies it globally (settings.json) instead of
+	// passing a one-session --settings flag.
+	if !strings.Contains(inner, "--remote-control") {
+		t.Errorf("pane shell string missing --remote-control: %s", inner)
+	}
+	if settings, err := os.ReadFile(filepath.Join(base, "settings.json")); err != nil || !strings.Contains(string(settings), "sonnet") {
+		t.Errorf("settings.json not switched to the chosen profile: %s (err=%v)", settings, err)
 	}
 }
