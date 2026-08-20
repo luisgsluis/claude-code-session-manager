@@ -491,6 +491,81 @@ func TestConversationsListPaginationAndSearch(t *testing.T) {
 	}
 }
 
+// TestConversationsListTitleQueryMatchesTags: the title search box (q) now
+// covers tags as well as the title itself, so tagging a conversation must
+// make it findable by that tag even when the word never appears in the title.
+func TestConversationsListTitleQueryMatchesTags(t *testing.T) {
+	h, _, _ := newTestHost(t)
+	tagged := "50000000-0000-0000-0000-000000000001"
+	untagged := "50000000-0000-0000-0000-000000000002"
+	for _, id := range []string{tagged, untagged} {
+		path := h.convPath + "/" + id + ".jsonl"
+		content := `{"type":"ai-title","aiTitle":"Sesión genérica"}` + "\n" +
+			`{"type":"user","message":{"content":"hola"}}` + "\n"
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := h.Exec("conversation-meta-set", map[string]string{"id": tagged, "tags": "kodi"}); err != nil {
+		t.Fatalf("meta-set: %v", err)
+	}
+
+	data, err := h.Exec("conversations-ls", map[string]string{"q": "kodi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := data.([]map[string]any)
+	if len(list) != 1 || list[0]["id"] != tagged {
+		t.Errorf("q=kodi: expected only the tagged conversation, got %v", list)
+	}
+
+	// The title itself still matches on its own, independent of tags.
+	data, err = h.Exec("conversations-ls", map[string]string{"q": "generica"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list := data.([]map[string]any); len(list) != 2 {
+		t.Errorf("q=generica: expected both conversations, got %d", len(list))
+	}
+}
+
+// TestConversationsListTextQueryMatchesNotes: the full-conversation search box
+// (q_text) now covers notes as well as the transcript's chat text, so a note
+// on a conversation must make it findable by that word even when it never
+// appears in the chat itself.
+func TestConversationsListTextQueryMatchesNotes(t *testing.T) {
+	h, _, _ := newTestHost(t)
+	noted := "50000000-0000-0000-0000-000000000003"
+	unnoted := "50000000-0000-0000-0000-000000000004"
+	for _, id := range []string{noted, unnoted} {
+		path := h.convPath + "/" + id + ".jsonl"
+		if err := os.WriteFile(path, []byte(`{"type":"user","message":{"content":"hola"}}`+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := h.Exec("conversation-meta-set", map[string]string{"id": noted, "notes": "revisar sonarr en casa"}); err != nil {
+		t.Fatalf("meta-set: %v", err)
+	}
+
+	data, err := h.Exec("conversations-ls", map[string]string{"q_text": "sonarr"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := data.([]map[string]any)
+	if len(list) != 1 || list[0]["id"] != noted {
+		t.Errorf("q_text=sonarr: expected only the noted conversation, got %v", list)
+	}
+
+	// The chat text itself still matches on its own, independent of notes.
+	data, err = h.Exec("conversations-ls", map[string]string{"q_text": "hola"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list := data.([]map[string]any); len(list) != 2 {
+		t.Errorf("q_text=hola: expected both conversations, got %d", len(list))
+	}
+}
+
 func TestConversationsListFilters(t *testing.T) {
 	h, _, _ := newTestHost(t)
 	// Three conversations: pi/pc origins and distinct mtimes (-2d, -1d, now).
@@ -543,6 +618,101 @@ func TestConversationsListFilters(t *testing.T) {
 	}
 	if got := list(map[string]string{"from": today, "to": yesterday}); len(got) != 0 {
 		t.Errorf("from after to: expected 0, got %d", len(got))
+	}
+}
+
+func TestConversationsListProjectFilter(t *testing.T) {
+	h, _, _ := newTestHost(t)
+
+	proj := filepath.Join(h.home, "projects", "ccsm")
+	if err := os.MkdirAll(proj, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "CLAUDE.md"), []byte("# x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	ids := []string{
+		"40000000-0000-0000-0000-000000000001", // home ("principal")
+		"40000000-0000-0000-0000-000000000002", // known project
+		"40000000-0000-0000-0000-000000000003", // cwd outside any known project
+	}
+	content := []string{
+		`{"type":"user","cwd":"` + h.home + `","message":{"content":"principal"}}`,
+		`{"type":"user","cwd":"` + proj + `","message":{"content":"ccsm"}}`,
+		`{"type":"user","cwd":"/tmp/no-such-project","message":{"content":"orphan"}}`,
+	}
+	for i, id := range ids {
+		path := h.convPath + "/" + id + ".jsonl"
+		if err := os.WriteFile(path, []byte(content[i]+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	list := func(args map[string]string) []map[string]any {
+		t.Helper()
+		data, err := h.Exec("conversations-ls", args)
+		if err != nil {
+			t.Fatalf("conversations-ls %v: %v", args, err)
+		}
+		return data.([]map[string]any)
+	}
+
+	if got := list(map[string]string{"project": "principal"}); len(got) != 1 || got[0]["id"] != ids[0] {
+		t.Errorf("project=principal: expected only %s, got %v", ids[0], got)
+	}
+	if got := list(map[string]string{"project": "projects/ccsm"}); len(got) != 1 || got[0]["id"] != ids[1] {
+		t.Errorf("project=projects/ccsm: expected only %s, got %v", ids[1], got)
+	}
+	if got := list(map[string]string{"project": "does/not/exist"}); len(got) != 0 {
+		t.Errorf("project=does/not/exist: expected 0, got %d", len(got))
+	}
+
+	// No filter: every row still carries its resolved project, including the
+	// orphan cwd that maps to no known project ("").
+	all := list(nil)
+	if len(all) != 3 {
+		t.Fatalf("expected 3 conversations, got %d", len(all))
+	}
+	got := map[string]string{}
+	for _, c := range all {
+		got[c["id"].(string)] = c["project"].(string)
+	}
+	if got[ids[0]] != "principal" {
+		t.Errorf("project for home cwd: %q", got[ids[0]])
+	}
+	if got[ids[1]] != "projects/ccsm" {
+		t.Errorf("project for known project cwd: %q", got[ids[1]])
+	}
+	if got[ids[2]] != "" {
+		t.Errorf("project for orphan cwd: %q", got[ids[2]])
+	}
+}
+
+func TestProjectNameForCwd(t *testing.T) {
+	h, _, _ := newTestHost(t)
+	proj := filepath.Join(h.home, "projects", "ccsm")
+	if err := os.MkdirAll(proj, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "CLAUDE.md"), []byte("# x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name, cwd, want string
+	}{
+		{"empty cwd is principal", "", "principal"},
+		{"home is principal", h.home, "principal"},
+		{"known project", proj, "projects/ccsm"},
+		{"unknown cwd", "/no/such/dir", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := h.projectNameForCwd(c.cwd); got != c.want {
+				t.Errorf("projectNameForCwd(%q) = %q, want %q", c.cwd, got, c.want)
+			}
+		})
 	}
 }
 

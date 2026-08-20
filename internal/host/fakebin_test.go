@@ -586,6 +586,103 @@ func TestClaudeResumeSinRCStaging(t *testing.T) {
 	}
 }
 
+// TestClaudeResumeUsesConversationCwd covers the resume-into-root bug: before
+// the fix, claudeResumeAs always passed h.home as the launch dir, ignoring
+// the project the conversation was created in. It must now read the cwd
+// recorded on the transcript's first real user line and launch there.
+func TestClaudeResumeUsesConversationCwd(t *testing.T) {
+	newArgs := filepath.Join(t.TempDir(), "new_args")
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_LINE": "/rc connected", "FAKE_TMUX_NEW_ARGS": newArgs})
+
+	proj := filepath.Join(h.home, "projects", "ccsm")
+	if err := os.MkdirAll(proj, 0700); err != nil {
+		t.Fatal(err)
+	}
+	id := "00000000-0000-0000-0000-0000000000cc"
+	line := `{"type":"user","cwd":"` + proj + `","message":{"content":"hola"}}`
+	if err := os.WriteFile(h.convPath+"/"+id+".jsonl", []byte(line+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := h.Exec("claude-resume", map[string]string{"id": id}); err != nil {
+		t.Fatalf("claude-resume: %v", err)
+	}
+
+	args, err := os.ReadFile(newArgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "-c "+proj) {
+		t.Errorf("expected resume to launch with -c %s, got %q", proj, args)
+	}
+	if strings.Contains(string(args), "-c "+h.home+" ") {
+		t.Errorf("resume launched from home instead of the conversation's project: %q", args)
+	}
+}
+
+// TestClaudeResumeFallsBackToHomeWhenCwdGone covers the case where the
+// recorded cwd no longer exists (project dir deleted/moved since): tmux
+// `new-session -c <missing dir>` would fail outright, so the resume must fall
+// back to home rather than propagate that as a launch error.
+func TestClaudeResumeFallsBackToHomeWhenCwdGone(t *testing.T) {
+	newArgs := filepath.Join(t.TempDir(), "new_args")
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_LINE": "/rc connected", "FAKE_TMUX_NEW_ARGS": newArgs})
+
+	id := "00000000-0000-0000-0000-0000000000dd"
+	line := `{"type":"user","cwd":"/no/such/deleted/project","message":{"content":"hola"}}`
+	if err := os.WriteFile(h.convPath+"/"+id+".jsonl", []byte(line+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := h.Exec("claude-resume", map[string]string{"id": id}); err != nil {
+		t.Fatalf("claude-resume: %v", err)
+	}
+
+	args, err := os.ReadFile(newArgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "-c "+h.home) {
+		t.Errorf("expected fallback to home %s, got %q", h.home, args)
+	}
+}
+
+// TestClaudeResumeStagingUsesConversationCwd is the same fix, exercised
+// through the perfilSinRC staging branch (lanzarConStaging) instead of the
+// plain newSession call — a non-Anthropic active profile takes this path
+// (see TestClaudeResumeSinRCStaging), and it has its own cwd plumbing.
+func TestClaudeResumeStagingUsesConversationCwd(t *testing.T) {
+	newArgs := filepath.Join(t.TempDir(), "new_args")
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_LINE": "/rc connected", "FAKE_TMUX_NEW_ARGS": newArgs})
+	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)
+	h.writeProfile(t, "deepseek", `{"apiKeyHelper":"/x"}`)
+	if err := h.applyProfile("deepseek"); err != nil {
+		t.Fatal(err)
+	}
+
+	proj := filepath.Join(h.home, "projects", "ccsm")
+	if err := os.MkdirAll(proj, 0700); err != nil {
+		t.Fatal(err)
+	}
+	id := "00000000-0000-0000-0000-0000000000ee"
+	line := `{"type":"user","cwd":"` + proj + `","message":{"content":"hola"}}`
+	if err := os.WriteFile(h.convPath+"/"+id+".jsonl", []byte(line+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := h.Exec("claude-resume", map[string]string{"id": id}); err != nil {
+		t.Fatalf("claude-resume: %v", err)
+	}
+
+	args, err := os.ReadFile(newArgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "-c "+proj) {
+		t.Errorf("expected staged resume to launch with -c %s, got %q", proj, args)
+	}
+}
+
 func TestTmuxKillSuccessAndFailure(t *testing.T) {
 	kills := filepath.Join(t.TempDir(), "kills.txt")
 	h := fakeHost(t, map[string]string{"FAKE_TMUX_KILLS": kills})

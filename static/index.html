@@ -232,13 +232,11 @@
         <div>
           <label class="block text-xs text-fg-muted mb-1" x-text="t('search_title')"></label>
           <input type="search" x-model="convSearch" @input.debounce.300ms="loadConversations()"
-            :placeholder="'🔍 ' + t('search_title_ph')"
             class="w-full bg-bg-card border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors">
         </div>
         <div>
           <label class="block text-xs text-fg-muted mb-1" x-text="t('search_text')"></label>
           <input type="search" x-model="convSearchText" @input.debounce.300ms="loadConversations()"
-            :placeholder="'🔍 ' + t('search_text_ph')"
             class="w-full bg-bg-card border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:border-accent transition-colors">
         </div>
       </div>
@@ -246,13 +244,21 @@
     </div>
 
     <!-- Advanced filters -->
-    <div class="mb-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
+    <div class="mb-3 grid grid-cols-2 sm:grid-cols-5 gap-2">
       <select x-model="convFilters.origin" @change="applyConvFilters()"
         class="bg-bg-card border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-accent">
         <option value="" x-text="t('conv_origin_all')"></option>
         <option value="pi">pi</option>
         <option value="pc">pc</option>
         <option value="?">?</option>
+      </select>
+      <select x-model="convFilters.project" @change="applyConvFilters()"
+        class="bg-bg-card border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-accent">
+        <option value="" x-text="t('conv_project_all')"></option>
+        <option value="principal" x-text="t('adv_project_default')"></option>
+        <template x-for="p in sortedProjects()" :key="p.name">
+          <option :value="p.name" x-text="projectLabel(p.name)" :title="p.path"></option>
+        </template>
       </select>
       <input type="date" x-model="convFilters.from" @change="applyConvFilters()"
         :title="t('conv_from')"

@@ -632,7 +632,8 @@ func (h *Host) claudeResume(id string) (map[string]string, error) {
 // (still, unexpectedly) taken, falls back to auto-naming rather than failing
 // the whole resume over a cosmetic mismatch.
 func (h *Host) claudeResumeAs(id, name string) (map[string]string, error) {
-	if _, err := os.Stat(h.convFileFor(id)); err != nil {
+	convPath := h.convFileFor(id)
+	if _, err := os.Stat(convPath); err != nil {
 		return nil, errNotFound("conversation not found: %s", id)
 	}
 	// 4090 "no longer the active worker" trigger: resuming a conversation that
@@ -647,13 +648,26 @@ func (h *Host) claudeResumeAs(id, name string) (map[string]string, error) {
 		name = ""
 	}
 
+	// Resume in the directory the conversation was originally launched in (its
+	// cwd is recorded verbatim on every transcript line), so its CLAUDE.md and
+	// any relative paths the user relies on still apply — resuming always into
+	// h.home regardless of the conversation's project was the bug (visto
+	// 2026-08-20). Falls back to home when the transcript has no usable cwd
+	// (very old files) or that directory no longer exists.
+	cwd := h.home
+	if _, convCwd, ok := conversationSummary(convPath); ok && convCwd != "" {
+		if st, err := os.Stat(convCwd); err == nil && st.IsDir() {
+			cwd = convCwd
+		}
+	}
+
 	var session, status string
 	var err error
 	activo := h.activeProfileName()
 	if activo != "" && perfilSinRC(h.profilesPath+"/"+activo+".json") {
-		session, status, err = h.lanzarConStaging(activo, "--resume "+id, name, h.home)
+		session, status, err = h.lanzarConStaging(activo, "--resume "+id, name, cwd)
 	} else {
-		session, err = h.newSession("--resume "+id+" --remote-control", name, h.home)
+		session, err = h.newSession("--resume "+id+" --remote-control", name, cwd)
 		if err == nil {
 			status = h.rcStatus(session)
 		}
@@ -1190,6 +1204,25 @@ func forEachLine(r io.Reader, fn func(line []byte) bool) error {
 	}
 }
 
+// projectNameForCwd maps a raw launch directory (as recorded on a transcript
+// line) back to a projectsList name, for display/filtering. "" for a cwd that
+// doesn't match any known project (deleted since, or from another host).
+func (h *Host) projectNameForCwd(cwd string) string {
+	if cwd == "" || cwd == h.home {
+		return "principal"
+	}
+	projects, err := h.projectsList()
+	if err != nil {
+		return ""
+	}
+	for _, pr := range projects {
+		if pr["path"] == cwd {
+			return pr["name"].(string)
+		}
+	}
+	return ""
+}
+
 // conversationSummary finds the first real user message (no meta, no tool
 // results, no slash commands) in the first 200 lines of a conversation file.
 func conversationSummary(path string) (text, cwd string, ok bool) {
@@ -1491,6 +1524,7 @@ func (h *Host) conversationsList(args map[string]string) ([]map[string]any, erro
 	titleQuery := parseFTSQuery(args["q"])
 	textQuery := parseFTSQuery(args["q_text"])
 	origin := strings.TrimSpace(args["origin"])
+	project := strings.TrimSpace(args["project"])
 	aliveOnly := args["alive"] == "1" || args["alive"] == "true"
 	archived := args["archived"] // "only" = archived only; "all" = include; "" = hide
 	from, _ := time.Parse("02/01/2006", strings.TrimSpace(args["from"]))
@@ -1523,19 +1557,35 @@ func (h *Host) conversationsList(args map[string]string) ([]map[string]any, erro
 	seen := make(map[string]struct{}, len(files))
 	for _, f := range files {
 		seen[f.id] = struct{}{}
+		meta := h.readConversationMeta(f.id)
 		var titleFull string
 		haveTitle := false
+		// The title field (q) also matches tags: "título y tags" is one search
+		// box in the UI, not two, so a conversation tagged "kodi" should surface
+		// on a title search for "kodi" even if the word never made it into the
+		// AI/custom title.
 		if titleQuery != nil {
 			titleFull = conversationTitleFull(f.path)
 			haveTitle = true
-			if !matchFTS(ftsJoin(titleFull), titleQuery) {
+			joined := ftsJoin(titleFull)
+			if tags := strings.Join(meta.Tags, " "); tags != "" {
+				joined += " " + ftsJoin(tags)
+			}
+			if !matchFTS(joined, titleQuery) {
 				continue
 			}
 		}
 		if textQuery != nil {
+			// Same idea for the full-conversation field (q_text): notes ride
+			// along. Notes are not part of ftsText's cache (keyed on the
+			// transcript's mod/size, not the much smaller meta sidecar) so they
+			// are matched separately here instead of being folded into it.
 			ok, err := h.ftsText.match(f.id, f.path, f.mod, f.size, textQuery)
 			if err != nil {
 				return nil, errServer("full-text search: %v", err)
+			}
+			if !ok && meta.Notes != "" {
+				ok = matchFTS(ftsJoin(meta.Notes), textQuery)
 			}
 			if !ok {
 				continue
@@ -1549,6 +1599,9 @@ func (h *Host) conversationsList(args map[string]string) ([]map[string]any, erro
 		if origin != "" && originFor(cwd) != origin {
 			continue
 		}
+		if project != "" && h.projectNameForCwd(cwd) != project {
+			continue
+		}
 		if aliveOnly && !alive[f.id] {
 			continue
 		}
@@ -1558,7 +1611,6 @@ func (h *Host) conversationsList(args map[string]string) ([]map[string]any, erro
 		if !to.IsZero() && f.mod.After(to) {
 			continue
 		}
-		meta := h.readConversationMeta(f.id)
 		// A conversation being written by a running claude is never hidden:
 		// archiving is for finished sessions, and hiding a live one reads as
 		// "not alive" (it vanished from the list, even from the alive filter).
@@ -1575,6 +1627,7 @@ func (h *Host) conversationsList(args map[string]string) ([]map[string]any, erro
 			"id":       f.id,
 			"date":     f.mod.Format("02/01 15:04"),
 			"origin":   originFor(cwd),
+			"project":  h.projectNameForCwd(cwd),
 			"title":    truncateRunes(titleFull, 80),
 			"preview":  truncateRunes(text, 120),
 			"is_alive": alive[f.id],

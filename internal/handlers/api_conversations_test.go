@@ -39,6 +39,24 @@ func TestListConversationsDefaults(t *testing.T) {
 	}
 }
 
+func TestListConversationsForwardsProjectFilter(t *testing.T) {
+	rec, getBody := mockAgentRecorder()
+	sockPath, cleanup := mockAgentServer(t, rec)
+	defer cleanup()
+
+	h := &ConversationHandler{Agent: requireAgent(t, sockPath)}
+	req := httptest.NewRequest("GET", "/api/conversations?project=projects/ccsm", nil)
+	w := httptest.NewRecorder()
+	h.ListConversations(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if body := getBody(); !strings.Contains(body, `"project":"projects/ccsm"`) {
+		t.Errorf("expected project filter forwarded to agent, got body %s", body)
+	}
+}
+
 func TestGetConversationNoID(t *testing.T) {
 	h := &ConversationHandler{Agent: newMockAgent()}
 	req := httptest.NewRequest("GET", "/api/conversations/", nil)

@@ -25,6 +25,7 @@ func (h *ConversationHandler) ListConversations(w http.ResponseWriter, r *http.R
 		"q":        query.Get("q"),
 		"q_text":   query.Get("q_text"),
 		"origin":   query.Get("origin"),
+		"project":  query.Get("project"),
 		"from":     query.Get("from"),
 		"to":       query.Get("to"),
 		"alive":    query.Get("alive"),
