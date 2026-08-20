@@ -74,6 +74,11 @@ type Host struct {
 	// name ever used is not worth the bookkeeping for a personal tool.
 	sendMu sync.Map
 
+	// redrawMu holds the last time (time.Time) a Ctrl+L redraw nudge was sent
+	// per session name, so sessionResize's nudgeRedraw can enforce
+	// redrawCooldown — see its docstring for why that cooldown must exist.
+	redrawMu sync.Map
+
 	// paneReadyTimeout bounds ensurePaneReady's wait for a freshly spawned
 	// session's TUI to start reading input. Zero disables the wait outright
 	// (fakeHost sets it to 0 so the stub tmux's default empty capture-pane
@@ -3451,15 +3456,60 @@ func (h *Host) sessionResize(name string, cols, rows int) (map[string]any, error
 	if !h.sessionAlive(name) {
 		return nil, errNotFound("session not found: %s", name)
 	}
-	target := "=" + name
-	if out, err := exec.Command(h.tmuxBinary, "set-option", "-t", target, "window-size", "manual").CombinedOutput(); err != nil {
+	// set-option/resize-window are window-level commands: the "=name" exact-
+	// match session target (used elsewhere for kill-session/rename-session)
+	// fails on them outright ("no such window"), verified directly against a
+	// real tmux server — "1"/"testamb" style plain names risk the OTHER
+	// documented trap (paneTarget's own docstring: an unqualified numeric
+	// target resolves as a window INDEX of the most-recent session, not a
+	// session name). "name:" (an explicit, empty window part) is what
+	// resolves unambiguously to this session's own window in both cases;
+	// confirmed against a real server with two sessions before landing this.
+	windowTarget := name + ":"
+	if out, err := exec.Command(h.tmuxBinary, "set-option", "-t", windowTarget, "window-size", "manual").CombinedOutput(); err != nil {
 		return nil, errServer("tmux set-option window-size: %v: %s", err, out)
 	}
-	if out, err := exec.Command(h.tmuxBinary, "resize-window", "-t", target,
+	if out, err := exec.Command(h.tmuxBinary, "resize-window", "-t", windowTarget,
 		"-x", strconv.Itoa(cols), "-y", strconv.Itoa(rows)).CombinedOutput(); err != nil {
 		return nil, errServer("tmux resize-window: %v: %s", err, out)
 	}
+	h.nudgeRedraw(name)
 	return map[string]any{"session": name, "cols": cols, "rows": rows}, nil
+}
+
+// redrawCooldown guards nudgeRedraw's Ctrl+L: Claude Code's own keybinding
+// docs say two Ctrl+L presses within 2s run /clear instead of two redraws —
+// sending it on every resize without a cooldown well above that window would
+// risk silently wiping the conversation on, say, a dragged-out browser
+// resize that settles into two close POSTs.
+const redrawCooldown = 3 * time.Second
+
+// nudgeRedraw forces Claude Code to repaint at the size just set: resizing
+// the PTY does not by itself make it redraw already-on-screen content — only
+// new output renders at the corrected width, confirmed against Claude Code's
+// own docs (no SIGWINCH-driven repaint; Ctrl+L is the documented "force a
+// full screen redraw, preserving input" action) — so whatever was already
+// displayed before the resize would otherwise stay wrapped at the old width
+// until the next real turn. Best effort (errors ignored): a missed redraw
+// just means stale wrapping lingers a bit longer, not a failed resize.
+// Locks through sessionSendLock, same as every other send-keys to this pane
+// (see its docstring on interleaving) — that also makes the cooldown
+// check-then-store atomic against a second resize racing in for the same
+// session (e.g. the Terminal tab and a grid tile open on it at once).
+//
+// send-keys is a pane-level command: it needs a resolved pane id (paneTarget)
+// like every other send-keys call in this file, not the window-level "name:"
+// target sessionResize itself uses — a bare/"=" session name misresolves
+// here (paneTarget's own docstring covers exactly why).
+func (h *Host) nudgeRedraw(name string) {
+	mu := h.sessionSendLock(name)
+	mu.Lock()
+	defer mu.Unlock()
+	if v, ok := h.redrawMu.Load(name); ok && time.Since(v.(time.Time)) < redrawCooldown {
+		return
+	}
+	h.redrawMu.Store(name, time.Now())
+	exec.Command(h.tmuxBinary, "send-keys", "-t", h.paneTarget(name), "C-l").Run()
 }
 
 // rcPressDelay is the pause between the two /remote-control presses when a

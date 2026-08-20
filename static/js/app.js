@@ -687,7 +687,7 @@ function ccsmApp() {
       custom: false, versions: [], viewing: 0,
     },
     voiceForm: null,
-    live: { open: false, name: '', view: 'chat', content: '', status: '', chatStatus: '', es: null, ces: null, timer: null, msgs: [], termHist: '', meta: null, input: '', sending: false, elapsed: '', models: [], maxH: null },
+    live: { open: false, name: '', view: 'chat', chatStatus: '', ces: null, timer: null, msgs: [], termHist: '', meta: null, input: '', sending: false, elapsed: '', models: [], maxH: null },
     // Terminal grid: tiles keyed by session name (the same stable identity the
     // session list uses), plus a single `zoomed` name — only one tile can be
     // zoomed at a time. `narrow` mirrors the (max-width: 1023px) media query
@@ -1160,8 +1160,6 @@ function ccsmApp() {
       this.live.open = true;
       this.pinLiveToViewport(); // clear any stale keyboard-anchored position
       this.live.name = s.name;
-      this.live.content = '';
-      this.live.status = '';
       this.live.chatStatus = '';
       this.live.msgs = [];
       this.live.termHist = '';
@@ -1273,16 +1271,11 @@ function ccsmApp() {
       }
     },
 
+    // Both tabs read off the one chat stream (termText derives from
+    // termHist) — switching tabs is a pure view change, nothing to
+    // start/stop.
     setLiveView(v) {
       if (v === this.live.view) return;
-      if (v === 'term') {
-        this.closeChatStream();
-        this.startTermStream();
-      } else {
-        this.closeTermStream();
-        this.startChatStream();
-        stopPaneResize(this.live.name); // the term <pre> unmounts (x-if) leaving 'term'
-      }
       this.live.view = v;
       if (v === 'term') {
         // The pane mounts fresh (x-if in index.html) with termHist already
@@ -1331,42 +1324,14 @@ function ccsmApp() {
       }
     },
 
-    // Terminal tab: conversation history + current screen. Claude
-    // Code paints in tmux's alternate screen (no scrollback), so the terminal
-    // history comes from the transcript (same as the chat).
+    // Terminal tab: the same conversation as the Chat tab, styled as
+    // terminal text (❯ prefix on user turns). Claude Code paints in tmux's
+    // alternate screen (no scrollback), so this comes from the transcript,
+    // not a raw tmux pane capture — plain HTML text reflows to any width on
+    // its own, and this tab is read-only anyway (no input, unlike a grid
+    // tile), so there's no "live current screen" to show separately from it.
     get termText() {
-      const h = this.live.termHist || '';
-      const s = this.live.content || '';
-      if (h && s) return h + '\n\n' + this.t('live_screen_sep') + '\n' + s;
-      if (h) return h;
-      return s;
-    },
-
-    startTermStream() {
-      this.live.content = '';
-      this.live.status = '';
-      const es = new EventSource('/api/sessions/' + encodeURIComponent(this.live.name) + '/stream');
-      this.live.es = es;
-      es.onopen = () => { this.live.status = ''; };
-      es.onmessage = (ev) => {
-        const el = this.$refs.livePane;
-        const stick = el ? this.atBottom(el) : true;
-        this.live.content = ev.data.replace(/\\n/g, '\n');
-        this.live.status = '';
-        this.$nextTick(() => {
-          if (stick && el) el.scrollTop = el.scrollHeight;
-        });
-      };
-      // Don't close() on error: EventSource reconnects on its own (browser
-      // retry), and closing it here would kill that automatic reconnect.
-      // onopen clears the "closed" status once the stream comes back.
-      es.onerror = () => {
-        this.live.status = this.t('live_reconnecting');
-      };
-    },
-
-    closeTermStream() {
-      if (this.live.es) { this.live.es.close(); this.live.es = null; }
+      return this.live.termHist || '';
     },
 
     startChatStream() {
@@ -1517,9 +1482,7 @@ function ccsmApp() {
     },
 
     closeLive() {
-      this.closeTermStream();
       this.closeChatStream();
-      if (this.live.name) stopPaneResize(this.live.name);
       this.live.open = false;
     },
 
@@ -1615,7 +1578,7 @@ function ccsmApp() {
         this.$nextTick(() => { if (stick && el) el.scrollTop = el.scrollHeight; });
       };
       // Don't close() on error: the browser reconnects on its own, and closing
-      // here would kill that retry. Same reasoning as startTermStream.
+      // here would kill that retry. Same reasoning as startTileChatStream below.
       es.onerror = () => { tile.status = this.t('live_reconnecting'); };
     },
 

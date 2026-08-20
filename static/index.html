@@ -697,12 +697,13 @@
       <span class="flex-1"></span>
     </div>
 
-    <!-- Terminal tab -->
+    <!-- Terminal tab: read-only, terminal-styled rendering of the same
+         transcript the Chat tab shows — plain HTML text, no raw tmux pane
+         capture, so it reflows to any width on its own (no resize needed). -->
     <template x-if="live.view==='term'">
       <div class="flex-1 overflow-y-auto min-h-0 tgrid-pane" x-ref="livePane"
-        x-init="watchPaneResize(live.name, $el)"
         style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
-        <div x-show="live.status" class="px-3 py-2 text-xs text-danger" x-text="live.status"></div>
+        <div x-show="live.chatStatus" class="px-3 py-2 text-xs text-danger" x-text="live.chatStatus"></div>
         <pre class="p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words" x-text="termText"></pre>
       </div>
     </template>
