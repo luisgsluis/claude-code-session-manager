@@ -1,5 +1,35 @@
 # Changelog
 
+## [3.1.0] — 2026-08-20
+
+### Added
+- **Grid tiles and the Terminal tab keep the underlying tmux pane sized to the browser box.**
+  Claude Code is a normal TUI — it just wraps its output to whatever terminal geometry it's
+  given — but these sessions run detached with no real client ever attaching, so the pane sat
+  at tmux's default 80x24 forever regardless of how wide it actually rendered, and
+  `capture-pane` handed back text already hard-wrapped at 80 columns for the browser to
+  needlessly re-wrap a second time. `POST /api/sessions/{name}/resize` now forces the tmux
+  window to the exact character size the client measures (`resize-window`, `window-size
+  manual`), debounced via `ResizeObserver` on every layout change. A successful resize also
+  nudges Ctrl+L — Claude Code's own documented full-redraw keybinding — since resizing the PTY
+  alone doesn't repaint content already on screen, only new output does; the nudge has a 3s
+  cooldown well clear of Claude Code's own double-tap-within-2s-runs-`/clear` shortcut, so it
+  can never risk the conversation.
+- **Conversation search gets a project filter** (a dropdown mirroring the one in "new
+  session"), and the title field now also matches tags while the full-text field also matches
+  notes — both search boxes lost their placeholder text and got simpler labels ("Título y
+  tags" / "Conversación y notas").
+
+### Fixed
+- **Resuming a conversation always relaunched Claude from home, ignoring the project it was
+  created in.** `claudeResumeAs` hardcoded `h.home` as the launch directory regardless of where
+  the session actually started; it now reads the `cwd` recorded on the transcript's own lines
+  and resumes there, falling back to home only if that directory no longer exists.
+- **The single-session Terminal tab dropped its own raw tmux pane stream**, rendering the same
+  transcript the Chat tab shows instead (plain HTML text, which reflows to any width on its
+  own — no resize needed). The raw-pane "current screen" section now only appears in the
+  terminal grid, where each tile is genuinely interactive.
+
 ## [3.0.0] — 2026-08-18
 
 ### Added
