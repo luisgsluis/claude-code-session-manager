@@ -24,6 +24,12 @@ case "$cmd" in
     for f in "$STATE"/*; do
       [ -f "$f" ] || continue
       n="$(basename "$f")"
+      # Sidecar files (.project, .size, .buffer, .paste-args, …) live next to
+      # the session marker file, in this same flat dir — skip them, or their
+      # content (not a real "name\tcreated\ttitle" line) gets read as a
+      # phantom session. Real session names never contain a dot (CCSM's own
+      # naming pattern is [A-Za-z0-9_-]{1,32}), so this is a safe filter.
+      case "$n" in *.*) continue ;; esac
       proj=""
       [ -f "$STATE/$n.project" ] && proj="$(cat "$STATE/$n.project")"
       printf '%s\t%s\n' "$(cat "$f")" "$proj"
@@ -60,8 +66,22 @@ case "$cmd" in
     ;;
   set-option)
     # CCSM tags the session with its project: tmux set-option -t =<ses> @ccsm_project <project>.
+    # session-resize also uses set-option (window-size manual) before resize-window;
+    # only @ccsm_project is persisted here, other options are accepted and ignored,
+    # same as real tmux's generic set-option.
     name="$(flagval -t "$@")"
-    printf '%s\n' "${@: -1}" > "$STATE/$name.project"
+    opt="${@: -2:1}"
+    if [ "$opt" = "@ccsm_project" ]; then
+      printf '%s\n' "${@: -1}" > "$STATE/$name.project"
+    fi
+    exit 0
+    ;;
+  resize-window)
+    # session-resize forces an exact size: tmux resize-window -t =<ses> -x <cols> -y <rows>.
+    name="$(flagval -t "$@")"
+    cols="$(flagval -x "$@")"
+    rows="$(flagval -y "$@")"
+    printf '%sx%s\n' "$cols" "$rows" > "$STATE/$name.size"
     exit 0
     ;;
   rename-session)

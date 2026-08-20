@@ -650,6 +650,50 @@ func TestSendForwardsToAgentAndAudits(t *testing.T) {
 	}
 }
 
+func TestResizeInvalidName(t *testing.T) {
+	h := &SessionHandler{Agent: newMockAgent()}
+	for _, name := range []string{"", "bad name!", "../x", "a/b"} {
+		req := httptest.NewRequest("POST", "/api/sessions/x/resize", strings.NewReader(`{"cols":100,"rows":30}`))
+		req.SetPathValue("name", name)
+		w := httptest.NewRecorder()
+		h.Resize(w, req)
+		if w.Code != 400 {
+			t.Errorf("expected 400 for name %q, got %d", name, w.Code)
+		}
+	}
+}
+
+func TestResizeForwardsColsAndRows(t *testing.T) {
+	rec, getBody := mockAgentRecorder()
+	sock, stop := mockAgentServer(t, rec)
+	defer stop()
+
+	h := &SessionHandler{Agent: requireAgent(t, sock)}
+	req := httptest.NewRequest("POST", "/api/sessions/x/resize", strings.NewReader(`{"cols":137,"rows":42}`))
+	req.SetPathValue("name", "x")
+	w := httptest.NewRecorder()
+	h.Resize(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	body := getBody()
+	if !strings.Contains(body, `"cols":"137"`) || !strings.Contains(body, `"rows":"42"`) {
+		t.Errorf("expected cols/rows forwarded to agent, got body %s", body)
+	}
+}
+
+func TestResizeAgentError(t *testing.T) {
+	h := &SessionHandler{Agent: newMockAgent()}
+	req := httptest.NewRequest("POST", "/api/sessions/x/resize", strings.NewReader(`{"cols":100,"rows":30}`))
+	req.SetPathValue("name", "x")
+	w := httptest.NewRecorder()
+	h.Resize(w, req)
+	if w.Code != 502 {
+		t.Errorf("expected 502, got %d", w.Code)
+	}
+}
+
 func TestChatInvalidName(t *testing.T) {
 	h := &SessionHandler{Agent: newMockAgent()}
 	for _, name := range []string{"", "bad name!", "a/b"} {

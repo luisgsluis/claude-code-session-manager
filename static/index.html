@@ -699,7 +699,9 @@
 
     <!-- Terminal tab -->
     <template x-if="live.view==='term'">
-      <div class="flex-1 overflow-y-auto min-h-0 tgrid-pane" x-ref="livePane" style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
+      <div class="flex-1 overflow-y-auto min-h-0 tgrid-pane" x-ref="livePane"
+        x-init="watchPaneResize(live.name, $el)"
+        style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
         <div x-show="live.status" class="px-3 py-2 text-xs text-danger" x-text="live.status"></div>
         <pre class="p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words" x-text="termText"></pre>
       </div>
@@ -1063,6 +1065,7 @@
 
           <!-- Raw pane, ANSI-coloured. Same look as the single-session Terminal tab. -->
           <div class="flex-1 overflow-y-auto min-h-0 tgrid-pane" :id="'tile-pane-' + name"
+            x-init="watchPaneResize(name, $el)"
             style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
             <div x-show="grid.tiles[name].status" class="px-3 py-2 text-xs text-danger" x-text="grid.tiles[name].status"></div>
             <pre class="p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words"><code x-html="tileText(name)"></code></pre>

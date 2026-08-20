@@ -90,6 +90,10 @@ case "$1" in
   set-option)
     [ -n "$FAKE_TMUX_OPTS" ] && printf '%s\n' "$5" >> "$FAKE_TMUX_OPTS"
     exit 0 ;;
+  resize-window)
+    [ -n "$FAKE_TMUX_RESIZE_ARGS" ] && printf '%s\n' "$*" >> "$FAKE_TMUX_RESIZE_ARGS"
+    [ -n "$FAKE_TMUX_RESIZE_FAIL" ] && exit 1
+    exit 0 ;;
   new-session)
     [ -n "$FAKE_TMUX_NEW_FAIL" ] && { echo "create failed" >&2; exit 1; }
     [ -n "$FAKE_TMUX_NEW_ARGS" ] && printf '%s\n' "$*" >> "$FAKE_TMUX_NEW_ARGS"

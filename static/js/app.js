@@ -1281,6 +1281,7 @@ function ccsmApp() {
       } else {
         this.closeTermStream();
         this.startChatStream();
+        stopPaneResize(this.live.name); // the term <pre> unmounts (x-if) leaving 'term'
       }
       this.live.view = v;
       if (v === 'term') {
@@ -1297,6 +1298,25 @@ function ccsmApp() {
 
     atBottom(el) {
       return el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+    },
+
+    // watchPaneResize keeps a session's tmux window matched to how many
+    // characters actually fit in el (see requestPaneResize above): measures
+    // once immediately, then again on every layout change via ResizeObserver
+    // (window resize, grid mosaic reflow, tile zoom/minimize, sidebar toggle —
+    // anything that changes el's box, without having to hook each of those
+    // call sites by hand). el is torn down and recreated often (x-if/x-for on
+    // the live overlay and grid tiles); stopPaneResize below and at each
+    // pane's close call site keeps that from piling up stale observers.
+    watchPaneResize(name, el) {
+      stopPaneResize(name);
+      const pre = el.querySelector('pre');
+      if (!pre) return;
+      const measure = () => requestPaneResize(name, el.clientWidth, el.clientHeight, pre);
+      measure();
+      const ro = new ResizeObserver(measure);
+      ro.observe(el);
+      paneResizeObservers[name] = ro;
     },
 
     // dir -1: scroll up one page; dir 1: go to the end. Same behaviour in the
@@ -1499,6 +1519,7 @@ function ccsmApp() {
     closeLive() {
       this.closeTermStream();
       this.closeChatStream();
+      if (this.live.name) stopPaneResize(this.live.name);
       this.live.open = false;
     },
 
@@ -1574,6 +1595,7 @@ function ccsmApp() {
     closeGridTile(name) {
       this.stopTileStream(name);
       this.stopTileChatStream(name);
+      stopPaneResize(name);
       delete this.grid.minimized[name];
       if (this.grid.zoomed === name) this.grid.zoomed = null;
       delete this.grid.tiles[name];
@@ -3246,6 +3268,92 @@ function highlightJSON(raw) {
       return m;
     }
   );
+}
+
+// --- Pane auto-resize ---
+// Claude Code is a normal TUI: it wraps its own output to whatever terminal
+// geometry it's given (ioctl TIOCGWINSZ), same as any other. Sessions here run
+// in detached tmux windows (no real terminal client ever attaches to report a
+// size), so without this they sit at tmux's default 80x24 forever and
+// capture-pane hands back text already hard-wrapped at 80 cols — which the
+// browser's own soft-wrap (whitespace-pre-wrap) then reflows a second time at
+// whatever width the box happens to have, looking wrong in both directions
+// (wasted whitespace on a wide Terminal tab, broken re-wrapping on a narrow
+// grid tile). There is no Claude-side setting for this (checked against
+// current docs): the fix is to keep tmux's window size in sync with how many
+// characters actually fit in the pane's rendered box, exactly like a real
+// terminal emulator reports on resize.
+
+const paneResizeTimers = {};
+const paneResizeLast = {};
+const paneResizeObservers = {};
+
+// stopPaneResize disconnects and forgets any ResizeObserver tracking name.
+// Called before (re)watching a session's pane (its DOM node is recreated
+// often — x-if on the live overlay and on every grid tile) and when a pane
+// closes for good, so a stale observer never outlives its element.
+function stopPaneResize(name) {
+  const ro = paneResizeObservers[name];
+  if (ro) { ro.disconnect(); delete paneResizeObservers[name]; }
+  clearTimeout(paneResizeTimers[name]);
+  delete paneResizeTimers[name];
+}
+
+// measurePaneCharCell reads the monospace cell (char width, line height)
+// every pane shares — the single Terminal tab and every grid tile render
+// their <pre> with the exact same font-mono/text-xs/leading-relaxed classes,
+// so this is measured once (cached) via a probe appended to <body> with
+// position:fixed, not inside any actual pane. That placement is load-bearing,
+// not cosmetic: a first version put the probe inside the pane's own
+// (scrollable) box, and reading its layout there could flip on a horizontal
+// scrollbar and shrink that box's own height — which is exactly what the
+// ResizeObserver watching it is watching for, so the measurement re-triggered
+// its own observer. In the grid, with several tiles doing this at once, that
+// tripped the browser's ResizeObserver-loop guard hard enough to crash the
+// tab under Playwright. A fixed-position probe on <body> can't affect any
+// pane's box, so it can't feed back into anything watching one.
+let paneCharCell = null;
+function measurePaneCharCell() {
+  if (paneCharCell) return paneCharCell;
+  const probe = document.createElement('pre');
+  probe.className = 'font-mono text-xs leading-relaxed';
+  Object.assign(probe.style, {
+    position: 'fixed', left: '-99999px', top: '0', margin: '0', padding: '0', whiteSpace: 'pre',
+  });
+  probe.textContent = '0'.repeat(80) + '\n' + '0'.repeat(80);
+  document.body.appendChild(probe);
+  const rect = probe.getBoundingClientRect();
+  document.body.removeChild(probe);
+  paneCharCell = { width: rect.width / 80, lineHeight: rect.height / 2 };
+  return paneCharCell;
+}
+
+// requestPaneResize computes how many columns/rows fit in a pane's box (cw x
+// ch, its .tgrid-pane scroll viewport, pre for its padding) and, if that
+// differs from the last size sent for this session, debounces a resize call
+// to the backend (tmux resize-window). Silently a no-op while the box is
+// hidden/collapsed (e.g. a minimized or non-zoomed grid tile) — nothing sane
+// to measure there yet.
+function requestPaneResize(name, cw, ch, pre) {
+  if (cw < 20 || ch < 20) return;
+  const cell = measurePaneCharCell();
+  if (!cell.width || !cell.lineHeight) return;
+  const style = getComputedStyle(pre);
+  const padX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+  const padY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+  const cols = Math.max(1, Math.floor((cw - padX) / cell.width));
+  const rows = Math.max(1, Math.floor((ch - padY) / cell.lineHeight));
+  const last = paneResizeLast[name];
+  if (last && last.cols === cols && last.rows === rows) return;
+  clearTimeout(paneResizeTimers[name]);
+  paneResizeTimers[name] = setTimeout(() => {
+    paneResizeLast[name] = { cols, rows };
+    fetch('/api/sessions/' + encodeURIComponent(name) + '/resize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cols, rows }),
+    }).catch(() => { paneResizeLast[name] = null; }); // best effort: retried on the next size check
+  }, 300);
 }
 
 // --- ANSI rendering for the multi-session terminal grid ---

@@ -257,6 +257,20 @@ func (h *Host) Exec(cmd string, args map[string]string) (any, error) {
 			return nil, errBad("invalid session name")
 		}
 		return h.sessionRc(name)
+	case "session-resize":
+		name := args["name"]
+		if !safeName(name) {
+			return nil, errBad("invalid session name")
+		}
+		cols, err := strconv.Atoi(args["cols"])
+		if err != nil {
+			return nil, errBad("invalid cols: %s", args["cols"])
+		}
+		rows, err := strconv.Atoi(args["rows"])
+		if err != nil {
+			return nil, errBad("invalid rows: %s", args["rows"])
+		}
+		return h.sessionResize(name, cols, rows)
 	case "claude-rename":
 		name := args["session"]
 		title := args["title"]
@@ -3405,6 +3419,47 @@ func (h *Host) sessionMode(name, target string) (map[string]any, error) {
 		}
 	}
 	return nil, errServer("can't confirm mode %s after cycling the wheel", target)
+}
+
+// sessionResize bounds: guard against a bogus/hostile client value turning
+// the pane unusable — tmux itself enforces no sane limits of its own.
+const (
+	sessionResizeMinCols = 20
+	sessionResizeMaxCols = 500
+	sessionResizeMinRows = 5
+	sessionResizeMaxRows = 200
+)
+
+// sessionResize sets the tmux window to an exact character size, so Claude
+// Code — which, like any TUI, just wraps to the real PTY geometry via
+// ioctl(TIOCGWINSZ) — wraps its output at the width the browser is actually
+// rendering. Sessions here are created detached (newSession, "-d") and no real
+// terminal client ever attaches, so without this the window sits at tmux's
+// default-size (80x24) forever regardless of how wide the ccsm Terminal tab or
+// a grid tile is; capture-pane then hands back text hard-wrapped at 80 cols,
+// which the browser's own soft-wrap (whitespace-pre-wrap) reflows a second
+// time at whatever width the box happens to have — no Claude Code setting
+// controls this independent of terminal size (confirmed against current
+// docs), so tmux-side resize is the only way. "window-size manual" is
+// required: under the default "latest"/"largest" tracking, an explicit
+// resize-window snaps back the moment tmux reconsiders client geometry (even
+// with no client attached).
+func (h *Host) sessionResize(name string, cols, rows int) (map[string]any, error) {
+	if cols < sessionResizeMinCols || cols > sessionResizeMaxCols || rows < sessionResizeMinRows || rows > sessionResizeMaxRows {
+		return nil, errBad("size out of range: %dx%d", cols, rows)
+	}
+	if !h.sessionAlive(name) {
+		return nil, errNotFound("session not found: %s", name)
+	}
+	target := "=" + name
+	if out, err := exec.Command(h.tmuxBinary, "set-option", "-t", target, "window-size", "manual").CombinedOutput(); err != nil {
+		return nil, errServer("tmux set-option window-size: %v: %s", err, out)
+	}
+	if out, err := exec.Command(h.tmuxBinary, "resize-window", "-t", target,
+		"-x", strconv.Itoa(cols), "-y", strconv.Itoa(rows)).CombinedOutput(); err != nil {
+		return nil, errServer("tmux resize-window: %v: %s", err, out)
+	}
+	return map[string]any{"session": name, "cols": cols, "rows": rows}, nil
 }
 
 // rcPressDelay is the pause between the two /remote-control presses when a

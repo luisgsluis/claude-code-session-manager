@@ -187,6 +187,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/sessions/{name}/chat/stream", s.auth(s.sessionHdlr.ChatStream))
 	s.mux.HandleFunc("POST /api/sessions/{name}/send", s.auth(s.sessionHdlr.Send))
 	s.mux.HandleFunc("POST /api/sessions/{name}/rc", s.auth(s.sessionHdlr.ReconnectRC))
+	s.mux.HandleFunc("POST /api/sessions/{name}/resize", s.auth(s.sessionHdlr.Resize))
 
 	// Projects (protected)
 	s.mux.HandleFunc("GET /api/projects", s.auth(s.sessionHdlr.ListProjects))

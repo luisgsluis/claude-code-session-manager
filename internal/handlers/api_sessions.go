@@ -341,6 +341,38 @@ func (h *SessionHandler) ReconnectRC(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Resize sets the tmux window to an exact character size so Claude Code wraps
+// its own output at the width the browser is actually rendering (Host.
+// sessionResize). Called from the client whenever the Terminal tab or a grid
+// tile's pane changes size, debounced there — not audited: routine layout
+// noise, not a user action worth a log line.
+func (h *SessionHandler) Resize(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "missing session name")
+		return
+	}
+	if !sessionNamePattern.MatchString(name) {
+		writeError(w, http.StatusBadRequest, "invalid session name")
+		return
+	}
+	var req struct {
+		Cols int `json:"cols"`
+		Rows int `json:"rows"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	_, err := h.Agent.Exec("session-resize", map[string]string{
+		"name": name, "cols": strconv.Itoa(req.Cols), "rows": strconv.Itoa(req.Rows),
+	})
+	if err != nil {
+		writeAgentError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "resized " + name})
+}
+
 // setWriteDeadline arms a short per-write deadline so a dead client unblocks
 // the stream. Some writers (test recorders) don't support deadlines; that is
 // not fatal, so ErrNotSupported is ignored.
