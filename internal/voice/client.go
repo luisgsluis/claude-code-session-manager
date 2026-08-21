@@ -99,7 +99,11 @@ func (s *Service) Transcribe(audio []byte, contentType, filename string) (string
 		return "", err
 	}
 	if !p.CanSTT() {
-		return "", errStatus(http.StatusBadRequest, "provider %s has no stt_model", cfg.STT.Provider)
+		return "", errStatus(http.StatusBadRequest, "provider %s has no stt_models", cfg.STT.Provider)
+	}
+	model := cfg.STT.Model
+	if model == "" {
+		model = p.STTModels[0]
 	}
 
 	var body bytes.Buffer
@@ -119,7 +123,7 @@ func (s *Service) Transcribe(audio []byte, contentType, filename string) (string
 	if _, err := part.Write(audio); err != nil {
 		return "", errStatus(http.StatusInternalServerError, "build request: %v", err)
 	}
-	_ = mw.WriteField("model", p.STTModel)
+	_ = mw.WriteField("model", model)
 	_ = mw.WriteField("response_format", "json")
 	if cfg.Language != "" {
 		_ = mw.WriteField("language", cfg.Language)
@@ -211,8 +215,8 @@ func (s *Service) Rewrite(text, role string, answers []Answer) (*RewriteResult, 
 		return nil, err
 	}
 	model := cfg.Rewrite.Model
-	if model == "" {
-		model = p.ChatModel
+	if model == "" && len(p.ChatModels) > 0 {
+		model = p.ChatModels[0]
 	}
 	if model == "" {
 		return nil, errStatus(http.StatusBadRequest, "provider %s has no chat model", cfg.Rewrite.Provider)

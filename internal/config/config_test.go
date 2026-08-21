@@ -291,6 +291,89 @@ func TestValidateRejectsBadSettleSeconds(t *testing.T) {
 	}
 }
 
+// TestValidateRejectsModelNotInCatalog: a selection outside the provider's
+// declared model list must fail loudly at startup, not surface as a 502 the
+// first time dictation or rewriting is used.
+func TestValidateRejectsModelNotInCatalog(t *testing.T) {
+	cfg := validConfig()
+	cfg.Voice = VoiceConfig{
+		Enabled: true,
+		STT:     VoiceSTTConfig{Mode: "whisper", Provider: "p", Model: "ghost"},
+		Providers: map[string]VoiceProvider{
+			"p": {BaseURL: "https://x", APIKey: "k", STTModels: []string{"real-model"}},
+		},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected an error for a model not in the provider's catalog")
+	}
+}
+
+// TestNormalizePicksDefaultProviderAndModel: a config with providers defined
+// but no explicit stt/rewrite selection ends up with a valid one — the
+// settings UI's radio groups must never render with nothing checked.
+func TestNormalizePicksDefaultProviderAndModel(t *testing.T) {
+	cfg := Defaults()
+	cfg.Voice.Enabled = true
+	cfg.Voice.Providers = map[string]VoiceProvider{
+		"only": {
+			BaseURL:    "https://x",
+			APIKey:     "k",
+			STTModels:  []string{"whisper-a", "whisper-b"},
+			ChatModels: []string{"chat-a"},
+		},
+	}
+	cfg.Normalize()
+
+	if cfg.Voice.STT.Provider != "only" {
+		t.Errorf("stt.provider = %q, want the only provider auto-selected", cfg.Voice.STT.Provider)
+	}
+	if cfg.Voice.STT.Model != "whisper-a" {
+		t.Errorf("stt.model = %q, want the provider's first stt model", cfg.Voice.STT.Model)
+	}
+	if cfg.Voice.Rewrite.Provider != "only" {
+		t.Errorf("rewrite.provider = %q, want the only provider auto-selected", cfg.Voice.Rewrite.Provider)
+	}
+	if cfg.Voice.Rewrite.Model != "chat-a" {
+		t.Errorf("rewrite.model = %q, want the provider's only chat model", cfg.Voice.Rewrite.Model)
+	}
+}
+
+// TestNormalizeReplacesAModelNoLongerInTheCatalog: editing a provider's model
+// list out from under a stale selection must not leave voice.yaml pointing at
+// a model that no longer exists.
+func TestNormalizeReplacesAModelNoLongerInTheCatalog(t *testing.T) {
+	cfg := Defaults()
+	cfg.Voice.Enabled = true
+	cfg.Voice.STT.Provider = "p"
+	cfg.Voice.STT.Model = "removed-model"
+	cfg.Voice.Providers = map[string]VoiceProvider{
+		"p": {BaseURL: "https://x", APIKey: "k", STTModels: []string{"current-model"}},
+	}
+	cfg.Normalize()
+
+	if cfg.Voice.STT.Model != "current-model" {
+		t.Errorf("stt.model = %q, want the stale selection replaced", cfg.Voice.STT.Model)
+	}
+}
+
+// TestNormalizeLeavesAnExplicitValidChoiceAlone: with two valid providers,
+// Normalize must not second-guess whichever one was actually selected.
+func TestNormalizeLeavesAnExplicitValidChoiceAlone(t *testing.T) {
+	cfg := Defaults()
+	cfg.Voice.Enabled = true
+	cfg.Voice.Rewrite.Provider = "b"
+	cfg.Voice.Rewrite.Model = "chat-b"
+	cfg.Voice.Providers = map[string]VoiceProvider{
+		"a": {BaseURL: "https://x", APIKey: "k", ChatModels: []string{"chat-a"}},
+		"b": {BaseURL: "https://x", APIKey: "k", ChatModels: []string{"chat-b"}},
+	}
+	cfg.Normalize()
+
+	if cfg.Voice.Rewrite.Provider != "b" || cfg.Voice.Rewrite.Model != "chat-b" {
+		t.Errorf("normalize changed a valid explicit selection: %+v", cfg.Voice.Rewrite)
+	}
+}
+
 func TestEnvOverridesYAML(t *testing.T) {
 	tmp := t.TempDir() + "/test.yaml"
 	data := `port: 9090`

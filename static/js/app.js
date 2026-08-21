@@ -280,6 +280,7 @@ const I18N = {
     cfg_voice_enabled: 'Activado',
     cfg_voice_stt_mode: 'Modo de dictado',
     cfg_voice_stt_provider: 'Proveedor de transcripci\u00f3n',
+    cfg_voice_stt_model: 'Modelo de transcripci\u00f3n',
     cfg_voice_vocabulary: 'Vocabulario',
     cfg_voice_rewrite_enabled: 'Reescribir',
     cfg_voice_rewrite_provider: 'Proveedor de reescritura',
@@ -288,6 +289,7 @@ const I18N = {
     cfg_voice_prompt_edit: 'Editar meta-prompt\u2026',
     cfg_voice_no_providers: 'Sin proveedores en config.yaml',
     cfg_voice_saved: 'Configuraci\u00f3n de voz guardada',
+    cfg_voice_save_failed: 'No se pudo guardar la configuraci\u00f3n de voz',
     cfg_voice_mode_whisper: 'Whisper (servidor)',
     cfg_voice_mode_webspeech: 'Navegador (Web Speech)',
     cfg_voice_mode_whisper_fallback: 'Whisper con respaldo del navegador',
@@ -585,6 +587,7 @@ const I18N = {
     cfg_voice_enabled: 'Enabled',
     cfg_voice_stt_mode: 'Dictation mode',
     cfg_voice_stt_provider: 'Transcription provider',
+    cfg_voice_stt_model: 'Transcription model',
     cfg_voice_vocabulary: 'Vocabulary',
     cfg_voice_rewrite_enabled: 'Rewrite',
     cfg_voice_rewrite_provider: 'Rewrite provider',
@@ -593,6 +596,7 @@ const I18N = {
     cfg_voice_prompt_edit: 'Edit meta-prompt\u2026',
     cfg_voice_no_providers: 'No providers in config.yaml',
     cfg_voice_saved: 'Voice settings saved',
+    cfg_voice_save_failed: 'Could not save voice settings',
     cfg_voice_mode_whisper: 'Whisper (server)',
     cfg_voice_mode_webspeech: 'Browser (Web Speech)',
     cfg_voice_mode_whisper_fallback: 'Whisper with browser fallback',
@@ -3087,6 +3091,7 @@ function ccsmApp() {
         mode: (v.stt && v.stt.mode) || 'whisper_fallback',
         modes: (v.stt && v.stt.modes) || ['whisper', 'webspeech', 'whisper_fallback'],
         sttProvider: (v.stt && v.stt.provider) || '',
+        sttModel: (v.stt && v.stt.model) || '',
         vocabulary: (v.stt && v.stt.vocabulary) || '',
         rewriteEnabled: !!(v.rewrite && v.rewrite.enabled),
         rewriteProvider: (v.rewrite && v.rewrite.provider) || '',
@@ -3094,7 +3099,56 @@ function ccsmApp() {
         defaultRole: (v.rewrite && v.rewrite.default_role) || 'auto',
         providers: v.providers || [],
       };
+      // Mirror the server's own normalization (config.Normalize): the
+      // provider dropdown must never render with nothing selected (no blank
+      // option is ever offered — see the template), and a stale/missing
+      // model must never be offered back to the server on save.
+      this.voiceFormEnsureSelection('stt');
+      this.voiceFormEnsureSelection('rewrite');
     },
+
+    // The providers a capability can actually use — what both the provider
+    // dropdown and the model dropdown are built from.
+    voiceFormProvidersFor(which) {
+      const key = which === 'stt' ? 'stt' : 'chat';
+      return this.voiceForm.providers.filter(p => p[key]);
+    },
+
+    // The model catalog for whichever provider is currently selected for
+    // this capability — empty when no provider qualifies.
+    voiceFormModelsFor(which) {
+      const provKey = which === 'stt' ? 'sttProvider' : 'rewriteProvider';
+      const listKey = which === 'stt' ? 'stt_models' : 'chat_models';
+      const p = this.voiceForm.providers.find(x => x.name === this.voiceForm[provKey]);
+      return (p && p[listKey]) || [];
+    },
+
+    // Guarantees the invariant the settings panel promises: with at least
+    // one qualifying provider, sttProvider/rewriteProvider is always one of
+    // them (never blank, never a name that stopped qualifying), and the
+    // matching model is always one this provider actually offers.
+    voiceFormEnsureSelection(which) {
+      const provKey = which === 'stt' ? 'sttProvider' : 'rewriteProvider';
+      const list = this.voiceFormProvidersFor(which);
+      if (list.length && !list.some(p => p.name === this.voiceForm[provKey])) {
+        this.voiceForm[provKey] = list[0].name;
+      }
+      this.voiceFormEnsureModel(which);
+    },
+
+    voiceFormEnsureModel(which) {
+      const modelKey = which === 'stt' ? 'sttModel' : 'model';
+      const models = this.voiceFormModelsFor(which);
+      if (!models.length) {
+        this.voiceForm[modelKey] = '';
+      } else if (!models.includes(this.voiceForm[modelKey])) {
+        this.voiceForm[modelKey] = models[0];
+      }
+    },
+
+    // Bound to the provider dropdown's @change: a provider switch always
+    // re-resolves the model, the same way the server does on PATCH.
+    onVoiceProviderChange(which) { this.voiceFormEnsureModel(which); },
 
     async saveVoiceSettings() {
       const f = this.voiceForm;
@@ -3102,22 +3156,38 @@ function ccsmApp() {
       const body = {
         voice: {
           enabled: f.enabled,
-          stt: { mode: f.mode, provider: f.sttProvider, vocabulary: f.vocabulary },
+          stt: { mode: f.mode, provider: f.sttProvider, model: f.sttModel, vocabulary: f.vocabulary },
           rewrite: {
             enabled: f.rewriteEnabled, provider: f.rewriteProvider, model: f.model,
             default_role: f.defaultRole,
           },
         },
       };
+
+      // The PATCH is the operation that can genuinely fail (a rejected
+      // field, the network, a dead session) — that is the only phase
+      // allowed to show an error. Refreshing afterwards is best-effort: its
+      // own failure must never read as "the save failed" when it did not.
+      let resp;
       try {
-        const resp = await fetch('/api/config', {
+        resp = await fetch('/api/config', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
-        const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) throw new Error(data.error || 'error');
-        this.toastSuccess(this.t('cfg_voice_saved'));
+      } catch (e) {
+        this.toastError(this.t('cfg_voice_save_failed'));
+        return;
+      }
+      let data = {};
+      try { data = await resp.json(); } catch (e) { /* body need not be JSON on every status */ }
+      if (!resp.ok) {
+        this.toastError(data.error || this.t('cfg_voice_save_failed'));
+        return;
+      }
+      this.toastSuccess(this.t('cfg_voice_saved'));
+
+      try {
         // Re-read rather than trusting the local form: the server is what
         // decides, and a mode that this browser cannot honour must be
         // reflected in the buttons immediately.
@@ -3127,9 +3197,7 @@ function ccsmApp() {
           this.applyVoiceConfig(cfg.voice);
           this.voiceFormInit(cfg);
         }
-      } catch (e) {
-        this.toastError(e.message);
-      }
+      } catch (e) { /* the save already succeeded; the refresh is a nicety */ }
     },
 
     // --- Meta-prompt editor ---

@@ -517,3 +517,115 @@ test.describe('meta-prompt editor', () => {
     await ctx.close();
   });
 });
+
+test.describe('voice settings panel', () => {
+  test('the rewrite provider dropdown lists every chat-capable provider and is never blank', async ({ page }) => {
+    await openSettingsPanel(page);
+    const select = page.locator('[data-testid="voice-rewrite-provider"]');
+    // The e2e config declares two chat-capable providers: stub, chatonly.
+    // A native <select> is inherently mutually exclusive (exactly one value
+    // at a time); the "never blank" half is that the template never renders
+    // a blank <option>, so there is nothing to select down to. Not asserting
+    // WHICH one starts selected: an earlier failed run in this same suite
+    // can leave either one persisted server-side.
+    await expect(select.locator('option')).toHaveCount(2);
+    await expect(select.locator('option[value=""]')).toHaveCount(0);
+    const before = await select.inputValue();
+    expect(['stub', 'chatonly']).toContain(before);
+
+    const other = before === 'stub' ? 'chatonly' : 'stub';
+    await select.selectOption(other);
+    await expect(select).toHaveValue(other);
+
+    // Restore whatever was there before this test touched it.
+    await select.selectOption(before);
+  });
+
+  // The STT side only has one qualifying provider in the e2e config (only
+  // "stub" declares stt_models), which is exactly the "if there is only one
+  // option it must appear selected" case from a single-provider deployment.
+  test('a lone STT provider still appears selected, and its model is preselected', async ({ page }) => {
+    await openSettingsPanel(page);
+    const select = page.locator('[data-testid="voice-stt-provider"]');
+    await expect(select.locator('option')).toHaveCount(1);
+    await expect(select).toHaveValue('stub');
+    await expect(page.locator('[data-testid="voice-stt-model"]')).toHaveValue('stub-whisper');
+  });
+
+  test("switching the rewrite provider re-picks a model from the new provider's catalog", async ({ page }) => {
+    await openSettingsPanel(page);
+    const providerSelect = page.locator('[data-testid="voice-rewrite-provider"]');
+    const modelSelect = page.locator('[data-testid="voice-rewrite-model"]');
+
+    // "stub" offers exactly one model — the select still shows it selected.
+    await expect(modelSelect.locator('option')).toHaveCount(1);
+    await expect(modelSelect).toHaveValue('stub-chat');
+
+    // "chatonly" offers two; switching to it must not leave the model blank,
+    // and the list itself must now be chatonly's catalog.
+    await providerSelect.selectOption('chatonly');
+    await expect(modelSelect.locator('option')).toHaveCount(2);
+    await expect(modelSelect).toHaveValue('stub-chat');
+
+    // Pick the second model explicitly, then switch to a provider whose
+    // catalog does not include it: the selection must fall back to that
+    // provider's own default rather than staying on an invalid value.
+    await modelSelect.selectOption('stub-chat-2');
+    await providerSelect.selectOption('stub');
+    await expect(modelSelect).toHaveValue('stub-chat');
+  });
+
+  // Regression guard for the native <select> popup rendering with a light
+  // background regardless of the app's dark skin — invisible in a
+  // screenshot of the closed control, so this asserts the CSS property that
+  // actually fixes it rather than pixels of a popup Playwright cannot
+  // screenshot (it is drawn outside the page's render tree).
+  test('the provider and model dropdowns declare a dark native popup on the default skin', async ({ page }) => {
+    await openSettingsPanel(page);
+    for (const testid of ['voice-stt-provider', 'voice-stt-model', 'voice-rewrite-provider', 'voice-rewrite-model']) {
+      const el = page.locator(`[data-testid="${testid}"]`);
+      await expect(el).toHaveCSS('color-scheme', 'dark');
+    }
+  });
+
+  // The regression test for the bug report: opening the panel and saving
+  // immediately, with nothing touched, used to 400 because the loaded
+  // rewrite model (a "vendor/model-name"-shaped id) failed a same-line regex
+  // that could never accept a slash. Saving the form exactly as loaded must
+  // succeed with no error toast.
+  // The single toast element (x-show="toast.show"), not any of the several
+  // unrelated .text-success/.text-danger badges elsewhere on the page (the
+  // "live" indicator, the auto-detected-role badge, the active-version
+  // badge) — a class selector alone matches all of those too.
+  const toast = (page) => page.locator('div[x-show="toast.show"]');
+
+  test('saving the panel unchanged succeeds with no error toast', async ({ page }) => {
+    await openSettingsPanel(page);
+    await page.locator('[data-testid="voice-save"]').click();
+    await expect(toast(page)).toHaveText('Configuración de voz guardada', { timeout: 5000 });
+    await expect(toast(page)).not.toHaveClass(/text-danger/);
+  });
+
+  test('the vocabulary field is a multi-line textarea that saves and reloads multiple entries', async ({ page }) => {
+    await openSettingsPanel(page);
+    const vocab = page.locator('[data-testid="voice-vocabulary"]');
+    await expect(vocab).toBeVisible();
+
+    const entries = 'sonarr\nradarr\nqbittorrent\nmacvlan';
+    await vocab.fill(entries);
+    await page.locator('[data-testid="voice-save"]').click();
+    await expect(toast(page)).toHaveText('Configuración de voz guardada', { timeout: 5000 });
+    await expect(toast(page)).not.toHaveClass(/text-danger/);
+
+    // Reopen from a fresh navigation: the multi-line value must have
+    // actually persisted server-side, not just survived in the in-page form
+    // state (openSettingsPanel navigates to "/" before opening the panel).
+    await openSettingsPanel(page);
+    await expect(page.locator('[data-testid="voice-vocabulary"]')).toHaveValue(entries);
+
+    // Restore the default vocabulary for the rest of the suite.
+    await page.locator('[data-testid="voice-vocabulary"]').fill('sonarr, radarr, tmux, systemd, macvlan');
+    await page.locator('[data-testid="voice-save"]').click();
+    await expect(toast(page)).toHaveText('Configuración de voz guardada', { timeout: 5000 });
+  });
+});

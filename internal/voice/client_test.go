@@ -90,7 +90,7 @@ func newService(t *testing.T, url string, mutate func(*config.VoiceConfig)) *Ser
 			Enabled: true, Provider: "p", DefaultRole: "auto",
 		},
 		Providers: map[string]config.VoiceProvider{
-			"p": {BaseURL: url, APIKey: "sk-test", STTModel: "whisper-x", ChatModel: "chat-x"},
+			"p": {BaseURL: url, APIKey: "sk-test", STTModels: []string{"whisper-x"}, ChatModels: []string{"chat-x"}},
 		},
 	}
 	if mutate != nil {
@@ -153,6 +153,27 @@ func TestTranscribeOmitsLanguageWhenAutodetecting(t *testing.T) {
 	}
 }
 
+// TestTranscribeModelOverridesProviderDefault: cfg.STT.Model, when set, wins
+// over the provider's first catalog entry — mirrors
+// TestRewriteModelOverridesProviderDefault for the transcription side.
+func TestTranscribeModelOverridesProviderDefault(t *testing.T) {
+	var cap capture
+	srv := fakeProvider(t, &cap, 0, `{"text":"x"}`)
+	s := newService(t, srv.URL, func(c *config.VoiceConfig) {
+		p := c.Providers["p"]
+		p.STTModels = []string{"whisper-x", "whisper-y"}
+		c.Providers["p"] = p
+		c.STT.Model = "whisper-y"
+	})
+
+	if _, err := s.Transcribe([]byte("x"), "audio/webm", "a.webm"); err != nil {
+		t.Fatal(err)
+	}
+	if cap.fields["model"] != "whisper-y" {
+		t.Errorf("model = %q, want the configured override", cap.fields["model"])
+	}
+}
+
 func TestTranscribeRefusals(t *testing.T) {
 	var cap capture
 	srv := fakeProvider(t, &cap, 0, `{"text":"x"}`)
@@ -167,7 +188,7 @@ func TestTranscribeRefusals(t *testing.T) {
 		{"unknown provider", func(c *config.VoiceConfig) { c.STT.Provider = "ghost" }, http.StatusBadRequest},
 		{"provider cannot transcribe", func(c *config.VoiceConfig) {
 			p := c.Providers["p"]
-			p.STTModel = ""
+			p.STTModels = nil
 			c.Providers["p"] = p
 		}, http.StatusBadRequest},
 	}

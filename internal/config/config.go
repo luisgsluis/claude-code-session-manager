@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -71,6 +72,9 @@ type VoiceSTTConfig struct {
 	// otherwise webspeech).
 	Mode     string `yaml:"mode"`
 	Provider string `yaml:"provider"`
+	// Model must be one of Providers[Provider].STTModels — the catalog is
+	// file-only (see VoiceProvider), so this only ever names an entry in it.
+	Model string `yaml:"model"`
 	// Vocabulary is passed to the transcriber as a hint. It is what stops
 	// dictated jargon coming back as "sonar", "mac blanc" and "sistema D".
 	Vocabulary string `yaml:"vocabulary"`
@@ -78,8 +82,9 @@ type VoiceSTTConfig struct {
 
 // VoiceRewriteConfig selects who turns dictated text into a prompt.
 type VoiceRewriteConfig struct {
-	Enabled     bool   `yaml:"enabled"`
-	Provider    string `yaml:"provider"`
+	Enabled  bool   `yaml:"enabled"`
+	Provider string `yaml:"provider"`
+	// Model must be one of Providers[Provider].ChatModels.
 	Model       string `yaml:"model"`
 	DefaultRole string `yaml:"default_role"`
 }
@@ -98,8 +103,15 @@ type VoiceProvider struct {
 	APIKeyHelper string `yaml:"api_key_helper"` // executable printing the key on stdout
 	FromProfile  string `yaml:"from_profile"`   // a Claude Code profile to borrow apiKeyHelper/base URL from
 
-	STTModel  string `yaml:"stt_model"`
-	ChatModel string `yaml:"chat_model"`
+	// STTModels/ChatModels are the catalog this provider offers for each
+	// capability, in preference order — the first is the default whenever
+	// nothing else has been (validly) selected. This is the one list the
+	// settings UI reads to build its per-provider model picker; a selection
+	// naming anything outside it is rejected (see Validate and
+	// Server.checkVoiceModel), so the catalog is the only source of truth
+	// for what a provider can be asked to run.
+	STTModels  []string `yaml:"stt_models"`
+	ChatModels []string `yaml:"chat_models"`
 }
 
 // KeySources counts how many credential origins this provider declares.
@@ -114,10 +126,20 @@ func (p VoiceProvider) KeySources() int {
 }
 
 // CanSTT reports whether this provider is usable for transcription.
-func (p VoiceProvider) CanSTT() bool { return p.STTModel != "" }
+func (p VoiceProvider) CanSTT() bool { return len(p.STTModels) > 0 }
 
 // CanChat reports whether this provider is usable for rewriting.
-func (p VoiceProvider) CanChat() bool { return p.ChatModel != "" }
+func (p VoiceProvider) CanChat() bool { return len(p.ChatModels) > 0 }
+
+// hasModel reports whether m is one of a provider's declared models.
+func hasModel(list []string, m string) bool {
+	for _, x := range list {
+		if x == m {
+			return true
+		}
+	}
+	return false
+}
 
 // Valid STT modes, exported so the server can reject anything else with a
 // message naming the alternatives rather than failing obscurely later.
@@ -227,7 +249,10 @@ func (v *VoiceConfig) validate() error {
 			return fmt.Errorf("voice.stt.provider %q is not defined in voice.providers", v.STT.Provider)
 		}
 		if !p.CanSTT() {
-			return fmt.Errorf("voice.stt.provider %q has no stt_model", v.STT.Provider)
+			return fmt.Errorf("voice.stt.provider %q has no stt_models", v.STT.Provider)
+		}
+		if v.STT.Model != "" && !hasModel(p.STTModels, v.STT.Model) {
+			return fmt.Errorf("voice.stt.model %q is not offered by provider %q", v.STT.Model, v.STT.Provider)
 		}
 	}
 	if v.Rewrite.Enabled && v.Rewrite.Provider != "" {
@@ -236,10 +261,74 @@ func (v *VoiceConfig) validate() error {
 			return fmt.Errorf("voice.rewrite.provider %q is not defined in voice.providers", v.Rewrite.Provider)
 		}
 		if !p.CanChat() && v.Rewrite.Model == "" {
-			return fmt.Errorf("voice.rewrite.provider %q has no chat_model and voice.rewrite.model is empty", v.Rewrite.Provider)
+			return fmt.Errorf("voice.rewrite.provider %q has no chat_models and voice.rewrite.model is empty", v.Rewrite.Provider)
+		}
+		if v.Rewrite.Model != "" && !hasModel(p.ChatModels, v.Rewrite.Model) {
+			return fmt.Errorf("voice.rewrite.model %q is not offered by provider %q", v.Rewrite.Model, v.Rewrite.Provider)
 		}
 	}
 	return nil
+}
+
+// Normalize fills in a voice provider/model selection that was left blank or
+// now points at something that no longer exists — e.g. a fresh config.yaml
+// that declares providers but no explicit stt/rewrite selection, or a
+// provider whose model catalog was edited after being selected. Called once
+// after Load, so the rest of the program — and the settings UI's radio
+// groups, which must never render with nothing checked — can assume
+// voice.stt/rewrite provider+model are either both empty (nothing usable is
+// configured) or both valid.
+//
+// It never overrides an explicit, still-valid selection: this only repairs
+// what Validate would otherwise reject, it does not second-guess a deliberate
+// choice among several valid providers.
+func (c *Config) Normalize() { c.Voice.normalize() }
+
+func (v *VoiceConfig) normalize() {
+	if len(v.Providers) == 0 {
+		return
+	}
+	// Sorted so the auto-picked default is stable across runs rather than
+	// following Go's randomized map iteration.
+	names := make([]string, 0, len(v.Providers))
+	for n := range v.Providers {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	if _, ok := v.Providers[v.STT.Provider]; !ok || !v.Providers[v.STT.Provider].CanSTT() {
+		v.STT.Provider = ""
+		for _, n := range names {
+			if v.Providers[n].CanSTT() {
+				v.STT.Provider = n
+				break
+			}
+		}
+	}
+	if p, ok := v.Providers[v.STT.Provider]; ok && len(p.STTModels) > 0 {
+		if !hasModel(p.STTModels, v.STT.Model) {
+			v.STT.Model = p.STTModels[0]
+		}
+	} else {
+		v.STT.Model = ""
+	}
+
+	if _, ok := v.Providers[v.Rewrite.Provider]; !ok || !v.Providers[v.Rewrite.Provider].CanChat() {
+		v.Rewrite.Provider = ""
+		for _, n := range names {
+			if v.Providers[n].CanChat() {
+				v.Rewrite.Provider = n
+				break
+			}
+		}
+	}
+	if p, ok := v.Providers[v.Rewrite.Provider]; ok && len(p.ChatModels) > 0 {
+		if !hasModel(p.ChatModels, v.Rewrite.Model) {
+			v.Rewrite.Model = p.ChatModels[0]
+		}
+	} else {
+		v.Rewrite.Model = ""
+	}
 }
 
 // Defaults returns a Config with sensible defaults.
@@ -288,6 +377,7 @@ func Load(path string) (*Config, error) {
 	}
 
 	applyEnv(cfg)
+	cfg.Normalize()
 	return cfg, nil
 }
 

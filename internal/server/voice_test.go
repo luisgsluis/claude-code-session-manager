@@ -39,19 +39,19 @@ func newVoiceServer(t *testing.T, mutate func(*config.Config)) (*Server, string)
 		Language:    "es",
 		PromptsPath: filepath.Join(dir, "prompts"),
 		STT: config.VoiceSTTConfig{
-			Mode: "whisper", Provider: "groq", Vocabulary: "sonarr, tmux",
+			Mode: "whisper", Provider: "groq", Model: "whisper-x", Vocabulary: "sonarr, tmux",
 		},
 		Rewrite: config.VoiceRewriteConfig{
-			Enabled: true, Provider: "groq", DefaultRole: "auto",
+			Enabled: true, Provider: "groq", Model: "chat-x", DefaultRole: "auto",
 		},
 		Providers: map[string]config.VoiceProvider{
 			"groq": {
 				BaseURL: "https://api.groq.example/v1", APIKey: theKey,
-				STTModel: "whisper-x", ChatModel: "chat-x",
+				STTModels: []string{"whisper-x", "whisper-z"}, ChatModels: []string{"chat-x", "chat-z"},
 			},
 			"chatonly": {
 				BaseURL: "https://other.example/v1", APIKey: theKey,
-				ChatModel: "chat-y",
+				ChatModels: []string{"chat-y", "chat-y2"},
 			},
 		},
 	}
@@ -208,9 +208,14 @@ func TestPatchVoiceRejections(t *testing.T) {
 			"unknown role wizard",
 		},
 		{
-			"invalid model name",
-			map[string]any{"rewrite": map[string]any{"model": "bad model; rm -rf /"}},
-			"invalid voice.rewrite.model",
+			"model not offered by the current provider",
+			map[string]any{"rewrite": map[string]any{"model": "not-in-the-catalog"}},
+			"is not offered by provider",
+		},
+		{
+			"stt model not offered by the current provider",
+			map[string]any{"stt": map[string]any{"model": "not-in-the-catalog"}},
+			"is not offered by provider",
 		},
 	}
 	for _, c := range cases {
@@ -230,6 +235,102 @@ func TestPatchVoiceRejections(t *testing.T) {
 				t.Error("a rejected patch mutated the config")
 			}
 		})
+	}
+}
+
+// TestPatchVoiceModelSelection: a model can be switched independently of the
+// provider, as long as it is in that provider's catalog.
+func TestPatchVoiceModelSelection(t *testing.T) {
+	srv, _ := newVoiceServer(t, nil)
+
+	w := doJSON(t, srv, "PATCH", "/api/config", map[string]any{
+		"voice": map[string]any{
+			"stt":     map[string]any{"model": "whisper-z"},
+			"rewrite": map[string]any{"model": "chat-z"},
+		},
+	})
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	srv.cfgMu.RLock()
+	got := srv.cfg.Voice
+	srv.cfgMu.RUnlock()
+	if got.STT.Model != "whisper-z" {
+		t.Errorf("stt.model = %q", got.STT.Model)
+	}
+	if got.Rewrite.Model != "chat-z" {
+		t.Errorf("rewrite.model = %q", got.Rewrite.Model)
+	}
+}
+
+// TestPatchVoiceProviderSwitchDefaultsModel: switching to a provider whose
+// catalog does not include the currently selected model must not leave a
+// dangling selection — it falls back to the new provider's first model, so
+// the settings UI (and Validate on the next restart) never sees a blank or
+// invalid pairing.
+func TestPatchVoiceProviderSwitchDefaultsModel(t *testing.T) {
+	srv, _ := newVoiceServer(t, nil)
+
+	w := doJSON(t, srv, "PATCH", "/api/config", map[string]any{
+		"voice": map[string]any{"rewrite": map[string]any{"provider": "chatonly"}},
+	})
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	srv.cfgMu.RLock()
+	got := srv.cfg.Voice.Rewrite
+	srv.cfgMu.RUnlock()
+	if got.Provider != "chatonly" {
+		t.Errorf("provider = %q", got.Provider)
+	}
+	// "chat-x" (the old model) is not in chatonly's catalog (chat-y, chat-y2),
+	// so it must have been replaced with chatonly's first model.
+	if got.Model != "chat-y" {
+		t.Errorf("model = %q, want the new provider's first catalog entry", got.Model)
+	}
+}
+
+// TestVoiceInfoIncludesProviderModelLists: the settings UI builds its
+// per-provider model picker from exactly this list.
+func TestVoiceInfoIncludesProviderModelLists(t *testing.T) {
+	srv, _ := newVoiceServer(t, nil)
+
+	w := doJSON(t, srv, "GET", "/api/config", nil)
+	if w.Code != 200 {
+		t.Fatalf("status %d", w.Code)
+	}
+	var cfg struct {
+		Voice struct {
+			STT struct {
+				Model string `json:"model"`
+			} `json:"stt"`
+			Providers []struct {
+				Name       string   `json:"name"`
+				STTModels  []string `json:"stt_models"`
+				ChatModels []string `json:"chat_models"`
+			} `json:"providers"`
+		} `json:"voice"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Voice.STT.Model != "whisper-x" {
+		t.Errorf("stt.model = %q", cfg.Voice.STT.Model)
+	}
+	var groq, chatonly []string
+	for _, p := range cfg.Voice.Providers {
+		switch p.Name {
+		case "groq":
+			groq = p.ChatModels
+		case "chatonly":
+			chatonly = p.ChatModels
+		}
+	}
+	if strings.Join(groq, ",") != "chat-x,chat-z" {
+		t.Errorf("groq chat_models = %v", groq)
+	}
+	if strings.Join(chatonly, ",") != "chat-y,chat-y2" {
+		t.Errorf("chatonly chat_models = %v", chatonly)
 	}
 }
 

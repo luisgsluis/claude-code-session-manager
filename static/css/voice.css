@@ -144,7 +144,6 @@
   color: var(--color-fg-muted, #8b949e);
   flex-shrink: 0;
 }
-.voice-setting select,
 .voice-setting input[type="text"],
 .voice-setting input[type="number"] {
   background: var(--color-bg, #0b0f14);
@@ -155,8 +154,80 @@
   font-size: 0.8rem;
   max-width: 60%;
 }
-.voice-setting select:focus,
 .voice-setting input:focus {
+  outline: none;
+  border-color: var(--color-accent, #2f81f7);
+}
+
+/* Selects reuse .tgrid-select (same picker as the chat window's mode/model
+ * dropdowns) so every select in the app reads the same, themed via the
+ * --term-select-* vars instead of this file's own hardcoded colors. That
+ * base class is sized for the tile header's single row (fixed 3.75rem,
+ * 0.65rem font); here there's a whole settings row to use, and provider/
+ * model names (e.g. "deepseek-chat") don't fit that width, so both are
+ * relaxed back to auto/readable. */
+.voice-setting select.tgrid-select {
+  width: auto;
+  max-width: 60%;
+  min-width: 6rem;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.5rem;
+}
+
+/* A <select>'s OPEN option list is drawn by the browser/OS, outside this
+ * page's render tree — none of the colors above reach it. Without an
+ * explicit color-scheme, Chromium and Firefox both default that popup to a
+ * light palette regardless of the select's own dark background and text, so
+ * on every skin here except "light" the options rendered as light text on a
+ * near-white popup: unreadable.
+ *
+ * Setting color-scheme ONLY on the <select> itself (tried first) computes
+ * correctly (getComputedStyle reports it) but Chromium still paints the
+ * popup light — confirmed by actually opening it, not just reading the
+ * computed style. The property has to be set on the root for the browser to
+ * use it when choosing which native palette to draw *any* chrome-level
+ * widget in, the option listbox included. So this lives on html, not
+ * scoped to .voice-setting — the one place in this file that is
+ * deliberately global rather than bespoke to the voice panel, because nothing
+ * scoped lower actually reaches the popup. Mirrors the skin token system in
+ * input.css: every skin but "light" is a dark native popup. */
+:root,
+[data-skin="dark"],
+[data-skin="contrast"],
+[data-skin="solarized"] {
+  color-scheme: dark;
+}
+[data-skin="light"] {
+  color-scheme: light;
+}
+
+/* The vocabulary box needs the label above the control rather than beside
+ * it — a multi-line textarea does not fit the label-left/control-right
+ * rhythm the single-line settings use. */
+.voice-setting-block {
+  flex-direction: column;
+  align-items: stretch;
+}
+.voice-setting-block > span {
+  margin-bottom: 0.35rem;
+}
+
+/* The dictionary/vocabulary box: a comma-separated one-liner was uncomfortable
+ * past a handful of entries. Smaller than .voice-prompt-editor (this is a word
+ * list, not a document) but the same dark, monospace-free text field. */
+.voice-vocab-textarea {
+  width: 100%;
+  min-height: 6rem;
+  resize: vertical;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  padding: 0.5rem 0.6rem;
+  border-radius: 0.5rem;
+  background: var(--color-bg, #0b0f14);
+  color: var(--color-fg, #e6edf3);
+  border: 1px solid rgb(55 65 81);
+}
+.voice-vocab-textarea:focus {
   outline: none;
   border-color: var(--color-accent, #2f81f7);
 }

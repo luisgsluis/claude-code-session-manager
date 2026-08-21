@@ -45,6 +45,7 @@ voice:
   stt:
     mode: whisper
     provider: stub
+    model: stub-whisper
     vocabulary: "sonarr, radarr, tmux, systemd, macvlan"
   rewrite:
     enabled: true
@@ -55,12 +56,12 @@ voice:
     stub:
       base_url: http://127.0.0.1:8797/v1
       api_key: e2e-stub-key
-      stt_model: stub-whisper
-      chat_model: stub-chat
+      stt_models: [stub-whisper]
+      chat_models: [stub-chat]
     chatonly:
       base_url: http://127.0.0.1:8797/v1
       api_key: e2e-stub-key
-      chat_model: stub-chat
+      chat_models: [stub-chat, stub-chat-2]
 YAML
 
 if [ ! -x "$E2E/ccsm-e2e" ]; then

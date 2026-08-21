@@ -409,26 +409,34 @@
 
         <label class="voice-setting">
           <span x-text="t('cfg_voice_stt_mode')"></span>
-          <select x-model="voiceForm.mode">
+          <select x-model="voiceForm.mode" class="tgrid-select">
             <template x-for="m in voiceForm.modes" :key="m">
               <option :value="m" x-text="t('cfg_voice_mode_' + m)"></option>
             </template>
           </select>
         </label>
 
-        <label class="voice-setting" x-show="voiceForm.mode !== 'webspeech'">
+        <label class="voice-setting" x-show="voiceForm.mode !== 'webspeech' && voiceFormProvidersFor('stt').length">
           <span x-text="t('cfg_voice_stt_provider')"></span>
-          <select x-model="voiceForm.sttProvider">
-            <option value=""></option>
-            <template x-for="p in voiceForm.providers.filter(p => p.stt)" :key="p.name">
+          <select x-model="voiceForm.sttProvider" @change="onVoiceProviderChange('stt')" data-testid="voice-stt-provider" class="tgrid-select">
+            <template x-for="p in voiceFormProvidersFor('stt')" :key="p.name">
               <option :value="p.name" x-text="p.name"></option>
             </template>
           </select>
         </label>
 
-        <label class="voice-setting" x-show="voiceForm.mode !== 'webspeech'">
+        <label class="voice-setting" x-show="voiceForm.mode !== 'webspeech' && voiceFormModelsFor('stt').length">
+          <span x-text="t('cfg_voice_stt_model')"></span>
+          <select x-model="voiceForm.sttModel" data-testid="voice-stt-model" class="tgrid-select">
+            <template x-for="m in voiceFormModelsFor('stt')" :key="m">
+              <option :value="m" x-text="m"></option>
+            </template>
+          </select>
+        </label>
+
+        <label class="voice-setting voice-setting-block" x-show="voiceForm.mode !== 'webspeech'">
           <span x-text="t('cfg_voice_vocabulary')"></span>
-          <input type="text" x-model="voiceForm.vocabulary">
+          <textarea class="voice-vocab-textarea" rows="4" x-model="voiceForm.vocabulary" data-testid="voice-vocabulary"></textarea>
         </label>
 
         <label class="voice-setting">
@@ -436,24 +444,27 @@
           <input type="checkbox" x-model="voiceForm.rewriteEnabled">
         </label>
 
-        <label class="voice-setting" x-show="voiceForm.rewriteEnabled">
+        <label class="voice-setting" x-show="voiceForm.rewriteEnabled && voiceFormProvidersFor('rewrite').length">
           <span x-text="t('cfg_voice_rewrite_provider')"></span>
-          <select x-model="voiceForm.rewriteProvider">
-            <option value=""></option>
-            <template x-for="p in voiceForm.providers.filter(p => p.chat)" :key="p.name">
+          <select x-model="voiceForm.rewriteProvider" @change="onVoiceProviderChange('rewrite')" data-testid="voice-rewrite-provider" class="tgrid-select">
+            <template x-for="p in voiceFormProvidersFor('rewrite')" :key="p.name">
               <option :value="p.name" x-text="p.name"></option>
             </template>
           </select>
         </label>
 
-        <label class="voice-setting" x-show="voiceForm.rewriteEnabled">
+        <label class="voice-setting" x-show="voiceForm.rewriteEnabled && voiceFormModelsFor('rewrite').length">
           <span x-text="t('cfg_voice_rewrite_model')"></span>
-          <input type="text" x-model="voiceForm.model">
+          <select x-model="voiceForm.model" data-testid="voice-rewrite-model" class="tgrid-select">
+            <template x-for="m in voiceFormModelsFor('rewrite')" :key="m">
+              <option :value="m" x-text="m"></option>
+            </template>
+          </select>
         </label>
 
         <label class="voice-setting" x-show="voiceForm.rewriteEnabled">
           <span x-text="t('cfg_voice_default_role')"></span>
-          <select x-model="voiceForm.defaultRole">
+          <select x-model="voiceForm.defaultRole" class="tgrid-select">
             <template x-for="r in voice.roles" :key="r.id">
               <option :value="r.id" x-text="lang === 'en' ? r.en : r.es"></option>
             </template>
@@ -466,7 +477,7 @@
 
         <div class="flex items-center justify-between gap-2 px-4 py-2.5">
           <button @click="openPromptEditor()" class="text-sm text-accent hover:opacity-80 font-medium" x-text="t('cfg_voice_prompt_edit')"></button>
-          <button @click="saveVoiceSettings()" class="bg-accent text-white rounded-xl px-3 py-1.5 text-xs font-medium hover:opacity-90 transition-opacity" x-text="t('cfg_save')"></button>
+          <button @click="saveVoiceSettings()" data-testid="voice-save" class="bg-accent text-white rounded-xl px-3 py-1.5 text-xs font-medium hover:opacity-90 transition-opacity" x-text="t('cfg_save')"></button>
         </div>
       </div>
     </div>

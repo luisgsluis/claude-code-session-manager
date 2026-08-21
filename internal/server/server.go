@@ -537,13 +537,17 @@ type configInfo struct {
 }
 
 // voiceProviderInfo is everything the settings panel may know about a
-// provider: its name and what it can do. Never the key, never the helper path,
-// never the profile it borrows from — knowing a key exists is enough to build
-// a dropdown, and anything more is a credential leak waiting for a screenshot.
+// provider: its name, what it can do, and the model catalog for each — the
+// list the settings UI reads to build its per-provider model picker. Never
+// the key, never the helper path, never the profile it borrows from —
+// knowing a key exists is enough to build a dropdown, and anything more is a
+// credential leak waiting for a screenshot.
 type voiceProviderInfo struct {
-	Name string `json:"name"`
-	STT  bool   `json:"stt"`
-	Chat bool   `json:"chat"`
+	Name       string   `json:"name"`
+	STT        bool     `json:"stt"`
+	Chat       bool     `json:"chat"`
+	STTModels  []string `json:"stt_models,omitempty"`
+	ChatModels []string `json:"chat_models,omitempty"`
 }
 
 // voiceInfo builds the non-secret view of the voice config. Callers hold
@@ -554,6 +558,7 @@ func (s *Server) voiceInfo() map[string]any {
 	for name, p := range v.Providers {
 		providers = append(providers, voiceProviderInfo{
 			Name: name, STT: p.CanSTT(), Chat: p.CanChat(),
+			STTModels: p.STTModels, ChatModels: p.ChatModels,
 		})
 	}
 	sort.Slice(providers, func(i, j int) bool { return providers[i].Name < providers[j].Name })
@@ -564,6 +569,7 @@ func (s *Server) voiceInfo() map[string]any {
 		"stt": map[string]any{
 			"mode":       v.STT.Mode,
 			"provider":   v.STT.Provider,
+			"model":      v.STT.Model,
 			"vocabulary": v.STT.Vocabulary,
 			"modes":      config.VoiceSTTModes,
 		},
@@ -683,6 +689,7 @@ type patchVoiceConfig struct {
 type patchVoiceSTT struct {
 	Mode       *string `json:"mode"`
 	Provider   *string `json:"provider"`
+	Model      *string `json:"model"`
 	Vocabulary *string `json:"vocabulary"`
 }
 
@@ -692,8 +699,6 @@ type patchVoiceRewrite struct {
 	Model       *string `json:"model"`
 	DefaultRole *string `json:"default_role"`
 }
-
-var voiceModelPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:\[\]-]{0,63}$`)
 
 var attachPattern = regexp.MustCompile(`^[a-zA-Z0-9@._-]{1,120}$`)
 var bootstrapPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
@@ -824,10 +829,29 @@ func (s *Server) patchVoice(p *patchVoiceConfig) ([]string, string) {
 			}
 			v.STT.Provider = *p.STT.Provider
 			updated = append(updated, "voice.stt.provider")
+			// A provider switch invalidates whatever model was selected for
+			// the old one; fall back to the new provider's default (its
+			// first catalog entry) rather than leaving a dangling selection
+			// that Validate would reject on the next restart.
+			models := s.cfg.Voice.Providers[v.STT.Provider].STTModels
+			switch {
+			case v.STT.Provider == "":
+				v.STT.Model = ""
+			case len(models) > 0 && !hasModel(models, v.STT.Model):
+				v.STT.Model = models[0]
+				updated = append(updated, "voice.stt.model")
+			}
+		}
+		if p.STT.Model != nil {
+			if msg := s.checkVoiceModel(v.STT.Provider, *p.STT.Model, "stt"); msg != "" {
+				return nil, msg
+			}
+			v.STT.Model = *p.STT.Model
+			updated = append(updated, "voice.stt.model")
 		}
 		if p.STT.Vocabulary != nil {
-			if len(*p.STT.Vocabulary) > 4000 {
-				return nil, "voice.stt.vocabulary is too long (max 4000 chars)"
+			if len(*p.STT.Vocabulary) > 8000 {
+				return nil, "voice.stt.vocabulary is too long (max 8000 chars)"
 			}
 			v.STT.Vocabulary = *p.STT.Vocabulary
 			updated = append(updated, "voice.stt.vocabulary")
@@ -844,10 +868,18 @@ func (s *Server) patchVoice(p *patchVoiceConfig) ([]string, string) {
 			}
 			v.Rewrite.Provider = *p.Rewrite.Provider
 			updated = append(updated, "voice.rewrite.provider")
+			models := s.cfg.Voice.Providers[v.Rewrite.Provider].ChatModels
+			switch {
+			case v.Rewrite.Provider == "":
+				v.Rewrite.Model = ""
+			case len(models) > 0 && !hasModel(models, v.Rewrite.Model):
+				v.Rewrite.Model = models[0]
+				updated = append(updated, "voice.rewrite.model")
+			}
 		}
 		if p.Rewrite.Model != nil {
-			if *p.Rewrite.Model != "" && !voiceModelPattern.MatchString(*p.Rewrite.Model) {
-				return nil, "invalid voice.rewrite.model"
+			if msg := s.checkVoiceModel(v.Rewrite.Provider, *p.Rewrite.Model, "chat"); msg != "" {
+				return nil, msg
 			}
 			v.Rewrite.Model = *p.Rewrite.Model
 			updated = append(updated, "voice.rewrite.model")
@@ -891,6 +923,41 @@ func (s *Server) checkVoiceProvider(name, capability string) string {
 	}
 	if capability == "chat" && !p.CanChat() {
 		return "voice provider " + name + " has no chat_model"
+	}
+	return ""
+}
+
+// hasModel reports whether m is one of a provider's declared catalog.
+func hasModel(list []string, m string) bool {
+	for _, x := range list {
+		if x == m {
+			return true
+		}
+	}
+	return false
+}
+
+// checkVoiceModel verifies a model is in the given provider's catalog for the
+// requested capability ("stt" or "chat") — the only two things a UI selection
+// is ever validated against, since the catalog itself is file-only (see
+// config.VoiceProvider). "" clears the selection and is always allowed.
+func (s *Server) checkVoiceModel(provider, model, capability string) string {
+	if model == "" {
+		return ""
+	}
+	if provider == "" {
+		return "cannot select a model without a provider"
+	}
+	p, ok := s.cfg.Voice.Providers[provider]
+	if !ok {
+		return "unknown voice provider " + provider
+	}
+	list := p.STTModels
+	if capability == "chat" {
+		list = p.ChatModels
+	}
+	if !hasModel(list, model) {
+		return fmt.Sprintf("model %q is not offered by provider %q", model, provider)
 	}
 	return ""
 }
