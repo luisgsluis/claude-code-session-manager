@@ -392,6 +392,119 @@ func TestVoicePromptOverwriteRejectsTheOriginal(t *testing.T) {
 	}
 }
 
+func TestVoicePromptRenameEndpoint(t *testing.T) {
+	srv, _ := newVoiceServer(t, nil)
+
+	w := doJSON(t, srv, "PUT", "/api/voice/prompt", map[string]any{"content": voice.Original(), "new": true, "name": "original name"})
+	var saved struct {
+		Version int `json:"version"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &saved)
+
+	w = doJSON(t, srv, "POST", "/api/voice/prompt/rename", map[string]any{"version": saved.Version, "name": "  renamed  "})
+	if w.Code != 200 {
+		t.Fatalf("rename: %d %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Versions []voice.VersionInfo `json:"versions"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &got)
+	found := false
+	for _, v := range got.Versions {
+		if v.ID == saved.Version {
+			found = true
+			if v.Name != "renamed" {
+				t.Errorf("name not updated (and should be trimmed): %q", v.Name)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("renamed version missing from the response: %+v", got.Versions)
+	}
+
+	w = doJSON(t, srv, "POST", "/api/voice/prompt/rename", map[string]any{"version": 0, "name": "x"})
+	if w.Code != 400 {
+		t.Errorf("renaming the original: status %d, want 400", w.Code)
+	}
+	w = doJSON(t, srv, "POST", "/api/voice/prompt/rename", map[string]any{"version": saved.Version, "name": "   "})
+	if w.Code != 400 {
+		t.Errorf("renaming to a blank name: status %d, want 400", w.Code)
+	}
+	w = doJSON(t, srv, "POST", "/api/voice/prompt/rename", map[string]any{"version": 9999, "name": "x"})
+	if w.Code != 400 {
+		t.Errorf("renaming a version that does not exist: status %d, want 400", w.Code)
+	}
+}
+
+func TestVoicePromptDeleteEndpoint(t *testing.T) {
+	srv, _ := newVoiceServer(t, nil)
+
+	w := doJSON(t, srv, "PUT", "/api/voice/prompt", map[string]any{"content": voice.Original(), "new": true, "name": "to delete"})
+	var saved struct {
+		Version int `json:"version"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &saved)
+
+	w = doJSON(t, srv, "DELETE", "/api/voice/prompt?version="+strconv.Itoa(saved.Version), nil)
+	if w.Code != 200 {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Versions []voice.VersionInfo `json:"versions"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &got)
+	for _, v := range got.Versions {
+		if v.ID == saved.Version {
+			t.Errorf("deleted version still listed: %+v", got.Versions)
+		}
+	}
+	w = doJSON(t, srv, "GET", "/api/voice/prompt?version="+strconv.Itoa(saved.Version), nil)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("fetching a deleted version: status %d, want 404", w.Code)
+	}
+
+	w = doJSON(t, srv, "DELETE", "/api/voice/prompt?version=0", nil)
+	if w.Code != 400 {
+		t.Errorf("deleting the original: status %d, want 400", w.Code)
+	}
+	w = doJSON(t, srv, "DELETE", "/api/voice/prompt?version=9999", nil)
+	if w.Code != 400 {
+		t.Errorf("deleting a version that does not exist: status %d, want 400", w.Code)
+	}
+}
+
+// TestVoicePromptDeleteActiveFallsBackToOriginal: deleting the version
+// currently in effect must leave dictation on a working prompt (the embedded
+// original), not pointed at content that no longer exists.
+func TestVoicePromptDeleteActiveFallsBackToOriginal(t *testing.T) {
+	srv, _ := newVoiceServer(t, nil)
+
+	w := doJSON(t, srv, "PUT", "/api/voice/prompt", map[string]any{"content": voice.Original(), "new": true, "name": "active one"})
+	var saved struct {
+		Version int `json:"version"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &saved)
+	doJSON(t, srv, "POST", "/api/voice/prompt/activate", map[string]any{"version": saved.Version})
+
+	w = doJSON(t, srv, "DELETE", "/api/voice/prompt?version="+strconv.Itoa(saved.Version), nil)
+	if w.Code != 200 {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Content  string              `json:"content"`
+		Versions []voice.VersionInfo `json:"versions"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &got)
+	if got.Content != voice.Original() {
+		t.Error("deleting the active version must fall back to serving the original")
+	}
+	for _, v := range got.Versions {
+		if v.Original && !v.Active {
+			t.Error("the original should be marked active again")
+		}
+	}
+}
+
 func TestVoicePromptVersionEndpoint(t *testing.T) {
 	srv, _ := newVoiceServer(t, nil)
 	orig := voice.Original()

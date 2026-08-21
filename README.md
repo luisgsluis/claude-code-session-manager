@@ -377,8 +377,10 @@ used by the container healthcheck.
 - `POST /api/voice/transcribe` — raw audio body (MIME in `Content-Type`, 8 MiB cap) → `{"text"}`
 - `POST /api/voice/rewrite` — `{"text", "role"?, "answers"?}` → `{"role", "prompt", "questions"}`
 - `GET /api/voice/prompt` — the active meta-prompt, the embedded original, the roles and the version list (`?version=N` for one archived version)
-- `PUT /api/voice/prompt` — validate, archive the current one, save
-- `POST /api/voice/prompt/reset` — drop the override, back to the embedded original
+- `PUT /api/voice/prompt` — validate, then save: `{"content", "version"}` overwrites that version, `{"content", "new": true, "name"}` saves a new one
+- `DELETE /api/voice/prompt?version=N` — delete a saved version; deleting the active one falls back to the embedded original
+- `POST /api/voice/prompt/activate` — `{"version"}` (0 = the embedded original) makes it the one dictation uses, without touching any version's content
+- `POST /api/voice/prompt/rename` — `{"version", "name"}` relabels a saved version
 
 **Sessions**
 - `GET /api/sessions` — list sessions

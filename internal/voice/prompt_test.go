@@ -281,6 +281,93 @@ func TestPromptStoreSaveOver(t *testing.T) {
 	}
 }
 
+func TestPromptStoreRename(t *testing.T) {
+	dir := t.TempDir()
+	s := PromptStore{Dir: dir}
+	id, err := s.SaveNew(validPrompt, "original name")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Rename(id, "  new name  "); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	versions := s.List()
+	if versions[1].Name != "new name" {
+		t.Errorf("rename did not update the name (and should trim it): %+v", versions[1])
+	}
+	if content, err := s.VersionContent(id); err != nil || !strings.Contains(content, "Shared rules.") {
+		t.Errorf("rename must not touch content: %v / %q", err, content)
+	}
+
+	if err := s.Rename(id, "   "); err == nil {
+		t.Error("renaming to a blank name must be rejected")
+	}
+	if err := s.Rename(0, "x"); err == nil {
+		t.Error("the original must not be renameable")
+	}
+	if err := s.Rename(9999, "x"); err == nil {
+		t.Error("renaming a version that does not exist must fail")
+	}
+}
+
+func TestPromptStoreDelete(t *testing.T) {
+	dir := t.TempDir()
+	s := PromptStore{Dir: dir}
+	id, err := s.SaveNew(validPrompt, "mine")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Delete(0); err == nil {
+		t.Error("the original must never be deletable")
+	}
+	if err := s.Delete(9999); err == nil {
+		t.Error("deleting a version that does not exist must fail")
+	}
+
+	if err := s.Delete(id); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := s.VersionContent(id); err == nil {
+		t.Error("a deleted version must no longer be readable")
+	}
+	if len(s.List()) != 1 {
+		t.Errorf("delete must remove the version from the list, got %+v", s.List())
+	}
+	if _, err := os.Stat(s.versionPath(id)); !os.IsNotExist(err) {
+		t.Errorf("delete must remove the version's file from disk: %v", err)
+	}
+}
+
+// TestPromptStoreDeleteActiveFallsBackToOriginal is the important one: a
+// dangling active pointer would send every future dictation to a version
+// that no longer exists on disk (Load already degrades to the original in
+// that case, but versions.json should not be left claiming otherwise).
+func TestPromptStoreDeleteActiveFallsBackToOriginal(t *testing.T) {
+	dir := t.TempDir()
+	s := PromptStore{Dir: dir}
+	id, err := s.SaveNew(validPrompt, "mine")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetActive(id); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Delete(id); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if raw, custom := s.Load(); custom || raw != Original() {
+		t.Error("deleting the active version must fall back to the original")
+	}
+	for _, v := range s.List() {
+		if v.Original && !v.Active {
+			t.Error("the original should be active again after the active version was deleted")
+		}
+	}
+}
+
 // TestPromptStoreRejectsInvalidWithoutTouchingDisk is the important one: a bad
 // edit from the UI must leave the working version in place, not overwrite it
 // and then fail with nothing usable.

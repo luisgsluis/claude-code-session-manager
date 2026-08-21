@@ -292,8 +292,8 @@ const I18N = {
     cfg_voice_mode_webspeech: 'Navegador (Web Speech)',
     cfg_voice_mode_whisper_fallback: 'Whisper con respaldo del navegador',
     prompt_title: 'Meta-prompt de reescritura',
-    prompt_save_over: 'Guardar cambios',
-    prompt_save_new: 'Guardar como nueva\u2026',
+    prompt_save_over: 'Guardar',
+    prompt_save_new: 'Guardar como\u2026',
     prompt_name_new: 'Nombre de la nueva versi\u00f3n:',
     prompt_apply: 'Aplicar esta versi\u00f3n',
     prompt_applied: 'Versi\u00f3n aplicada',
@@ -302,6 +302,12 @@ const I18N = {
     prompt_original_name: 'Original',
     prompt_saved: 'Versi\u00f3n guardada',
     prompt_section: 'Ir a secci\u00f3n',
+    prompt_rename: 'Renombrar\u2026',
+    prompt_rename_new_name: 'Nuevo nombre:',
+    prompt_renamed: 'Versi\u00f3n renombrada',
+    prompt_delete: 'Borrar\u2026',
+    prompt_delete_confirm: '\u00bfBorrar la versi\u00f3n',
+    prompt_deleted: 'Versi\u00f3n borrada',
   },
   en: {
     logout: 'logout',
@@ -591,8 +597,8 @@ const I18N = {
     cfg_voice_mode_webspeech: 'Browser (Web Speech)',
     cfg_voice_mode_whisper_fallback: 'Whisper with browser fallback',
     prompt_title: 'Rewriting meta-prompt',
-    prompt_save_over: 'Save changes',
-    prompt_save_new: 'Save as new\u2026',
+    prompt_save_over: 'Save',
+    prompt_save_new: 'Save as\u2026',
     prompt_name_new: 'Name for the new version:',
     prompt_apply: 'Apply this version',
     prompt_applied: 'Version applied',
@@ -601,6 +607,12 @@ const I18N = {
     prompt_original_name: 'Original',
     prompt_saved: 'Version saved',
     prompt_section: 'Go to section',
+    prompt_rename: 'Rename…',
+    prompt_rename_new_name: 'New name:',
+    prompt_renamed: 'Version renamed',
+    prompt_delete: 'Delete…',
+    prompt_delete_confirm: 'Delete version',
+    prompt_deleted: 'Version deleted',
   },
 };
 
@@ -1509,6 +1521,16 @@ function ccsmApp() {
       if (!this.live.models.length) this.loadModels();
       await this.loadSessions();
       this.syncGridTiles();
+      // Narrow (phones/small windows): openGridTile just minimized every tile.
+      // With exactly one session there is nothing to choose between, so open
+      // it right away instead of leaving the grid on the "pick one"
+      // placeholder — two or more sessions still start all-minimized as
+      // before. Only on the initial open — a later sync (the 5s poll below)
+      // must not re-open a tile the user minimized on purpose.
+      if (this.grid.narrow) {
+        const names = Object.keys(this.grid.tiles);
+        if (names.length === 1) this.restoreTile(names[0]);
+      }
       // While the grid is open a new or dead session should show up quickly;
       // the usual 30s list poll would leave a stale tile on screen too long.
       if (this.pollInterval) clearInterval(this.pollInterval);
@@ -3130,7 +3152,7 @@ function ccsmApp() {
         this.voice.roles = data.roles || this.voice.roles;
         // Open on whichever version is actually active — that is what
         // dictation is using right now, not always the original.
-        const active = this.promptEditor.versions.find(v => v.active);
+        const active = this.promptActiveVersion();
         this.promptEditor.viewing = active ? active.id : 0;
       } catch (e) {
         this.toastError(e.message);
@@ -3138,12 +3160,19 @@ function ccsmApp() {
       this.promptEditor.loading = false;
     },
 
-    // Label for one dropdown option / the active badge: a check mark when it
-    // is the version actually in effect, and the project's own name for the
-    // original rather than whatever an empty string would render as.
+    // Label for one dropdown option. Which version is actually in effect is
+    // shown separately, by the "Activa: X" badge in the header — this used to
+    // also mark it with a check mark here, which only doubled up with the
+    // select's own native indicator for whichever option is currently chosen
+    // (i.e. loaded for viewing/editing), so it was dropped.
     promptVersionLabel(v) {
-      const name = v.original ? this.t('prompt_original_name') : v.name;
-      return (v.active ? '✓ ' : '') + name;
+      return v.original ? this.t('prompt_original_name') : v.name;
+    },
+
+    // Shared lookups so the actions below stay one-liners instead of each
+    // repeating the same find() over promptEditor.versions.
+    promptVersionById(id) {
+      return (this.promptEditor.versions || []).find(v => v.id === id) || null;
     },
 
     promptActiveVersion() {
@@ -3155,7 +3184,7 @@ function ccsmApp() {
     },
 
     promptViewingIsActive() {
-      const v = (this.promptEditor.versions || []).find(v => v.id === this.promptEditor.viewing);
+      const v = this.promptVersionById(this.promptEditor.viewing);
       return !!(v && v.active);
     },
 
@@ -3177,8 +3206,11 @@ function ccsmApp() {
       el.focus();
       el.setSelectionRange(Number(index), Number(index));
       // Approximate scroll: put the section near the top of the viewport.
+      // Counting newlines assumes one visual row per line, which pre-wrap
+      // (voice.css) breaks for any line long enough to wrap — close enough
+      // for "near the top", not exact for a wrapped line deep in a section.
       const before = this.promptEditor.content.slice(0, Number(index)).split('\n').length;
-      el.scrollTop = Math.max(0, (before - 1) * 18);
+      el.scrollTop = Math.max(0, (before - 1) * 19.5); // 0.75rem * line-height 1.625
     },
 
     async viewPromptVersion(id) {
@@ -3246,6 +3278,67 @@ function ccsmApp() {
         this.promptEditor.versions = data.versions || this.promptEditor.versions;
         this.voice.roles = data.roles || this.voice.roles;
         this.toastSuccess(this.t('prompt_applied'));
+      } catch (e) {
+        this.toastError(e.message);
+      }
+    },
+
+    // Renames the version currently selected in the "Versiones" dropdown.
+    // The original (id 0) has no button for this — see promptViewingIsOriginal
+    // in the template — but bail out here too in case that ever drifts.
+    renamePromptVersion(id) {
+      id = Number(id);
+      if (id === 0) return;
+      const v = this.promptVersionById(id);
+      const name = window.prompt(this.t('prompt_rename_new_name'), v ? v.name : '');
+      if (name === null) return; // cancelled
+      return this.doRenamePrompt(id, name);
+    },
+
+    async doRenamePrompt(id, name) {
+      try {
+        const resp = await fetch('/api/voice/prompt/rename', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ version: id, name }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || 'could not rename the version');
+        this.promptEditor.versions = data.versions || this.promptEditor.versions;
+        this.toastSuccess(this.t('prompt_renamed'));
+      } catch (e) {
+        this.toastError(e.message);
+      }
+    },
+
+    // Deletes the version currently selected in the "Versiones" dropdown,
+    // after confirming. Deleting the active one falls back to the original
+    // server-side (PromptStore.Delete); if that version is also the one open
+    // in the editor, doDeletePrompt below swaps the textarea to whatever the
+    // response says is active now, so it never keeps showing content for an
+    // id that no longer exists.
+    deletePromptVersion(id) {
+      id = Number(id);
+      if (id === 0) return;
+      const v = this.promptVersionById(id);
+      const label = v ? ' “' + v.name + '”' : '';
+      if (!window.confirm(this.t('prompt_delete_confirm') + label + '?')) return;
+      return this.doDeletePrompt(id);
+    },
+
+    async doDeletePrompt(id) {
+      try {
+        const resp = await fetch('/api/voice/prompt?version=' + encodeURIComponent(id), { method: 'DELETE' });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || 'could not delete the version');
+        this.promptEditor.versions = data.versions || this.promptEditor.versions;
+        this.voice.roles = data.roles || this.voice.roles;
+        if (this.promptEditor.viewing === id) {
+          this.promptEditor.content = data.content || '';
+          const active = this.promptActiveVersion();
+          this.promptEditor.viewing = active ? active.id : 0;
+        }
+        this.toastSuccess(this.t('prompt_deleted'));
       } catch (e) {
         this.toastError(e.message);
       }

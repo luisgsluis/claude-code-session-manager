@@ -141,9 +141,11 @@ its cause. Spoken bug reports blend the two constantly ("sonarr is not importing
 the mount is broken"), and carrying that guess forward as fact is how the wrong thing
 gets fixed.
 
-State: what was observed, where it was observed, what was expected instead, when it
-started if said, and what has already been tried. If the speaker offered a theory, keep
-it, but mark it as a theory to check rather than a premise.
+State: what was observed, where it was observed, what was expected instead, and when it
+started if said. Mention what has already been tried only if the speaker actually said
+they tried something — never state that nothing has been tried; omitting the point says
+the same thing without the padding. If the speaker offered a theory, keep it, but mark it
+as a theory to check rather than a premise.
 
 Ask for the cause to be understood before anything is changed. A request that jumps
 straight to a fix invites a patch on the symptom.

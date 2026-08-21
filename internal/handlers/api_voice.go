@@ -212,6 +212,53 @@ func (h *VoiceHandler) ActivatePrompt(w http.ResponseWriter, r *http.Request) {
 	h.GetPrompt(w, r)
 }
 
+type renamePromptRequest struct {
+	Version int    `json:"version"`
+	Name    string `json:"name"`
+}
+
+// RenamePrompt relabels an existing saved version. Content and id are
+// untouched, and which version is active never changes.
+func (h *VoiceHandler) RenamePrompt(w http.ResponseWriter, r *http.Request) {
+	var req renamePromptRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.Version <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid version")
+		return
+	}
+	if err := h.Store.Rename(req.Version, req.Name); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	audit(h.Audit, "voice_prompt_rename", UserFrom(r), fmt.Sprintf("version=%d", req.Version))
+	h.GetPrompt(w, r)
+}
+
+// DeletePrompt permanently removes a saved version. Deleting the active one
+// falls back to the embedded original — see PromptStore.Delete — so the
+// response (GetPrompt) always reflects a working state, never a dangling
+// pointer to what was just deleted.
+func (h *VoiceHandler) DeletePrompt(w http.ResponseWriter, r *http.Request) {
+	id, err := atoiNonNegative(r.URL.Query().Get("version"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid version")
+		return
+	}
+	if err := h.Store.Delete(id); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	audit(h.Audit, "voice_prompt_delete", UserFrom(r), fmt.Sprintf("version=%d", id))
+	// GetPrompt treats a "version" query param as "fetch that one version's
+	// content" — left over from this handler's own ?version=, it would ask
+	// for the id we just deleted and 404 instead of returning the active
+	// prompt and refreshed version list.
+	r.URL.RawQuery = ""
+	h.GetPrompt(w, r)
+}
+
 // AgentProfileReader adapts the executor to voice.ProfileReader, so a provider
 // can borrow credentials from a Claude Code profile.
 //

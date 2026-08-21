@@ -492,6 +492,74 @@ func (s PromptStore) SaveOver(id int, content string) error {
 	return writeFileAtomic(s.versionPath(id), content)
 }
 
+// Rename changes an existing version's label without touching its content or
+// id. The embedded original (id 0) has no stored name to change — it is
+// always labelled from the UI's own translation string, not versionRec.Name.
+func (s PromptStore) Rename(id int, name string) error {
+	if id == 0 {
+		return fmt.Errorf("the original prompt has no name to change")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("name must not be empty")
+	}
+	if s.Dir == "" {
+		return fmt.Errorf("no prompts directory configured")
+	}
+	m := s.readMeta()
+	found := false
+	for i := range m.Versions {
+		if m.Versions[i].ID == id {
+			m.Versions[i].Name = name
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("version not found")
+	}
+	return s.writeMeta(m)
+}
+
+// Delete removes a saved version permanently, content and all. The embedded
+// original (id 0) can never be deleted — there being nothing left to fall
+// back on would take dictation down with it. Deleting the active version
+// falls back to the original (id 0), the same safe default SetActive(0)
+// produces, rather than leaving versions.json pointing at a version that no
+// longer exists.
+func (s PromptStore) Delete(id int) error {
+	if id == 0 {
+		return fmt.Errorf("the original prompt cannot be deleted")
+	}
+	if s.Dir == "" {
+		return fmt.Errorf("no prompts directory configured")
+	}
+	m := s.readMeta()
+	idx := -1
+	for i, v := range m.Versions {
+		if v.ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return fmt.Errorf("version not found")
+	}
+	m.Versions = append(m.Versions[:idx], m.Versions[idx+1:]...)
+	if m.Active == id {
+		m.Active = 0
+	}
+	if err := s.writeMeta(m); err != nil {
+		return err
+	}
+	// Best-effort: versions.json (just written) is the source of truth for
+	// List/VersionContent, so a leftover file here is inert, not a leak that
+	// resurfaces — same trade-off migrateLegacy makes removing the old
+	// active-override file.
+	_ = os.Remove(s.versionPath(id))
+	return nil
+}
+
 // SetActive makes version id the one Load and Active return; 0 applies the
 // embedded original. This never touches any version's content — it only
 // moves the pointer, so applying a version is always non-destructive and

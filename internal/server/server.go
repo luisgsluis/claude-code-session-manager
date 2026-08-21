@@ -231,7 +231,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/voice/rewrite", s.auth(s.voiceHdlr.Rewrite))
 	s.mux.HandleFunc("GET /api/voice/prompt", s.auth(s.voiceHdlr.GetPrompt))
 	s.mux.HandleFunc("PUT /api/voice/prompt", s.auth(s.voiceHdlr.PutPrompt))
+	s.mux.HandleFunc("DELETE /api/voice/prompt", s.auth(s.voiceHdlr.DeletePrompt))
 	s.mux.HandleFunc("POST /api/voice/prompt/activate", s.auth(s.voiceHdlr.ActivatePrompt))
+	s.mux.HandleFunc("POST /api/voice/prompt/rename", s.auth(s.voiceHdlr.RenamePrompt))
 }
 
 // resolveVoicePromptsPath expands the "auto" default the same way the other

@@ -156,9 +156,13 @@ test('terminal grid: restoring a tile opens scrolled to the bottom, not the top'
   await page.setViewportSize({ width: 375, height: 700 });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await createSession(page, 'grid-scroll');
+  // A second session so the grid actually has something to pick between: on
+  // a narrow screen, a single session opens itself (openTermGrid) instead of
+  // waiting behind a chip, which would skip the restore path this test is for.
+  await createSession(page, 'grid-scroll-2');
 
   await page.getByRole('button', { name: /Modo terminal/ }).click();
-  const chip = page.getByRole('button', { name: /grid-scroll/ });
+  const chip = page.getByRole('button', { name: /grid-scroll(?!-2)/ });
   await expect(chip).toBeVisible(); // grid.tiles['grid-scroll'] exists once its chip renders
 
   await page.evaluate((name) => {
@@ -177,7 +181,8 @@ test('terminal grid: restoring a tile opens scrolled to the bottom, not the top'
   }).toPass({ timeout: 2000 });
 
   await page.locator('div[x-show="grid.open"]').getByText('×', { exact: true }).click();
-  await page.locator('.group').filter({ hasText: 'sesión grid-scroll' }).getByTitle('Archivar sesión').click();
+  await page.locator('.group').filter({ hasText: 'sesión grid-scroll-2' }).getByTitle('Archivar sesión').click();
+  await page.locator('.group').filter({ hasText: 'sesión grid-scroll', hasNotText: 'grid-scroll-2' }).getByTitle('Archivar sesión').click();
 });
 
 test('terminal grid: focused prompt takes the full row at 3 lines, controls stay one compact row; header selects show current mode/model', async ({ page }) => {
@@ -185,8 +190,12 @@ test('terminal grid: focused prompt takes the full row at 3 lines, controls stay
   await page.setViewportSize({ width: 375, height: 700 });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await createSession(page, 'grid-focus');
+  // A second session so the grid has something to pick between: on a narrow
+  // screen a single session opens itself (openTermGrid), which would skip
+  // the chip/restore step this test means to go through.
+  await createSession(page, 'grid-focus-2');
   await page.getByRole('button', { name: /Modo terminal/ }).click();
-  const chip = page.getByRole('button', { name: /grid-focus/ });
+  const chip = page.getByRole('button', { name: /grid-focus(?!-2)/ });
   await expect(chip).toBeVisible(); // grid.tiles['grid-focus'] exists once its chip renders
   await chip.click();
   const tile = page.locator('.tgrid-tile', { hasText: 'grid-focus' });
@@ -240,5 +249,6 @@ test('terminal grid: focused prompt takes the full row at 3 lines, controls stay
   expect(box.height).toBeLessThan(lineH * 2);
 
   await page.locator('div[x-show="grid.open"]').getByText('×', { exact: true }).click();
-  await page.locator('.group').filter({ hasText: 'sesión grid-focus' }).getByTitle('Archivar sesión').click();
+  await page.locator('.group').filter({ hasText: 'sesión grid-focus-2' }).getByTitle('Archivar sesión').click();
+  await page.locator('.group').filter({ hasText: 'sesión grid-focus', hasNotText: 'grid-focus-2' }).getByTitle('Archivar sesión').click();
 });

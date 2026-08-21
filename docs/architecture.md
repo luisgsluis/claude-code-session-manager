@@ -161,7 +161,12 @@ saving (over an existing version, or as a new one) and activating (`SetActive`, 
 moves a pointer in `versions.json`) are two separate calls, so applying a version is always
 non-destructive and every version stays around afterward. Saving validates both directions —
 a declared role with no block, a block nobody declared — and refuses to write on failure, so
-a bad edit never displaces a working prompt.
+a bad edit never displaces a working prompt. `Rename` only relabels a version in
+`versions.json`, never its content. `Delete` removes a version's file and its `versions.json`
+entry; deleting the one currently active falls back to the embedded original (id 0) rather
+than leaving the pointer aimed at a version that no longer exists — the same safe default
+`SetActive(0)` produces. Neither ever touches id 0: the embedded original can be renamed or
+deleted by nobody.
 
 **The rewrite asks one question at a time, only when genuinely unclear.** The model is not
 told a target number of questions — that would turn "is this ambiguous" into "fill a quota".

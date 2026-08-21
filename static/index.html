@@ -1241,13 +1241,16 @@
 <!-- Meta-prompt editor. Opened from the voice section of the settings panel. -->
 <div x-show="promptEditor.open" x-transition class="fixed inset-0 bg-black/70 flex items-center justify-center voice-overlay p-4" @click.self="promptEditor.open = false">
   <div class="voice-editor-panel flex flex-col w-full max-w-4xl max-h-[92vh] bg-bg-card border border-gray-700 rounded-2xl">
-    <div class="flex items-center justify-between gap-2 p-3 border-b border-gray-800 shrink-0">
-      <div class="flex items-center gap-2 min-w-0">
-        <span class="text-sm font-semibold shrink-0" x-text="t('prompt_title')"></span>
-        <span x-show="promptActiveVersion()" class="text-[0.65rem] px-1.5 py-0.5 rounded shrink-0 bg-success/15 text-success truncate"
-          x-text="t('prompt_active_label') + ' ' + (promptActiveVersion() ? (promptActiveVersion().original ? t('prompt_original_name') : promptActiveVersion().name) : '')"></span>
+    <div class="p-3 border-b border-gray-800 shrink-0">
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-sm font-semibold" x-text="t('prompt_title')"></span>
+        <button @click="promptEditor.open = false" class="shrink-0 text-fg-muted hover:text-fg text-xl leading-none px-1">&times;</button>
       </div>
-      <button @click="promptEditor.open = false" class="text-fg-muted hover:text-fg text-xl leading-none px-1">&times;</button>
+      <!-- Its own row, not squeezed next to the title: on a phone-width
+           header the two together left this truncated down to "Activa: …"
+           with the version name never actually shown. -->
+      <span x-show="promptActiveVersion()" class="block mt-1 max-w-full text-xs px-1.5 py-0.5 rounded bg-success/15 text-success truncate"
+        x-text="t('prompt_active_label') + ' ' + (promptActiveVersion() ? (promptActiveVersion().original ? t('prompt_original_name') : promptActiveVersion().name) : '')"></span>
     </div>
 
     <div class="flex items-center gap-2 px-3 py-2 border-b border-gray-800 shrink-0 flex-wrap">
@@ -1260,8 +1263,12 @@
         </template>
       </select>
       <!-- The version being viewed/edited here is independent of which one is
-           active (the ✓ inside each label, from promptVersionLabel) — picking
-           one only loads it for viewing, see viewPromptVersion. -->
+           active — which is shown separately, in the header's "Activa: X"
+           badge. Which option is being viewed is already what the select
+           itself shows as chosen (native to the control), so the label carries
+           no extra mark of its own — one was tried and it only duplicated the
+           browser's own selected-item indicator. Picking one only loads it,
+           see viewPromptVersion. -->
       <span class="text-xs text-fg-muted ml-2" x-text="t('prompt_versions')"></span>
       <select x-model.number="promptEditor.viewing" @change="viewPromptVersion(promptEditor.viewing)" class="tgrid-select">
         <template x-for="v in promptEditor.versions" :key="v.id">
@@ -1277,17 +1284,29 @@
       <textarea x-show="!promptEditor.loading" id="prompt-editor-text" x-model="promptEditor.content" spellcheck="false" class="voice-prompt-editor"></textarea>
     </div>
 
-    <!-- Two ways to keep an edit: overwrite the version being viewed (not
-         offered for the original, which can never be modified — see
-         PromptStore.SaveOver), or save it as a new named one. Applying is a
-         separate action above, not a side effect of saving. -->
-    <div class="flex items-center justify-end gap-2 p-3 border-t border-gray-800 shrink-0 flex-wrap">
-      <button x-show="!promptViewingIsOriginal()" @click="savePromptOver()" :disabled="promptEditor.saving"
-        class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors disabled:opacity-50" x-text="t('prompt_save_over')"></button>
-      <button @click="savePromptAsNew()" :disabled="promptEditor.saving"
-        class="rounded-xl px-4 py-2 text-sm font-medium transition-opacity disabled:opacity-50"
-        :class="promptViewingIsOriginal() ? 'bg-accent text-white hover:opacity-90' : 'border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs px-3 py-1'"
-        x-text="t('prompt_save_new')"></button>
+    <!-- Two grouped clusters, not one flat row: renaming/deleting the version
+         (left) is a different kind of action from keeping the edit (right,
+         its usual visual weight — save is primary, save-as secondary except
+         when there is nothing to overwrite, see promptViewingIsOriginal).
+         justify-between keeps them apart on a wide panel and lets each
+         cluster wrap as its own unit on a narrow one, instead of the single
+         flex-1 spacer this used to be, which just left five same-looking
+         buttons scattered across the row with no visual grouping at all. -->
+    <div class="flex items-center justify-between gap-2 p-3 border-t border-gray-800 shrink-0 flex-wrap">
+      <div class="flex items-center gap-2">
+        <button x-show="!promptViewingIsOriginal()" @click="renamePromptVersion(promptEditor.viewing)"
+          class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors" x-text="t('prompt_rename')"></button>
+        <button x-show="!promptViewingIsOriginal()" @click="deletePromptVersion(promptEditor.viewing)"
+          class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-danger hover:text-danger text-xs transition-colors" x-text="t('prompt_delete')"></button>
+      </div>
+      <div class="flex items-center gap-2">
+        <button x-show="!promptViewingIsOriginal()" @click="savePromptOver()" :disabled="promptEditor.saving"
+          class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors disabled:opacity-50" x-text="t('prompt_save_over')"></button>
+        <button @click="savePromptAsNew()" :disabled="promptEditor.saving"
+          class="rounded-xl px-4 py-2 text-sm font-medium transition-opacity disabled:opacity-50"
+          :class="promptViewingIsOriginal() ? 'bg-accent text-white hover:opacity-90' : 'border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs px-3 py-1'"
+          x-text="t('prompt_save_new')"></button>
+      </div>
     </div>
   </div>
 </div>

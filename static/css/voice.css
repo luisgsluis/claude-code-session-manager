@@ -83,22 +83,37 @@
 }
 
 /* The meta-prompt editor is code-ish: monospace, and tall enough to see a
- * whole section at once. */
+ * whole section at once. Font size and line height match the terminal panes
+ * (.tgrid-pane in terminal-grid.css: font-mono text-xs leading-relaxed) —
+ * same family of "raw text panel" element, same size, everywhere in the app.
+ * Wrapping matches them too (whitespace-pre-wrap break-words there): long
+ * lines fold to the panel's width instead of requiring horizontal scroll,
+ * while pre-wrap still preserves the prompt's own indentation and blank
+ * lines, unlike a plain paragraph reflow.
+ *
+ * app.css forces every textarea to 16px on touch devices so iOS does not
+ * auto-zoom on focus (see input.css) — deliberately overridden back down
+ * here, with !important to actually win against that rule's own !important.
+ * Two things were tried and reverted before landing here: 16px always (this
+ * document read far bigger than the rest of the app, on the device that
+ * actually matters — a phone) and small-at-rest/16px-on-focus (a jarring
+ * resize on every tap). This field is a multi-paragraph document people
+ * mostly read, not a short one-line input, so consistency with the rest of
+ * the app wins over dodging a zoom nobody actually reported hitting. */
 .voice-prompt-editor {
   width: 100%;
   min-height: 55vh;
   resize: vertical;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.8rem;
-  line-height: 1.5;
+  font-size: 0.75rem !important;
+  line-height: 1.625;
   padding: 0.75rem;
   border-radius: 0.75rem;
   background: var(--color-bg, #0b0f14);
   color: var(--color-fg, #e6edf3);
   border: 1px solid rgb(55 65 81);
-  white-space: pre;
-  overflow-wrap: normal;
-  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 .voice-prompt-editor:focus {
   outline: none;
