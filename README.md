@@ -242,6 +242,13 @@ User=admin
 KillMode=process
 Restart=on-failure
 RestartSec=3
+# Every new session is launched via `systemd-run --user --scope` (see below),
+# which needs to reach the user's own systemd/dbus session bus — without these
+# two, session creation fails with "tmux new-session: exit status 1" ("backend
+# unavailable" in the UI) and the real reason only shows up in the journal as
+# "Failed to connect to user scope bus". Swap 1000 for `id -u admin`.
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
 # The agent is polled every few seconds per open session (tmux capture-pane,
 # a process-tree scan, a tail read of the conversation file). Go's runtime
 # doesn't return freed heap to the OS promptly without GOMEMLIMIT, so under
@@ -273,12 +280,25 @@ sudo systemctl enable --now ccsm-agent
 If the host already has `tmux` and `claude` and you don't want Docker, run the `ccsm`
 binary directly. It executes every command **in-process** — no agent, no Unix socket.
 
+> ⚠️ **Don't leave `conversations_path`/`profiles_path`/`settings_path`/`claude_binary` as
+> `"auto"` unless your setup matches the reference deployment exactly** (user `admin`, Claude
+> at `$HOME/.local/bin/claude`). `"auto"` is a **fixed fallback string** picked at compile
+> time, not something computed from the host you're installing on — e.g. `conversations_path:
+> auto` always resolves to `$HOME/.claude/projects/-home-admin`, which will not exist for a
+> different `$HOME` or a different OS user, and CCSM will silently show an empty session list
+> instead of erroring. Always write out the real paths for your user, as in the example below
+> (swap `admin`/`/home/admin` for your actual user and home).
+
 ```bash
 # Download the ccsm binary for your architecture from the releases page
 sudo cp ccsm-linux-arm64 /usr/local/bin/ccsm
 sudo chmod +x /usr/local/bin/ccsm
 
-# config.yaml: set agent_socket to "" and point the paths at your setup
+# static/ is not embedded in the binary (see note below) — copy it alongside
+sudo cp -r static /etc/ccsm/static
+
+# config.yaml: set agent_socket to "" and point the paths at YOUR setup —
+# see the warning above, "auto" only matches the reference deployment
 cat > /etc/ccsm/config.yaml <<'EOF'
 port: 8080
 session_secret: "<ccsm --generate-secret>"
@@ -291,10 +311,23 @@ host_attach_addr: "admin@myhost.local"
 conversations_path: "/home/admin/.claude/projects/-home-admin"
 profiles_path: "/home/admin/claude-shared/claude-perfiles"
 settings_path: "/home/admin/.claude/settings.json"
+claude_binary: "/home/admin/.local/bin/claude"   # wherever `which claude` says
+tmux_binary: "/usr/bin/tmux"
+bash_binary: "/usr/bin/bash"
 EOF
 
-ccsm --config /etc/ccsm/config.yaml
+CCSM_STATIC_PATH=/etc/ccsm/static ccsm --config /etc/ccsm/config.yaml
 ```
+
+**Static assets aren't Go-embedded.** `cmd/ccsm/main.go` looks for the UI's `static/`
+directory in this order: the `CCSM_STATIC_PATH` env var → `./static` (relative to the
+process's **working directory**, not the binary's location) → `/app/static` (the Docker
+image's baked-in path). If none of those exist, `ccsm` still starts and serves API
+responses fine, but `GET /` silently falls back to a bare "API server running" page with
+no login form and no styling — no error, no log line. Container mode never hits this
+because the Dockerfile bakes `/app/static` in; package mode needs either
+`CCSM_STATIC_PATH` set explicitly (recommended, shown above) or a `WorkingDirectory` that
+contains a `static/` subdirectory copied from this repo.
 
 Systemd unit example:
 
@@ -306,6 +339,14 @@ After=network.target
 
 [Service]
 Type=simple
+Environment=CCSM_STATIC_PATH=/etc/ccsm/static
+# See the note on ccsm-agent.service above: every new session goes through
+# `systemd-run --user --scope`, which needs these two to reach the user's
+# session bus. Swap 1000 for `id -u admin`. Without them, session creation
+# fails with "backend unavailable" in the UI ("tmux new-session: exit status
+# 1" / "Failed to connect to user scope bus" in the journal).
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
 ExecStart=/usr/local/bin/ccsm --config /etc/ccsm/config.yaml
 User=admin
 # Same reason as ccsm-agent.service above: in package mode `ccsm` itself runs
@@ -565,6 +606,31 @@ CCSM does not read or transmit API keys. The profiles it manages are standard Cl
 The session may have aborted at startup (invalid profile, missing `--resume` id, trust dialog).
 Check: `tmux list-sessions` on the host. If the session died, the Claude error will be in
 the tmux pane scrollback.
+
+### UI shows only a bare "API server running" page, no login form
+Package mode couldn't find the `static/` directory (see the note in
+["Alternative: package mode"](#alternative-package-mode-no-container-no-agent)) — it's not
+Go-embedded, so it must exist at `./static` relative to the process's working directory, or
+be pointed to via `CCSM_STATIC_PATH`. `GET /api/health` still works; only `GET /` degrades,
+silently and without a log line. Set `CCSM_STATIC_PATH` (or `WorkingDirectory`) and restart.
+
+### Sessions don't show up / session list is empty right after install (package mode)
+Almost always a path left as `"auto"` in `config.yaml`. `"auto"` is a fixed fallback string
+(`$HOME/.claude/projects/-home-admin` for `conversations_path`), not derived from the actual
+host — on any user/host other than the reference deployment it points at a directory that
+doesn't exist, and CCSM has nothing to show, no error. Set `conversations_path`,
+`profiles_path`, `settings_path` and `claude_binary` explicitly (see the warning in
+["Alternative: package mode"](#alternative-package-mode-no-container-no-agent)) and restart.
+
+### New session fails with "backend unavailable" (502)
+`journalctl -u ccsm` (or `-u ccsm-agent`) shows only `agent transport error: tmux
+new-session: exit status 1` — `newSession` wraps the error with `%w` but the underlying
+`systemd-run`/tmux stderr (where the actual reason lives) is never logged, so this message
+alone doesn't tell you why. Every new session is launched via `systemd-run --user --scope` (to keep
+it out of the service's own cgroup — a plain `systemctl restart` would otherwise kill every
+live session), which needs `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` to reach the
+user's systemd/dbus session bus. Add both to the unit (see the `ccsm-agent.service` /
+`ccsm.service` examples above) and restart.
 
 ### "agent error" in all responses
 Check that `ccsm-agent` is running on the host and the socket path matches:

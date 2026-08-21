@@ -62,19 +62,35 @@ agent_secret: ""
 host_attach_addr: "admin@192.168.1.175"
 
 # --- Package mode (agent_socket: "") ---
-# Paths for conversations, profiles and settings.json. "auto" resolves:
+# Paths for conversations, profiles and settings.json. "auto" resolves to a FIXED
+# fallback string, not something computed from your actual host — it only matches
+# the reference deployment (user admin):
 #   conversations → $HOME/.claude/projects/-home-admin
 #   profiles      → $HOME/claude-shared/claude-perfiles
 #   settings      → $HOME/.claude/settings.json
+# On any other user/host, "auto" silently points at a directory that doesn't exist —
+# CCSM starts fine but the session list is just empty, no error anywhere. Write out
+# the real paths for your setup instead, e.g.:
+#   conversations_path: "/home/luis/.claude/projects/-home-luis"
+#   profiles_path: "/home/luis/claude-shared/claude-perfiles"
+#   settings_path: "/home/luis/.claude/settings.json"
 conversations_path: "auto"
 profiles_path: "auto"
 settings_path: "auto"
 
 # Host binaries used in package mode. Empty → claude in $HOME/.local/bin/claude,
 # tmux in /usr/bin/tmux and bash in /usr/bin/bash. Ignored in container mode.
+# Same caveat as above: if `claude` isn't actually at $HOME/.local/bin/claude
+# (check with `which claude`), set claude_binary explicitly.
 claude_binary: ""
 tmux_binary: ""
 bash_binary: ""
+
+# static/ is NOT Go-embedded — in package mode ccsm looks for it at CCSM_STATIC_PATH,
+# then ./static (relative to the process's working directory), then /app/static
+# (Docker only). None found → GET / silently serves a bare API-only page instead of
+# the UI, no error logged. Set the env var when running as a systemd service:
+#   Environment=CCSM_STATIC_PATH=/etc/ccsm/static
 
 # Remote Control bootstrap for non-Anthropic profiles
 rc:
