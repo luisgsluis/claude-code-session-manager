@@ -153,7 +153,7 @@ func TestSessionRcPresses(t *testing.T) {
 	t.Run("connected → 2 presses", func(t *testing.T) { check(t, "/rc connected", 2, 2) })
 }
 
-// TestSessionRcStaging: a session under a perfilSinRC profile (deepseek) has no
+// TestSessionRcStaging: a session under a non-bootstrap profile (deepseek) has no
 // /remote-control command on its endpoint, so sessionRc must stage it: apply the
 // bootstrap profile, send the command, wait for the real bridge, restore the
 // target profile. Mirrors lanzarConStaging.
@@ -252,8 +252,9 @@ func TestSessionRcNoBootstrap(t *testing.T) {
 }
 
 // TestTmuxKillArchiveStaging: archiving (killing) a session while the active
-// profile is perfilSinRC must stage through the bootstrap profile so the kill
-// reaches the Claude app as an archive, not a bare disconnect, then restore
+// profile is not the bootstrap profile must stage through the bootstrap
+// profile so the kill reaches the Claude app as an archive, not a bare
+// disconnect, then restore
 // the profile that was active. Settle margins zeroed here so this only checks
 // the end state (kill happened, target profile restored) — the timing itself
 // is covered separately below.
@@ -344,8 +345,8 @@ func TestTmuxKillArchiveNoBootstrap(t *testing.T) {
 	}
 }
 
-// TestTmuxKillArchiveNoStagingWhenRCProfile: archiving under a profile that
-// already has RC (not perfilSinRC) must not touch settings.json at all.
+// TestTmuxKillArchiveNoStagingWhenRCProfile: archiving under the bootstrap
+// profile itself (no staging needed) must not touch settings.json at all.
 func TestTmuxKillArchiveNoStagingWhenRCProfile(t *testing.T) {
 	kills := filepath.Join(t.TempDir(), "kills.txt")
 	h := fakeHost(t, map[string]string{"FAKE_TMUX_KILLS": kills})
@@ -377,7 +378,7 @@ func spawnRcSession(t *testing.T, id string) int {
 // TestSessionRcAutoRecover: when the bridge doesn't come back after
 // /remote-control, sessionRc relaunches the session: kills it and resumes the
 // conversation, whose two-phase launch does register the bridge. This is the
-// recovery path for a perfilSinRC session that lost its worker role (code 4090).
+// recovery path for a staged (non-bootstrap) session that lost its worker role (code 4090).
 // The relaunched session keeps the same tmux name — FAKE_TMUX_KILL_MARKS_DEAD
 // makes "3" report dead once actually killed, matching a real kill-session,
 // so the resume's request for that name back succeeds instead of falling back

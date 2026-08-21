@@ -7,9 +7,10 @@ import (
 	"testing"
 )
 
-// TestAuthFieldsAltAuthAndEqual exercises the shared helper both claudeProfile
-// and perfilSinRC rely on: which fields count as "alternate credentials", and
-// whether two profiles resolve credentials the same way.
+// TestAuthFieldsAltAuthAndEqual exercises the helper claudeProfile relies on
+// to detect a credential change across a profile switch: which fields count
+// as "alternate credentials", and whether two profiles resolve credentials
+// the same way.
 func TestAuthFieldsAltAuthAndEqual(t *testing.T) {
 	deepseek := parseAuthFields([]byte(`{"apiKeyHelper":"/x/claude-apikey","env":{"ANTHROPIC_BASE_URL":"https://api.deepseek.com/anthropic"}}`))
 	deepseekSame := parseAuthFields([]byte(`{"apiKeyHelper":"/x/claude-apikey","env":{"ANTHROPIC_BASE_URL":"https://api.deepseek.com/anthropic","theme":"light"}}`))

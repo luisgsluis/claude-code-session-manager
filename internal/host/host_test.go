@@ -12,33 +12,22 @@ import (
 	"time"
 )
 
-func TestPerfilSinRC(t *testing.T) {
+func TestPerfilRequiereStaging(t *testing.T) {
+	h := &Host{rcBootstrap: "estandar"}
 	cases := []struct {
-		name string
-		json string
-		want bool
+		name   string
+		activo string
+		want   bool
 	}{
-		{"apiKeyHelper", `{"apiKeyHelper":"/x/claude-apikey"}`, true},
-		{"env api key", `{"env":{"ANTHROPIC_API_KEY":"sk-x"}}`, true},
-		{"env auth token", `{"env":{"ANTHROPIC_AUTH_TOKEN":"tok"}}`, true},
-		{"non-anthropic base url", `{"env":{"ANTHROPIC_BASE_URL":"https://api.deepseek.com/anthropic"}}`, true},
-		{"anthropic base url", `{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com"}}`, false},
-		{"anthropic bare host", `{"env":{"ANTHROPIC_BASE_URL":"api.anthropic.com"}}`, false},
-		{"null apiKeyHelper", `{"apiKeyHelper":null}`, false},
-		{"clean profile", `{"model":"sonnet","remoteControlAtStartup":true}`, false},
-		{"empty env", `{"env":{}}`, false},
-		{"missing file", "", false},
+		{"bootstrap profile itself", "estandar", false},
+		{"any other profile", "deepseek", true},
+		{"clean profile with a different name", "clone", true},
+		{"no active profile", "", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "p.json")
-			if c.json != "" {
-				if err := os.WriteFile(path, []byte(c.json), 0600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if got := perfilSinRC(path); got != c.want {
-				t.Errorf("perfilSinRC(%q) = %v, want %v", c.name, got, c.want)
+			if got := h.perfilRequiereStaging(c.activo); got != c.want {
+				t.Errorf("perfilRequiereStaging(%q) = %v, want %v", c.activo, got, c.want)
 			}
 		})
 	}

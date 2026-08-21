@@ -87,14 +87,6 @@ func TestApplyProfileWriteError(t *testing.T) {
 	}
 }
 
-func TestPerfilSinRCInvalidJSON(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "roto.json")
-	os.WriteFile(p, []byte(`{`), 0600)
-	if perfilSinRC(p) {
-		t.Error("invalid JSON should not count as sinRC")
-	}
-}
-
 func TestActiveProfileNameJunkEntries(t *testing.T) {
 	h := fakeHost(t, nil)
 	h.writeProfile(t, "estandar", `{"model":"sonnet"}`)

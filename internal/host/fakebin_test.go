@@ -652,7 +652,7 @@ func TestClaudeResumeFallsBackToHomeWhenCwdGone(t *testing.T) {
 }
 
 // TestClaudeResumeStagingUsesConversationCwd is the same fix, exercised
-// through the perfilSinRC staging branch (lanzarConStaging) instead of the
+// through the non-bootstrap staging branch (lanzarConStaging) instead of the
 // plain newSession call — a non-Anthropic active profile takes this path
 // (see TestClaudeResumeSinRCStaging), and it has its own cwd plumbing.
 func TestClaudeResumeStagingUsesConversationCwd(t *testing.T) {

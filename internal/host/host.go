@@ -500,9 +500,10 @@ func (h *Host) rcStatusLive(session string) string {
 }
 
 // tmuxKill kills a tmux session — the "archive" action in the UI. Killed under
-// a perfilSinRC profile (deepseek, custom base URL), the process has no
-// Anthropic-facing bridge to report through, so the Claude app only sees the
-// connection drop, not an archive. Staged exactly like a launch
+// a non-bootstrap profile (deepseek, custom base URL, or any other alternate
+// profile), the process may have no Anthropic-facing bridge to report
+// through, so the Claude app only sees the connection drop, not an archive.
+// Staged exactly like a launch
 // (lanzarConStaging), but the wait it needs is NOT the bridge: the bridge is
 // established once at connect time and survives a profile switch (Phase 4 of
 // lanzarConStaging), so it's already up here — polling for it proves nothing
@@ -525,7 +526,7 @@ var (
 
 func (h *Host) tmuxKill(name string) error {
 	activo := h.activeProfileName()
-	staging := activo != "" && perfilSinRC(h.profilesPath+"/"+activo+".json") && h.stagingAvailable()
+	staging := h.perfilRequiereStaging(activo) && h.stagingAvailable()
 	if staging {
 		if err := h.applyProfile(h.rcBootstrap); err != nil {
 			return errServer("bootstrap profile: %v", err)
@@ -602,7 +603,7 @@ func (h *Host) claudeNew(args map[string]string) (map[string]string, error) {
 		}
 	}
 
-	if activo != "" && perfilSinRC(h.profilesPath+"/"+activo+".json") {
+	if h.perfilRequiereStaging(activo) {
 		session, status, err = h.lanzarConStaging(activo, "--session-id "+sessionID, name, cwd)
 	} else {
 		waitRC = true
@@ -683,7 +684,7 @@ func (h *Host) claudeResumeAs(id, name string) (map[string]string, error) {
 	var session, status string
 	var err error
 	activo := h.activeProfileName()
-	if activo != "" && perfilSinRC(h.profilesPath+"/"+activo+".json") {
+	if h.perfilRequiereStaging(activo) {
 		session, status, err = h.lanzarConStaging(activo, "--resume "+id, name, cwd)
 	} else {
 		session, err = h.newSession("--resume "+id+" --remote-control", name, cwd)
@@ -786,7 +787,7 @@ func (h *Host) sessionIdle(name string) bool {
 // to be idle (a resume finished loading its transcript), holding that state for
 // a settle margin. Restoring the target profile right after the bridge appears
 // drops it on resumed sessions (visto 2026-08-12): the bridge needs the process
-// idle before a switch to a perfilSinRC profile survives. The settle margin is
+// idle before a switch to a staged (non-bootstrap) profile survives. The settle margin is
 // a short confirmation (rcSettleSeconds, 1s), not a fixed wait — the time to
 // reach idle is covered by rcWaitSeconds. Returns "ok" | "fail" | "timeout" | "dead".
 func (h *Host) waitRCBridgeSettled(session string) string {
@@ -920,8 +921,8 @@ func (h *Host) applyProfile(name string) error {
 // authFields are the settings.json fields that select which credentials
 // Claude Code authenticates with: a dynamic apiKeyHelper, a static API key or
 // auth token in env, or a non-Anthropic base URL implying its own auth
-// scheme. Shared by perfilSinRC (does this profile disable RC?) and
-// claudeProfile (did switching profiles change which credentials are live?).
+// scheme. Used by claudeProfile to detect whether switching profiles changed
+// which credentials are live.
 type authFields struct {
 	APIKeyHelper json.RawMessage
 	APIKey       json.RawMessage
@@ -967,14 +968,18 @@ func (a authFields) equal(b authFields) bool {
 		a.BaseURL == b.BaseURL
 }
 
-// perfilSinRC reports whether a profile disables Remote Control at startup
-// (matches olivetin-cmd's perfil_sin_rc): any alternate credential source.
-func perfilSinRC(profilePath string) bool {
-	data, err := os.ReadFile(profilePath)
-	if err != nil {
-		return false
-	}
-	return parseAuthFields(data).altAuth()
+// perfilRequiereStaging reports whether launching, resuming, or killing a
+// session under this profile needs the two-phase RC bootstrap dance: any
+// profile other than the bootstrap profile itself. The bootstrap profile is
+// the only one guaranteed to bring up Remote Control on its own; sniffing
+// each profile's credential fields (apiKeyHelper, API key/token, non-Anthropic
+// base URL) to guess which ones disable RC missed profiles that disable it
+// some other way, so staging now runs for any non-bootstrap profile
+// regardless of its content. "" (no active profile, settings.json matches no
+// catalog entry) skips staging too — an unidentified profile isn't known to
+// need it, and there is nothing to restore afterward.
+func (h *Host) perfilRequiereStaging(activo string) bool {
+	return activo != "" && activo != h.rcBootstrap
 }
 
 // activeProfileName returns the catalog profile whose content matches the
@@ -3595,8 +3600,9 @@ const rcPressDelay = 700 * time.Millisecond
 // unknown, a single press enables it.
 //
 // The command only exists under an Anthropic endpoint: a session launched under
-// a perfilSinRC profile (deepseek, custom base URL) rejects it as "Unknown
-// command". Such sessions are re-staged exactly like a fresh launch
+// a non-bootstrap profile (deepseek, custom base URL, or any other alternate
+// profile) may reject it as "Unknown command". Such sessions are re-staged
+// exactly like a fresh launch
 // (lanzarConStaging): bootstrap the clean profile → send /remote-control →
 // wait for the real bridge → restore the target profile. Returns presses sent
 // and, when staged, the wait outcome.
@@ -3621,7 +3627,7 @@ func (h *Host) sessionRc(name string) (map[string]any, error) {
 	}
 
 	activo := h.activeProfileName()
-	staging := activo != "" && perfilSinRC(h.profilesPath+"/"+activo+".json")
+	staging := h.perfilRequiereStaging(activo)
 	if staging && !h.stagingAvailable() {
 		// Sin perfil de staging el baile es imposible: una sesión bajo un perfil
 		// sin RC rechaza /remote-control y no hay perfil limpio que aplicar.
@@ -3664,7 +3670,7 @@ func (h *Host) sessionRc(name string) (map[string]any, error) {
 	}
 
 	// The bridge did not recover live: an already-degraded process can't
-	// re-register it (perfilSinRC / 4090 "no longer the active worker"), and
+	// re-register it (a staged/non-bootstrap profile / 4090 "no longer the active worker"), and
 	// staging doesn't undo that. The reliable path is to relaunch: kill the
 	// session and resume the conversation, whose two-phase launch does register
 	// the bridge. That's what "re-register" means when a re-type isn't enough.
