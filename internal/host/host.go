@@ -1434,7 +1434,16 @@ func (h *Host) convFiles() ([]convFileEntry, error) {
 	subs, err := os.ReadDir(h.convProjectsDir())
 	if err == nil {
 		for _, s := range subs {
-			if s.IsDir() {
+			isDir := s.IsDir()
+			if !isDir && s.Type()&os.ModeSymlink != 0 {
+				// DirEntry.IsDir() reflects Lstat on the entry itself, so a
+				// symlinked project dir (used to share sessions between
+				// machines via Syncthing) reports false; resolve it.
+				if info, err := os.Stat(filepath.Join(h.convProjectsDir(), s.Name())); err == nil {
+					isDir = info.IsDir()
+				}
+			}
+			if isDir {
 				d := filepath.Join(h.convProjectsDir(), s.Name())
 				if d == h.convPath {
 					continue // h.convPath is scanned on its own; do not scan it twice
