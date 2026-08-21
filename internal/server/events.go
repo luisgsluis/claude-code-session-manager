@@ -78,27 +78,31 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}()
 	log.Printf("sse: subscriber connected (%d active)", s.events.count())
 
-	fmt.Fprint(w, "event: open\ndata: {}\n\n")
-	if flusher != nil {
-		flusher.Flush()
+	// A short deadline around each write unblocks the loop when the client
+	// vanishes; it's cleared right after so idle periods aren't bounded.
+	write := func(s string) bool {
+		rc.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		fmt.Fprint(w, s)
+		if flusher != nil {
+			flusher.Flush()
+		}
+		rc.SetWriteDeadline(time.Time{})
+		return true
 	}
+
+	write("event: open\ndata: {}\n\n")
+
+	ticker := time.NewTicker(25 * time.Second)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case data := <-ch:
-			fmt.Fprintf(w, "data: %s\n\n", data)
-			if flusher != nil {
-				flusher.Flush()
-			}
-		case <-time.After(25 * time.Second):
-			fmt.Fprint(w, ": ping\n\n")
-			if flusher != nil {
-				flusher.Flush()
-			}
+			write(fmt.Sprintf("data: %s\n\n", data))
+		case <-ticker.C:
+			write(": ping\n\n")
 		case <-r.Context().Done():
 			return
 		}
-		// A short deadline unblocks the loop when the client vanishes.
-		rc.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	}
 }
