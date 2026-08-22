@@ -5,7 +5,12 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /ccsm ./cmd/ccsm
+# VERSION is the release this image reports at /api/health — passed by whoever
+# builds the image (docker-publish.yml passes the pushed tag; `make
+# docker-build` passes the local `git describe`). .dockerignore excludes .git
+# from the build context, so it can't be derived in here.
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/luisgsluis/claude-code-session-manager/internal/server.Version=${VERSION}" -o /ccsm ./cmd/ccsm
 
 # Stage 2: runtime
 FROM alpine:3.21

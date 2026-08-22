@@ -64,6 +64,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ github.ref_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -72,7 +73,7 @@ jobs:
         with:
           go-version: '1.24'
       - run: |
-          GOOS=linux GOARCH=${{ matrix.arch }} GOARM=${{ matrix.goarm }} CGO_ENABLED=0 go build -ldflags="-s -w" -o ccsm-${{ matrix.target }} ./cmd/ccsm
+          GOOS=linux GOARCH=${{ matrix.arch }} GOARM=${{ matrix.goarm }} CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/luisgsluis/claude-code-session-manager/internal/server.Version=${{ github.ref_name }}" -o ccsm-${{ matrix.target }} ./cmd/ccsm
           GOOS=linux GOARCH=${{ matrix.arch }} GOARM=${{ matrix.goarm }} CGO_ENABLED=0 go build -ldflags="-s -w" -o ccsm-agent-${{ matrix.target }} ./cmd/ccsm-agent
       - name: Upload binaries
         uses: actions/upload-artifact@v4

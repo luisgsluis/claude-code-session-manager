@@ -1377,7 +1377,9 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
-const minimalHTML = `<!DOCTYPE html>
+// minimalHTML embeds Version, which is only known at link time (see
+// version.go) — that forces this to be a var, not a const.
+var minimalHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
