@@ -96,10 +96,22 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: binaries-*
+      - name: Checkout static assets
+        # A package-mode install (no Docker, so no embedded static/) has no
+        # other way to get the UI that matches this release's binaries — the
+        # Docker image bundles static/ itself, but the standalone binaries
+        # above don't carry it.
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: static
+          sparse-checkout-cone-mode: false
+      - name: Package static assets
+        run: tar czf static.tar.gz static
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             binaries-*/ccsm-*
             binaries-*/ccsm-agent-*
+            static.tar.gz
           generate_release_notes: true
