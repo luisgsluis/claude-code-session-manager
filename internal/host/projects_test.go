@@ -37,6 +37,21 @@ func TestProjectsList(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A symlinked project dir (used to share projects between machines via
+	// Syncthing) must still be discovered: DirEntry.IsDir() reflects Lstat on
+	// the entry itself and reports false for a symlink, so the walk must
+	// resolve it before deciding to skip it.
+	realTarget := filepath.Join(t.TempDir(), "piano-sheet-generator")
+	if err := os.MkdirAll(realTarget, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(realTarget, "CLAUDE.md"), []byte("# x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realTarget, filepath.Join(h.home, "projects", "linked")); err != nil {
+		t.Fatal(err)
+	}
+
 	projects, err := h.projectsList()
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +60,7 @@ func TestProjectsList(t *testing.T) {
 	for _, pr := range projects {
 		names = append(names, pr["name"].(string))
 	}
-	want := []string{"principal", "deep/y/z", "nested/x", "projects", "projects/a", "projects/b"}
+	want := []string{"principal", "deep/y/z", "nested/x", "projects", "projects/a", "projects/b", "projects/linked"}
 	if len(names) != len(want) {
 		t.Fatalf("got %v, want %v", names, want)
 	}

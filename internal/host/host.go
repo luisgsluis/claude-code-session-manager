@@ -1155,10 +1155,22 @@ func (h *Host) projectsList() ([]map[string]any, error) {
 			return
 		}
 		for _, e := range entries {
-			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			if strings.HasPrefix(e.Name(), ".") {
 				continue
 			}
 			p := filepath.Join(dir, e.Name())
+			isDir := e.IsDir()
+			if !isDir && e.Type()&os.ModeSymlink != 0 {
+				// DirEntry.IsDir() reflects Lstat on the entry itself, so a
+				// symlinked project dir (used to share projects between
+				// machines via Syncthing) reports false; resolve it.
+				if info, err := os.Stat(p); err == nil {
+					isDir = info.IsDir()
+				}
+			}
+			if !isDir {
+				continue
+			}
 			if p == h.home {
 				continue
 			}
