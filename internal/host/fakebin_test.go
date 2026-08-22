@@ -651,6 +651,43 @@ func TestClaudeResumeFallsBackToHomeWhenCwdGone(t *testing.T) {
 	}
 }
 
+// TestClaudeResumeRehomesConversationCwd covers a conversation synced in from
+// another machine (Syncthing): the transcript's cwd was recorded on that
+// host's home ("/home/admin/projects/x" on the Pi), which doesn't exist
+// locally ("/home/luis" on the PC) even though the project itself is synced
+// under the local home too. Resume must re-root the recorded cwd onto the
+// local home rather than falling back to it outright.
+func TestClaudeResumeRehomesConversationCwd(t *testing.T) {
+	newArgs := filepath.Join(t.TempDir(), "new_args")
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_LINE": "/rc connected", "FAKE_TMUX_NEW_ARGS": newArgs})
+
+	localProj := filepath.Join(h.home, "projects", "ccsm")
+	if err := os.MkdirAll(localProj, 0700); err != nil {
+		t.Fatal(err)
+	}
+	remoteCwd := "/home/otherhost/projects/ccsm"
+	id := "00000000-0000-0000-0000-0000000000ff"
+	line := `{"type":"user","cwd":"` + remoteCwd + `","message":{"content":"hola"}}`
+	if err := os.WriteFile(h.convPath+"/"+id+".jsonl", []byte(line+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := h.Exec("claude-resume", map[string]string{"id": id}); err != nil {
+		t.Fatalf("claude-resume: %v", err)
+	}
+
+	args, err := os.ReadFile(newArgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "-c "+localProj) {
+		t.Errorf("expected resume to rehome onto %s, got %q", localProj, args)
+	}
+	if strings.Contains(string(args), "-c "+h.home+" ") {
+		t.Errorf("resume launched from home instead of the rehomed project: %q", args)
+	}
+}
+
 // TestClaudeResumeStagingUsesConversationCwd is the same fix, exercised
 // through the non-bootstrap staging branch (lanzarConStaging) instead of the
 // plain newSession call — a non-Anthropic active profile takes this path

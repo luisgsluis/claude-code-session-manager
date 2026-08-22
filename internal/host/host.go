@@ -676,8 +676,8 @@ func (h *Host) claudeResumeAs(id, name string) (map[string]string, error) {
 	// (very old files) or that directory no longer exists.
 	cwd := h.home
 	if _, convCwd, ok := conversationSummary(convPath); ok && convCwd != "" {
-		if st, err := os.Stat(convCwd); err == nil && st.IsDir() {
-			cwd = convCwd
+		if resolved := h.localizeCwd(convCwd); resolved != "" {
+			cwd = resolved
 		}
 	}
 
@@ -695,10 +695,54 @@ func (h *Host) claudeResumeAs(id, name string) (map[string]string, error) {
 	if err != nil {
 		return nil, errServer("%v", err)
 	}
+	// Tag the session with its project, same as a fresh "new session" launch,
+	// so the sessions list shows it for a resumed session too. Best effort:
+	// the resume must not fail over a cosmetic tag.
+	if proj := h.projectNameForCwd(cwd); proj != "" && proj != "principal" {
+		exec.Command(h.tmuxBinary, "set-option", "-t", session, "@ccsm_project", proj).Run()
+	}
 	return map[string]string{
 		"session": session,
 		"status":  rcState(status),
 	}, nil
+}
+
+// rehomeCwd maps a conversation's recorded cwd onto the local home directory
+// when it doesn't match as-is. Conversations sync across machines (Syncthing)
+// but each host records its own absolute cwd on the transcript ("/home/admin/
+// projects/x" on the Pi vs "/home/luis/projects/x" on the PC); both follow the
+// same "/home/<user>/<rest>" shape, so re-rooting the "/home/<user>" prefix
+// onto the local home recovers the equivalent local path. Returns "" when cwd
+// isn't under a /home/<user> path or is already local (nothing to rehome).
+func rehomeCwd(cwd, localHome string) string {
+	segs := strings.Split(strings.TrimPrefix(filepath.Clean(cwd), string(filepath.Separator)), string(filepath.Separator))
+	if len(segs) < 3 || segs[0] != "home" {
+		return ""
+	}
+	candidate := filepath.Join(append([]string{localHome}, segs[2:]...)...)
+	if candidate == filepath.Clean(cwd) {
+		return ""
+	}
+	return candidate
+}
+
+// localizeCwd resolves a conversation's recorded cwd to a directory that
+// actually exists on this host, trying it verbatim first and then rehomed
+// (see rehomeCwd) for a conversation synced in from another machine. Returns
+// "" when neither exists, letting the caller fall back to h.home.
+func (h *Host) localizeCwd(cwd string) string {
+	if cwd == "" {
+		return ""
+	}
+	if st, err := os.Stat(cwd); err == nil && st.IsDir() {
+		return cwd
+	}
+	if alt := rehomeCwd(cwd, h.home); alt != "" {
+		if st, err := os.Stat(alt); err == nil && st.IsDir() {
+			return alt
+		}
+	}
+	return ""
 }
 
 // rcState maps a session status to the API vocabulary ("rc_connected",
@@ -1244,6 +1288,18 @@ func (h *Host) projectNameForCwd(cwd string) string {
 			return pr["name"].(string)
 		}
 	}
+	// The cwd may have been recorded on another synced machine (see
+	// rehomeCwd) — retry against the local equivalent before giving up.
+	if alt := rehomeCwd(cwd, h.home); alt != "" {
+		if alt == h.home {
+			return "principal"
+		}
+		for _, pr := range projects {
+			if pr["path"] == alt {
+				return pr["name"].(string)
+			}
+		}
+	}
 	return ""
 }
 
@@ -1749,6 +1805,7 @@ func (h *Host) conversationGet(id, linesStr string) (map[string]any, error) {
 		"id":       id,
 		"date":     info.ModTime().Format("02/01 15:04"),
 		"origin":   originFor(cwd),
+		"project":  h.projectNameForCwd(cwd),
 		"title":    conversationTitle(path),
 		"is_alive": h.aliveConversations()[id],
 		"messages": msgs,
@@ -2693,6 +2750,7 @@ func (h *Host) sessionChat(name string) (map[string]any, error) {
 		"session": name, "id": id, "ready": true,
 		"title":       conversationTitle(path),
 		"origin":      originFor(cwd),
+		"project":     h.projectNameForCwd(cwd),
 		"created":     created,
 		"updated":     info.ModTime().Format(time.RFC3339Nano),
 		"size":        info.Size(),
