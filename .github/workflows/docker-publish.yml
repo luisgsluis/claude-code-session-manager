@@ -90,21 +90,25 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout static assets
+        # A package-mode install (no Docker, so no embedded static/) has no
+        # other way to get the UI that matches this release's binaries — the
+        # Docker image bundles static/ itself, but the standalone binaries
+        # above don't carry it.
+        # Must run BEFORE downloading the binaries: checkout's default
+        # clean:true wipes the working directory first, which deleted the
+        # just-downloaded binaries-*/ dirs when this ran second (v3.6.0
+        # shipped with only static.tar.gz because of this).
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: static
+          sparse-checkout-cone-mode: false
       - name: Download binaries
         # Binaries only; excludes the dockerbuild artifacts (buildx cache,
         # names with ~) that made download-all fail.
         uses: actions/download-artifact@v4
         with:
           pattern: binaries-*
-      - name: Checkout static assets
-        # A package-mode install (no Docker, so no embedded static/) has no
-        # other way to get the UI that matches this release's binaries — the
-        # Docker image bundles static/ itself, but the standalone binaries
-        # above don't carry it.
-        uses: actions/checkout@v4
-        with:
-          sparse-checkout: static
-          sparse-checkout-cone-mode: false
       - name: Package static assets
         run: tar czf static.tar.gz static
       - name: Create release
