@@ -675,7 +675,7 @@ function ccsmApp() {
     // project). project defaults to "principal" (home), the historical launch.
     adv: { tmux: '', claude: '', profile: '', project: 'principal' },
     projects: [],
-    preview: { open: false, messages: [], date: '', origin: '', id: '', title: '', is_alive: false, tags: '', notes: '', saving: false },
+    preview: { open: false, messages: [], date: '', origin: '', project: '', id: '', title: '', is_alive: false, tags: '', notes: '', saving: false },
     settings: { open: false, loading: false, groups: [], editing: null, editValue: '', users: [] },
     userModal: { open: false, mode: 'add', username: '', password: '', error: '' },
     totpModal: { open: false, username: '', secret: '', uri: '', qr: '', code: '', error: '', busy: false },
@@ -2508,6 +2508,7 @@ function ccsmApp() {
       this.preview.id = c.id;
       this.preview.date = c.date || '';
       this.preview.origin = c.origin || '';
+      this.preview.project = c.project || '';
       this.preview.title = c.title || '';
       this.preview.is_alive = !!c.is_alive;
       this.preview.tags = (c.tags || []).join(', ');

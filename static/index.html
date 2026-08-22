@@ -286,6 +286,7 @@
             <span x-text="c.date"></span>
             <span>·</span>
             <span class="px-1.5 py-0.5 rounded-full text-xs" :class="c.origin === 'pi' ? 'bg-accent/20 text-accent' : 'bg-gray-700 text-gray-400'" x-text="'[' + (c.origin || '?') + ']'"></span>
+            <span x-show="c.project && c.project !== 'principal'" class="px-1.5 py-0.5 rounded bg-accent/10 text-accent font-mono truncate" :title="c.project" x-text="projectLabel(c.project)"></span>
             <span x-show="c.is_alive" class="w-2 h-2 rounded-full bg-success" :title="t('alive')"></span>
           </div>
           <p class="text-sm font-medium truncate" x-text="c.title ? c.title : (c.preview || t('empty_conv'))"></p>
@@ -324,6 +325,7 @@
           <div class="flex items-center gap-2 text-xs text-fg-muted mb-2">
             <span x-text="c.date"></span>
             <span class="px-1.5 py-0.5 rounded-full text-xs" :class="c.origin === 'pi' ? 'bg-accent/20 text-accent' : 'bg-gray-700 text-gray-400'" x-text="'[' + (c.origin || '?') + ']'"></span>
+            <span x-show="c.project && c.project !== 'principal'" class="px-1.5 py-0.5 rounded bg-accent/10 text-accent font-mono truncate" :title="c.project" x-text="projectLabel(c.project)"></span>
             <span x-show="c.is_alive" class="w-2 h-2 rounded-full bg-success ml-auto" :title="t('alive')"></span>
           </div>
           <p class="text-sm font-medium truncate" x-show="c.title" x-text="c.title"></p>
@@ -943,7 +945,7 @@
       <h3 class="text-base font-semibold break-words" x-text="preview.title"></h3>
       <span x-show="preview.is_alive" class="shrink-0 w-2 h-2 rounded-full bg-success" :title="t('alive')"></span>
     </div>
-    <div class="text-xs text-fg-muted mb-3" x-text="preview.date + ' · [' + preview.origin + ']'"></div>
+    <div class="text-xs text-fg-muted mb-3" x-text="preview.date + ' · [' + preview.origin + ']' + (preview.project && preview.project !== 'principal' ? ' · ' + projectLabel(preview.project) : '')"></div>
     <div class="space-y-3 text-sm">
       <template x-for="msg in preview.messages" :key="msg.index">
         <div :class="msg.role === 'user' ? 'text-fg' : 'text-fg-muted italic'">
