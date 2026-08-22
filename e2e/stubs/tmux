@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tmux stub for e2e. State lives in files under $CCSM_TMUX_STATE, one per
-# session; the content is "name\tcreated\ttitle".
+# session; the content is "name\tcreated\ttitle\tcwd".
 set -u
 STATE="${CCSM_TMUX_STATE:?CCSM_TMUX_STATE must be set}"
 mkdir -p "$STATE"
@@ -24,15 +24,13 @@ case "$cmd" in
     for f in "$STATE"/*; do
       [ -f "$f" ] || continue
       n="$(basename "$f")"
-      # Sidecar files (.project, .size, .buffer, .paste-args, …) live next to
-      # the session marker file, in this same flat dir — skip them, or their
-      # content (not a real "name\tcreated\ttitle" line) gets read as a
+      # Sidecar files (.size, .buffer, .paste-args, …) live next to the
+      # session marker file, in this same flat dir — skip them, or their
+      # content (not a real "name\tcreated\ttitle\tcwd" line) gets read as a
       # phantom session. Real session names never contain a dot (CCSM's own
       # naming pattern is [A-Za-z0-9_-]{1,32}), so this is a safe filter.
       case "$n" in *.*) continue ;; esac
-      proj=""
-      [ -f "$STATE/$n.project" ] && proj="$(cat "$STATE/$n.project")"
-      printf '%s\t%s\n' "$(cat "$f")" "$proj"
+      cat "$f"
     done
     exit 0
     ;;
@@ -55,25 +53,23 @@ case "$cmd" in
       name=0
       while [ -e "$STATE/$name" ]; do name=$((name + 1)); done
     fi
-    printf '%s\t%s\tclaude\n' "$name" "$(date '+%Y-%m-%d %H:%M:%S')" > "$STATE/$name"
+    # cwd (-c) becomes the 4th field, standing in for tmux's own
+    # #{pane_current_path}: CCSM derives the project a live session shows
+    # from this, not from a tag (see projectNameForCwd/tmuxList).
+    cwd="$(flagval -c "$@")"
+    printf '%s\t%s\tclaude\t%s\n' "$name" "$(date '+%Y-%m-%d %H:%M:%S')" "$cwd" > "$STATE/$name"
     printf '%s\n' "$name"
     exit 0
     ;;
   kill-session)
     name="$(flagval -t "$@")"
-    rm -f "$STATE/$name" "$STATE/$name.project"
+    rm -f "$STATE/$name"
     exit 0
     ;;
   set-option)
-    # CCSM tags the session with its project: tmux set-option -t =<ses> @ccsm_project <project>.
-    # session-resize also uses set-option (window-size manual) before resize-window;
-    # only @ccsm_project is persisted here, other options are accepted and ignored,
-    # same as real tmux's generic set-option.
-    name="$(flagval -t "$@")"
-    opt="${@: -2:1}"
-    if [ "$opt" = "@ccsm_project" ]; then
-      printf '%s\n' "${@: -1}" > "$STATE/$name.project"
-    fi
+    # session-resize uses this (window-size manual) before resize-window;
+    # nothing the stub sets here is ever read back, same as real tmux's
+    # generic set-option for an option nobody queries.
     exit 0
     ;;
   resize-window)
@@ -92,7 +88,6 @@ case "$cmd" in
     content="$(cat "$STATE/$name")"
     printf '%s\t%s\n' "$new" "${content#*$'\t'}" > "$STATE/$new"
     rm -f "$STATE/$name"
-    [ -f "$STATE/$name.project" ] && mv "$STATE/$name.project" "$STATE/$new.project"
     exit 0
     ;;
   send-keys)

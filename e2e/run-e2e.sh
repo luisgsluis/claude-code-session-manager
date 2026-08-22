@@ -64,9 +64,11 @@ voice:
       chat_models: [stub-chat, stub-chat-2]
 YAML
 
-if [ ! -x "$E2E/ccsm-e2e" ]; then
-  (cd "$ROOT" && CGO_ENABLED=0 go build -o "$E2E/ccsm-e2e" ./cmd/ccsm)
-fi
+# Always rebuilt, never reused: an internal/host (or any other) source change
+# with a stale ccsm-e2e already on disk silently tests the OLD binary and
+# still reports green — go build is a couple of seconds, far cheaper than the
+# false confidence.
+(cd "$ROOT" && CGO_ENABLED=0 go build -o "$E2E/ccsm-e2e" ./cmd/ccsm)
 
 # HOME pins the host's home (h.home), which is the root of project discovery
 # and the default cwd for new sessions.
