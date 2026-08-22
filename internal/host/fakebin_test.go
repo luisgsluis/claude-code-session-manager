@@ -325,10 +325,22 @@ func TestTmuxListSortByActivityFallback(t *testing.T) {
 	}
 }
 
+// TestTmuxListProject covers deriving the project from the pane's actual
+// current directory (projectNameForCwd), not a tmux tag: unlike a tag set
+// once at launch, this is live and works for any session regardless of when
+// or how it was created (see the fix in claudeResumeAs/projectsList — visto
+// 2026-08-22).
 func TestTmuxListProject(t *testing.T) {
-	h := fakeHost(t, map[string]string{
-		"FAKE_TMUX_LIST": "3\t2024-01-01 10:00:00\tclaude\tprojects/ccsm\n4\t2024-01-01 10:00:00\tclaude\n",
-	})
+	h := fakeHost(t, nil)
+	proj := filepath.Join(h.home, "projects", "ccsm")
+	if err := os.MkdirAll(proj, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "CLAUDE.md"), []byte("# x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_TMUX_LIST", "3\t2024-01-01 10:00:00\tclaude\t"+proj+"\n4\t2024-01-01 10:00:00\tclaude\t"+h.home+"\n")
+
 	data, err := h.Exec("tmux-ls", nil)
 	if err != nil {
 		t.Fatalf("tmux-ls: %v", err)
@@ -341,7 +353,7 @@ func TestTmuxListProject(t *testing.T) {
 		t.Errorf("project: %q", sessions[0]["project"])
 	}
 	if p, ok := sessions[1]["project"]; ok && p != "" {
-		t.Errorf("untagged session project: %q", p)
+		t.Errorf("home session project: %q", p)
 	}
 }
 

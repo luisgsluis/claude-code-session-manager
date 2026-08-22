@@ -378,11 +378,31 @@ var leadingNoise = regexp.MustCompile(`^[^\p{L}\p{N}]*[\s]*`)
 func (h *Host) tmuxList() ([]map[string]any, error) {
 	// window_activity is the only tmux "last activity" timestamp that actually
 	// moves (session_activity stays frozen at creation); session_created backs
-	// the fallback for sessions that have produced no output yet.
-	out, err := exec.Command(h.tmuxBinary, "list-sessions", "-F", "#{session_name}\t#{session_created_string}\t#{pane_title}\t#{@ccsm_project}\t#{session_created}\t#{window_activity}").Output()
+	// the fallback for sessions that have produced no output yet. The project
+	// is derived from the pane's actual current directory (projectNameForCwd),
+	// not a tmux tag set once at launch: a tag never updates for a session that
+	// already existed before it was introduced (or resumed before a bugfix to
+	// how it's computed), while pane_current_path is always live and is the
+	// same source of truth conversationsList already uses for the exact same
+	// purpose.
+	out, err := exec.Command(h.tmuxBinary, "list-sessions", "-F", "#{session_name}\t#{session_created_string}\t#{pane_title}\t#{pane_current_path}\t#{session_created}\t#{window_activity}").Output()
 	if err != nil {
 		// No sessions is not an error — tmux exits 1
 		return []map[string]any{}, nil
+	}
+
+	// projectNameForCwd re-walks the whole home tree (projectsList); this list
+	// is polled every few seconds by the turn watcher, so that walk must run
+	// once per call, not once per session. A plain path->name map is enough
+	// here: a live session's cwd is always local, so it never needs the
+	// cross-host rehoming projectNameForCwd also does for synced conversations.
+	projectByPath := map[string]string{}
+	if projects, err := h.projectsList(); err == nil {
+		for _, pr := range projects {
+			if name, _ := pr["name"].(string); name != "" && name != "principal" {
+				projectByPath[pr["path"].(string)] = name
+			}
+		}
 	}
 
 	hostname := h.hostname
@@ -404,7 +424,9 @@ func (h *Host) tmuxList() ([]map[string]any, error) {
 			s["task"] = task
 		}
 		if len(parts) > 3 {
-			s["project"] = strings.TrimSpace(parts[3])
+			if proj := projectByPath[strings.TrimSpace(parts[3])]; proj != "" {
+				s["project"] = proj
+			}
 		}
 		s["last_activity"] = sessionLastActivity(parts)
 		s["status"] = h.rcStatus(parts[0])
@@ -616,13 +638,6 @@ func (h *Host) claudeNew(args map[string]string) (map[string]string, error) {
 	if err != nil {
 		return nil, errServer("%v", err)
 	}
-	// Tag the session with its project so the sessions list can show it. The
-	// "principal" entry is the implicit default and carries no tag. The bare
-	// name is required: set-option's target doesn't accept the "=" prefix that
-	// kill-session does (it would look for a session literally named "=name").
-	if project != "" && project != "principal" {
-		exec.Command(h.tmuxBinary, "set-option", "-t", session, "@ccsm_project", project).Run()
-	}
 	if claudeName != "" {
 		// Fire-and-forget: waits for the RC bridge (up to rcWaitSeconds, 5-120s)
 		// before typing /rename, which must not block the HTTP response — "new
@@ -694,12 +709,6 @@ func (h *Host) claudeResumeAs(id, name string) (map[string]string, error) {
 	}
 	if err != nil {
 		return nil, errServer("%v", err)
-	}
-	// Tag the session with its project, same as a fresh "new session" launch,
-	// so the sessions list shows it for a resumed session too. Best effort:
-	// the resume must not fail over a cosmetic tag.
-	if proj := h.projectNameForCwd(cwd); proj != "" && proj != "principal" {
-		exec.Command(h.tmuxBinary, "set-option", "-t", session, "@ccsm_project", proj).Run()
 	}
 	return map[string]string{
 		"session": session,

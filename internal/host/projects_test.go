@@ -71,9 +71,14 @@ func TestProjectsList(t *testing.T) {
 	}
 }
 
+// TestClaudeNewWithProject checks a project-pinned session launches with that
+// project's directory as cwd. The sessions list showing the project is a
+// separate concern now (TestTmuxListProject): it reads the pane's live
+// pane_current_path via projectNameForCwd rather than a tag set at launch, so
+// there's nothing launch-time left to assert about tagging.
 func TestClaudeNewWithProject(t *testing.T) {
-	optsFile := filepath.Join(t.TempDir(), "opts")
-	h := fakeHost(t, map[string]string{"FAKE_TMUX_OPTS": optsFile})
+	newArgs := filepath.Join(t.TempDir(), "new_args")
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_NEW_ARGS": newArgs})
 
 	proj := filepath.Join(h.home, "projects", "ccsm")
 	if err := os.MkdirAll(proj, 0700); err != nil {
@@ -91,24 +96,28 @@ func TestClaudeNewWithProject(t *testing.T) {
 	if out["session"] != "3" {
 		t.Fatalf("unexpected session %v", out["session"])
 	}
-	b, err := os.ReadFile(optsFile)
+	args, err := os.ReadFile(newArgs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(string(b)) != "projects/ccsm" {
-		t.Fatalf("session not tagged: %q", string(b))
+	if !strings.Contains(string(args), "-c "+proj) {
+		t.Errorf("expected launch with -c %s, got %q", proj, args)
 	}
 }
 
-func TestClaudeNewPrincipalNotTagged(t *testing.T) {
-	optsFile := filepath.Join(t.TempDir(), "opts")
-	h := fakeHost(t, map[string]string{"FAKE_TMUX_OPTS": optsFile})
+func TestClaudeNewPrincipalLaunchesAtHome(t *testing.T) {
+	newArgs := filepath.Join(t.TempDir(), "new_args")
+	h := fakeHost(t, map[string]string{"FAKE_TMUX_NEW_ARGS": newArgs})
 
 	if _, err := h.Exec("claude-nueva", map[string]string{"project": "principal"}); err != nil {
 		t.Fatalf("claude-nueva: %v", err)
 	}
-	if b, err := os.ReadFile(optsFile); err == nil && strings.TrimSpace(string(b)) != "" {
-		t.Fatalf("principal must not be tagged: %q", string(b))
+	args, err := os.ReadFile(newArgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "-c "+h.home) {
+		t.Errorf("expected launch at home %s, got %q", h.home, args)
 	}
 }
 
