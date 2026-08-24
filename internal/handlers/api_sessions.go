@@ -217,12 +217,16 @@ func (h *SessionHandler) ChatStream(w http.ResponseWriter, r *http.Request) {
 		// itself is never written to it — only the eventual answer is), so
 		// ready/status/mode/updated/size can all stay identical across a
 		// dialog's whole lifecycle. Without this the client can be left
-		// showing a choice/approval panel the pane already resolved.
-		fp := fmt.Sprintf("%v|%v|%v|%v|%v|%v|%v|%v|%v",
+		// showing a choice/approval panel the pane already resolved. boot is
+		// here too: captureBootScreen fills it in ~1.5s after creation, its
+		// own event with nothing else necessarily changing at the same
+		// moment — a tile already open in that window would otherwise never
+		// see it until some unrelated field changed.
+		fp := fmt.Sprintf("%v|%v|%v|%v|%v|%v|%v|%v|%v|%v",
 			payload["ready"], payload["status"], payload["mode"],
 			payload["updated"], payload["size"],
 			payload["waiting"], payload["choice"],
-			payload["working"], payload["status_text"])
+			payload["working"], payload["status_text"], payload["boot"])
 		if fp == lastFP {
 			heartbeats++
 			if heartbeats%30 == 0 && setWriteDeadline(rc) {

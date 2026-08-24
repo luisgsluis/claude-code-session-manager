@@ -208,8 +208,6 @@ const I18N = {
     term_tile_unzoom: 'Salir de pantalla completa',
     term_tile_output: 'Contraer/expandir salida detallada (Ctrl+O)',
     term_tile_prompt: 'Escribe y pulsa Enter\u2026',
-    live_tab_chat: 'Chat',
-    live_tab_term: 'Terminal',
     live_scroll_up: 'Subir',
     live_scroll_end: 'Ir al final',
     live_screen_sep: '──── Pantalla actual ────',
@@ -515,8 +513,6 @@ const I18N = {
     term_tile_unzoom: 'Exit full screen',
     term_tile_output: 'Collapse/expand detailed output (Ctrl+O)',
     term_tile_prompt: 'Type and press Enter…',
-    live_tab_chat: 'Chat',
-    live_tab_term: 'Terminal',
     live_scroll_up: 'Scroll up',
     live_scroll_end: 'Go to end',
     live_screen_sep: '──── Current screen ────',
@@ -707,7 +703,7 @@ function ccsmApp() {
       versions: [], viewing: 0,
     },
     voiceForm: null,
-    live: { open: false, name: '', view: 'chat', chatStatus: '', ces: null, timer: null, msgs: [], termHist: '', meta: null, input: '', sending: false, elapsed: '', models: [], maxH: null },
+    live: { open: false, name: '', chatStatus: '', ces: null, timer: null, msgs: [], meta: null, input: '', sending: false, elapsed: '', models: [], maxH: null },
     // Terminal grid: tiles keyed by session name (the same stable identity the
     // session list uses), plus a single `zoomed` name — only one tile can be
     // zoomed at a time. `narrow` mirrors the (max-width: 1023px) media query
@@ -1174,7 +1170,7 @@ function ccsmApp() {
       return p;
     },
 
-    // --- Live session view (SSE): Terminal + Chat ---
+    // --- Live session view (SSE): Chat ---
     openLive(s) {
       this.closeLive();
       this.live.open = true;
@@ -1182,11 +1178,9 @@ function ccsmApp() {
       this.live.name = s.name;
       this.live.chatStatus = '';
       this.live.msgs = [];
-      this.live.termHist = '';
       this.live.meta = null;
       this.live.input = '';
       this.live.elapsed = '';
-      this.live.view = 'chat';
       this.loadModels();
       this.startChatStream();
     },
@@ -1291,24 +1285,6 @@ function ccsmApp() {
       }
     },
 
-    // Both tabs read off the one chat stream (termText derives from
-    // termHist) — switching tabs is a pure view change, nothing to
-    // start/stop.
-    setLiveView(v) {
-      if (v === this.live.view) return;
-      this.live.view = v;
-      if (v === 'term') {
-        // The pane mounts fresh (x-if in index.html) with termHist already
-        // in termText — the chat tab fetched it earlier — so it opens at
-        // scrollTop 0, the top, unless forced down once here. Same reasoning
-        // as the grid's restoreTile.
-        this.$nextTick(() => {
-          const el = this.$refs.livePane;
-          if (el) el.scrollTop = el.scrollHeight;
-        });
-      }
-    },
-
     atBottom(el) {
       return el.scrollHeight - el.scrollTop - el.clientHeight < 8;
     },
@@ -1332,10 +1308,9 @@ function ccsmApp() {
       paneResizeObservers[name] = ro;
     },
 
-    // dir -1: scroll up one page; dir 1: go to the end. Same behaviour in the
-    // chat and the terminal views.
+    // dir -1: scroll up one page; dir 1: go to the end.
     scrollLive(dir) {
-      const el = this.live.view === 'chat' ? this.$refs.liveChat : this.$refs.livePane;
+      const el = this.$refs.liveChat;
       if (!el) return;
       if (dir > 0) {
         el.scrollTop = el.scrollHeight;
@@ -1344,19 +1319,8 @@ function ccsmApp() {
       }
     },
 
-    // Terminal tab: the same conversation as the Chat tab, styled as
-    // terminal text (❯ prefix on user turns). Claude Code paints in tmux's
-    // alternate screen (no scrollback), so this comes from the transcript,
-    // not a raw tmux pane capture — plain HTML text reflows to any width on
-    // its own, and this tab is read-only anyway (no input, unlike a grid
-    // tile), so there's no "live current screen" to show separately from it.
-    get termText() {
-      return this.live.termHist || '';
-    },
-
     startChatStream() {
       this.live.msgs = [];
-      this.live.termHist = '';
       this.live.meta = null;
       this.live.chatStatus = '';
       this.loadChat();
@@ -1404,15 +1368,8 @@ function ccsmApp() {
         content: String(m.content || '').trim(),
       }));
       this.live.msgs = msgs;
-      // Terminal history: the conversation rendered as terminal output.
-      this.live.termHist = msgs.map(m => (m.role === 'user' ? '❯ ' : '') + m.content).join('\n\n');
       this.$nextTick(() => {
-        if (this.live.view === 'term') {
-          const tp = this.$refs.livePane;
-          if (tp && this.atBottom(tp)) tp.scrollTop = tp.scrollHeight;
-        } else if (stick && el) {
-          el.scrollTop = el.scrollHeight;
-        }
+        if (stick && el) el.scrollTop = el.scrollHeight;
       });
     },
 
@@ -1507,9 +1464,9 @@ function ccsmApp() {
     },
 
     // --- Terminal grid: every active session tiled at once ---
-    // Each tile is the same raw pane stream the single-session Terminal tab
-    // uses (so reasoning and internal output show up, unlike the chat view),
-    // asked for with colour. Metadata (approval / choice / mode) comes from
+    // Each tile is a raw pane stream (so reasoning and internal output show
+    // up, unlike the chat view), asked for with colour. Metadata (approval /
+    // choice / mode) comes from
     // the session's own /chat/stream (same stream the live modal uses), NOT
     // the shared /api/events one: that one is only created inside initNotify
     // and only when the Notification API exists, so a browser without it (or
@@ -1574,9 +1531,9 @@ function ccsmApp() {
       this.fetchTileMeta(name);
     },
 
-    // tileText mirrors the single-session termText getter: the /chat-derived
-    // history (termHist) so there's something to scroll up to, then a
-    // separator, then the live (optionally coloured) pane screen.
+    // tileText: the /chat-derived history (termHist) so there's something to
+    // scroll up to, then a separator, then the live (optionally coloured)
+    // pane screen.
     tileText(name) {
       const tile = this.grid.tiles[name];
       if (!tile) return '';
@@ -1651,16 +1608,22 @@ function ccsmApp() {
     // mode, what the bar and status chrome read) AND termHist (the "history"
     // text above the live screen). Claude Code draws its TUI on the alternate
     // screen, so tmux's scrollback for that pane is just the current screen —
-    // the /chat messages are the only scrollable history, same reasoning as
-    // the single-session Terminal tab. Both the tile's own /chat/stream and
-    // fetchTileMeta go through here so the historical part stays current even
-    // when the shared /api/events stream is dead (the iOS case).
+    // the /chat messages are the only scrollable history. Both the tile's own
+    // /chat/stream and fetchTileMeta go through here so the historical part
+    // stays current even when the shared /api/events stream is dead (the iOS
+    // case).
     applyTileChat(name, d) {
       const t = this.grid.tiles[name];
       if (!t) return; // tile closed while in flight
       t.meta = d;
       const msgs = (d.messages || []).map(m => String(m.content || '').trim() ? (m.role === 'user' ? '❯ ' : '') + String(m.content).trim() : '');
-      t.termHist = msgs.filter(Boolean).join('\n\n');
+      const hist = msgs.filter(Boolean);
+      // The session's opening screen (banner, cwd, RC line): never a chat
+      // message, and gone from tmux's own alternate-screen pane the moment
+      // real conversation scrolls past it — this one capture is the only
+      // place it survives. Prepended once, ahead of the real turns.
+      if (d.boot) hist.unshift(String(d.boot).trim());
+      t.termHist = hist.join('\n\n');
       const el = document.getElementById('tile-pane-' + name);
       if (el && this.atBottom(el)) this.$nextTick(() => { el.scrollTop = el.scrollHeight; });
     },
@@ -1694,6 +1657,19 @@ function ccsmApp() {
       const w = tile && tile.meta && tile.meta.modes;
       if (w && w.length) return w;
       return ['auto', 'plan', 'accept-edits', 'manual'];
+    },
+
+    // Mirrors liveModelOptions(): the tile's real current model (e.g.
+    // "claude-sonnet-5", the id the backend reads from the transcript) almost
+    // never matches one of the short aliases in live.models ("sonnet"), so
+    // without prepending it here no <option> ever carries :selected and the
+    // browser falls back to displaying the first one in the list ("opus")
+    // regardless of the session's actual model.
+    tileModelOptions(name) {
+      const base = this.live.models.slice();
+      const m = this.tileMetaModel(name);
+      if (m && !base.includes(m)) base.unshift(m);
+      return base;
     },
 
     // Current mode/model of a tile (empty until the session's been calibrated).
@@ -2459,6 +2435,43 @@ function ccsmApp() {
         if (data.recovered) {
           this.toastMsg(this.t('toast_rc_recovered', [data.session]), 'success');
           this.openLive({ name: data.session });
+          return;
+        }
+        if (data.status && data.status !== 'ok' && data.status !== 'rc_connected') {
+          this.toastMsg(this.t('toast_rc_fail', [data.status]), 'error');
+          return;
+        }
+        this.toastMsg(this.t('toast_rc_reconnect'), 'success');
+      } catch (e) {
+        this.toastMsg(this.t('toast_error_conn', [e.message]), 'error');
+      }
+    },
+
+    // reconnectTileRC mirrors reconnectRC for a terminal grid tile. A
+    // recovered session can come back under a different tmux name (kill +
+    // claudeResumeAs, best-effort at reusing the old one) — when it does,
+    // this tile (the old name) closes and a fresh one opens under the new
+    // name, same as openLive's reopen for the single-session view.
+    async reconnectTileRC(name) {
+      const tile = this.grid.tiles[name];
+      const status = tile && tile.meta && tile.meta.status;
+      const msg = status === 'rc_connected'
+        ? this.t('confirm_rc_reconnect_on')
+        : this.t('confirm_rc_reconnect_off');
+      if (!confirm(msg)) return;
+      try {
+        const resp = await fetch('/api/sessions/' + encodeURIComponent(name) + '/rc', { method: 'POST' });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          this.toastMsg(data.error || this.t('chat_err'), 'error');
+          return;
+        }
+        if (data.recovered) {
+          this.toastMsg(this.t('toast_rc_recovered', [data.session]), 'success');
+          if (data.session !== name) {
+            this.closeGridTile(name);
+            this.openGridTile(data.session);
+          }
           return;
         }
         if (data.status && data.status !== 'ok' && data.status !== 'rc_connected') {

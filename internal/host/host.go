@@ -103,6 +103,16 @@ type Host struct {
 	// full-text search field. Lazy and empty until the first use, so it never
 	// inflates the agent's footprint on its own (see fts.go).
 	ftsText *ftsTextCache
+
+	// bootCaps holds one captured boot-screen text per session name (string),
+	// taken once shortly after creation — see captureBootScreen. Claude Code
+	// draws its TUI on tmux's alternate screen (no real scrollback), so once
+	// the pane scrolls past its opening frame (banner, cwd, RC line) that
+	// content is gone for good; the transcript never had it either, since it
+	// isn't a conversation message. This is the only place it survives, for
+	// the terminal grid tile to show above its live pane. Same "never cleaned
+	// up, not worth the bookkeeping" spirit as sendMu.
+	bootCaps sync.Map
 }
 
 // defaultPaneReadyTimeout is how long ensurePaneReady waits, in production,
@@ -644,6 +654,7 @@ func (h *Host) claudeNew(args map[string]string) (map[string]string, error) {
 		// session" is documented to open the live chat right away.
 		go h.renameClaudeAfterReady(session, claudeName, waitRC)
 	}
+	go h.captureBootScreen(session)
 	return map[string]string{
 		"session": session,
 		"status":  rcState(status),
@@ -2683,7 +2694,11 @@ func (h *Host) sessionChat(name string) (map[string]any, error) {
 	mode := h.paneMode(name)
 	waiting, choice := h.paneWaitingWithChoice(name)
 	statusWord, working := h.paneStatusWord(name)
-	var model string
+	// Falls back to a coarse alias read off the pane's own banner ("Sonnet 5
+	// · Claude Pro") until the transcript has a real assistant turn to give
+	// the precise model id — see paneModelHint. The loop below overwrites
+	// this with that id the moment one exists.
+	model := h.paneModelHint(name)
 	if id == "" {
 		return map[string]any{
 			"session": name, "id": "", "ready": false,
@@ -2695,6 +2710,7 @@ func (h *Host) sessionChat(name string) (map[string]any, error) {
 			"status_text": statusWord,
 			"modes":       h.cachedModeWheel(),
 			"messages":    []map[string]any{},
+			"boot":        h.bootCapture(name),
 		}, nil
 	}
 
@@ -2713,6 +2729,7 @@ func (h *Host) sessionChat(name string) (map[string]any, error) {
 			"status_text": statusWord,
 			"modes":       h.cachedModeWheel(),
 			"messages":    []map[string]any{},
+			"boot":        h.bootCapture(name),
 		}, nil
 	}
 	fh, err := os.Open(path)
@@ -2785,6 +2802,7 @@ func (h *Host) sessionChat(name string) (map[string]any, error) {
 		"status_text": statusWord,
 		"modes":       h.cachedModeWheel(),
 		"messages":    msgs,
+		"boot":        h.bootCapture(name),
 	}, nil
 }
 
@@ -2932,6 +2950,56 @@ func (h *Host) paneMode(name string) string {
 	return ""
 }
 
+// bootCaptureTimeout bounds captureBootScreen's wait for a freshly created
+// session's pane to draw its opening frame. Measured on the reference Pi
+// under real load: Claude Code (MCP/CLAUDE.md loading, network, RC handshake)
+// took over 10s — past even paneReadyTimeout, ensurePaneReady's own
+// production bound — to render its mode badge, and a first "surely long
+// enough" guess of 1.5s landed on a near-blank ~24-byte capture (trimmed to
+// empty, never stored). Generous on purpose: this holds no lock and blocks
+// nobody, so a long bound costs nothing but one detached goroutine's own
+// time — the failure mode of guessing too short is silently never capturing
+// the banner at all, which is the exact bug this exists to fix.
+const bootCaptureTimeout = 25 * time.Second
+
+// captureBootScreen snapshots a freshly created session's pane into bootCaps,
+// so a terminal grid tile can still show that opening frame after the real
+// conversation has scrolled it off tmux's alternate screen (see bootCaps' own
+// docstring on the Host struct). Runs detached from claudeNew's HTTP
+// response, same reasoning as renameClaudeAfterReady. Holds no lock — unlike
+// a keystroke send, capture-pane is read-only, so it can't corrupt anything
+// by overlapping with a real send. Captures on every poll tick rather than
+// once at paneReady, keeping the latest non-blank frame in case paneReady
+// itself is never reached within the bound.
+func (h *Host) captureBootScreen(session string) {
+	deadline := time.Now().Add(bootCaptureTimeout)
+	for {
+		if !h.sessionAlive(session) {
+			return
+		}
+		if out, err := exec.Command(h.tmuxBinary, "capture-pane", "-p", "-t", h.paneTarget(session)).Output(); err == nil {
+			if text := strings.TrimSpace(string(out)); text != "" {
+				h.bootCaps.Store(session, text)
+			}
+		}
+		if h.paneReady(session) || time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(paneReadyPoll)
+	}
+}
+
+// bootCapture returns the captured boot screen for a session, or "" if none
+// was ever taken (still pending, session too short-lived, or a resumed
+// session that never went through claudeNew).
+func (h *Host) bootCapture(session string) string {
+	v, ok := h.bootCaps.Load(session)
+	if !ok {
+		return ""
+	}
+	return v.(string)
+}
+
 // paneStatusWord reads the pane and returns the current generation status word
 // from the Claude Code TUI, plus whether such a line is present. While the
 // model is working the TUI shows a line like
@@ -3043,6 +3111,84 @@ func modeFromBadge(line string) string {
 			if m == "accept edits" {
 				return "accept-edits"
 			}
+			return m
+		}
+	}
+	return ""
+}
+
+// paneModelHint is a best-effort fallback for sessionChat's model field. The
+// precise id (claude-sonnet-5, deepseek-v4-flash[1m]) is only ever written by
+// Claude Code to the transcript's message.model on a real assistant turn, so
+// a freshly opened session reports no model until the first reply lands. That
+// gap is what this fills, WITHOUT guessing — the settings/profile that opened
+// the session is the source of truth for what model it's running, because
+// CCSM applies it globally (settings.json) before launching (see claudeNew).
+//
+// Resolution order:
+//  1. settings.model (the top-level "model": "sonnet" alias) — if it names a
+//     real alias the UI's dropdown knows (opus/sonnet/haiku, or a full model
+//     id like "deepseek-v4-flash[1m]"), return it directly.
+//  2. The per-tier defaults (ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL) in
+//     the same settings' env, resolved through settings.model's tier: a deepseek
+//     profile with "model": "sonnet" then yields its real sonnet-tier id
+//     (deepseek-v4-flash[1m]) instead of the generic "sonnet".
+//  3. As a last-resort, the banner words ("Sonnet 5 · Claude Pro") — only a
+//     coarse alias, and only reached when the settings had no usable model.
+//
+// The banner words alone are deliberately NOT the answer: for a non-Anthropic
+// profile the pane's banner still reads "Sonnet 5 · Claude Pro" while the
+// session actually runs DeepSeek (the banner is Claude Code's own header, not
+// the real backend model), so reading it by itself would report "sonnet" for
+// a deepseek-v4-flash session — the exact wrong-answer bug this rewrite fixes.
+func (h *Host) paneModelHint(name string) string {
+	if m := h.settingsModelHint(); m != "" {
+		return m
+	}
+	out, err := exec.Command(h.tmuxBinary, "capture-pane", "-p", "-t", h.paneTarget(name)).Output()
+	if err != nil {
+		return ""
+	}
+	lower := strings.ToLower(string(out))
+	for _, m := range []string{"opus", "sonnet", "haiku"} {
+		if strings.Contains(lower, m) {
+			return m
+		}
+	}
+	return ""
+}
+
+// settingsModelHint resolves the model of the currently applied settings.json
+// (the one that opened the session) without any pane inspection — see
+// paneModelHint's docstring for why this is the source of truth. Returns ""
+// when the settings carry no usable model (missing file, unparseable JSON,
+// or an unknown model alias).
+func (h *Host) settingsModelHint() string {
+	data, err := os.ReadFile(h.settingsPath)
+	if err != nil {
+		return ""
+	}
+	var s struct {
+		Model string `json:"model"`
+		Env   map[string]string
+	}
+	if err := json.Unmarshal(data, &s); err != nil {
+		return ""
+	}
+	if tier := s.Model; tier != "" {
+		// A settings alias can name the real model directly (a profile could
+		// set "model": "deepseek-v4-flash[1m]"), or a tier alias (opus/sonnet/
+		// haiku) that maps to ANTHROPIC_DEFAULT_*_MODEL for the backend model.
+		key := "ANTHROPIC_DEFAULT_" + strings.ToUpper(tier) + "_MODEL"
+		if m := s.Env[key]; m != "" {
+			return m
+		}
+		return tier
+	}
+	// No top-level "model": fall back to a non-empty DEFAULT_* tier. Prefer
+	// sonnet, the usual default tier.
+	for _, tier := range []string{"SONNET", "OPUS", "HAIKU"} {
+		if m := s.Env["ANTHROPIC_DEFAULT_"+tier+"_MODEL"]; m != "" {
 			return m
 		}
 	}
@@ -3173,10 +3319,18 @@ func (h *Host) paneTextSafe(name string) bool {
 // project) keeps the old fail-open behaviour: blocking a message forever on
 // an unreadable pane would be worse than best-effort sending it.
 func (h *Host) ensureTextReady(name string) error {
-	if h.paneTextSafe(name) || h.paneReadyTimeout <= 0 {
+	return h.ensureTextReadyWithin(name, h.paneReadyTimeout)
+}
+
+// ensureTextReadyWithin is ensureTextReady with an explicit bound, for a
+// caller that shouldn't wait the full production paneReadyTimeout — see
+// renameClaudeAfterReady, a background action nobody is synchronously
+// waiting on.
+func (h *Host) ensureTextReadyWithin(name string, timeout time.Duration) error {
+	if h.paneTextSafe(name) || timeout <= 0 {
 		return nil
 	}
-	deadline := time.Now().Add(h.paneReadyTimeout)
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		time.Sleep(paneReadyPoll)
 		if h.paneTextSafe(name) {
@@ -3831,9 +3985,24 @@ func (h *Host) tmuxRename(name, newName string) (map[string]string, error) {
 	return map[string]string{"old_name": name, "new_name": newName}, nil
 }
 
+// claudeRename types /rename into the pane. Locked through sessionSendLock
+// and gated by ensureTextReady, same as sessionSend: /rename's literal+Enter
+// are two separate tmux processes with no atomicity between them, so without
+// this an overlapping sessionSend (e.g. the user's first chat message racing
+// renameClaudeAfterReady, see below) could interleave into the pane's input
+// line before either Enter lands, merging into one line that Claude Code
+// reads as a single /rename command — swallowing the user's real message
+// with no trace of it in the transcript.
 func (h *Host) claudeRename(session, title string) (map[string]string, error) {
+	mu := h.sessionSendLock(session)
+	mu.Lock()
+	defer mu.Unlock()
+
 	if !h.sessionAlive(session) {
 		return nil, errNotFound("session not found: %s", session)
+	}
+	if err := h.ensureTextReady(session); err != nil {
+		return nil, err
 	}
 	if err := h.sendKeys(session, "/rename "+title); err != nil {
 		return nil, err
@@ -3940,6 +4109,21 @@ func (h *Host) sendKeys(session, literal string) error {
 	return h.pressEnter(session)
 }
 
+// renameReadyTimeout bounds renameClaudeAfterReady's ensureTextReady wait.
+// Deliberately much shorter than the production paneReadyTimeout (10s): this
+// runs in the background with nobody synchronously waiting on it, so tying
+// up its session's sendLock — and repeatedly polling the pane — for the full
+// 10s on every named session creation is wasteful, especially stacked across
+// several sessions created close together. The badge this waits for appears
+// within a second or two in the common case (see ensurePaneReady's own
+// docstring); past this shorter bound the /rename is best-effort skipped
+// rather than fired blind, same fail-open spirit as the rest of this file.
+const renameReadyTimeout = 3 * time.Second
+
+// renameClaudeAfterReady runs in the background right after a named session
+// is created (see claudeNew), so its /rename can land while the user is
+// already typing their first message — locked/gated the same as claudeRename
+// for that reason.
 func (h *Host) renameClaudeAfterReady(session, title string, waitRC bool) {
 	deadline := time.Now().Add(time.Duration(h.rcWaitSeconds) * time.Second)
 	for {
@@ -3955,7 +4139,12 @@ func (h *Host) renameClaudeAfterReady(session, title string, waitRC bool) {
 			}
 		}
 		if !waitRC {
-			h.sendKeys(session, "/rename "+title)
+			mu := h.sessionSendLock(session)
+			mu.Lock()
+			defer mu.Unlock()
+			if h.ensureTextReadyWithin(session, renameReadyTimeout) == nil {
+				h.sendKeys(session, "/rename "+title)
+			}
 			return
 		}
 		if time.Now().After(deadline) {

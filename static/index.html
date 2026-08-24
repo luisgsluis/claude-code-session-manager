@@ -204,7 +204,7 @@
             <p class="text-sm text-fg-muted truncate mt-0.5" x-text="s.task || t('no_task')"></p>
           </div>
           <div class="flex items-center gap-2 shrink-0">
-            <button @click="openLive(s)" class="text-xs text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors" :title="t('live_view')">👁️</button>
+            <button @click="openLive(s)" class="text-xs text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors" :title="t('live_view')">💬</button>
             <button @click="copyAttach(s)" class="text-xs text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors" :title="t('copy_attach')">🔗</button>
             <button @click="openRename(s)" class="text-xs text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors" :title="t('rename')">✏️</button>
             <button @click="killSession(s)" class="text-xs text-fg-muted hover:text-danger px-2 py-1 rounded hover:bg-bg-hover transition-colors" :title="t('close_session')">🗄️</button>
@@ -669,15 +669,11 @@
     <div class="flex items-center justify-between p-4 border-b border-gray-800 shrink-0">
       <div class="flex items-center gap-3">
         <h3 class="font-semibold" x-text="t('live_title', [live.name])"></h3>
-        <div class="flex rounded-lg bg-bg p-0.5 text-xs">
-          <button @click="setLiveView('chat')" :class="live.view==='chat' ? 'bg-accent text-white' : 'text-fg-muted hover:text-fg'" class="px-3 py-1 rounded-md transition-colors" x-text="t('live_tab_chat')"></button>
-          <button @click="setLiveView('term')" :class="live.view==='term' ? 'bg-accent text-white' : 'text-fg-muted hover:text-fg'" class="px-3 py-1 rounded-md transition-colors" x-text="t('live_tab_term')"></button>
-        </div>
       </div>
       <button @click="closeLive()" class="text-fg-muted hover:text-fg text-xl leading-none">&times;</button>
     </div>
 
-    <!-- Controls: scroll / mode / model / interrupt (works on both tabs).
+    <!-- Controls: scroll / mode / model / interrupt.
          tgrid-live-controls keeps this to one row (scrolling horizontally as
          a last resort, like a grid tile's header) but WITHOUT that header's
          forced-compact select widths — this modal spans the full width, so
@@ -688,7 +684,7 @@
       <button @click="scrollLive(1)" :title="t('live_scroll_end')" class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg transition-colors">⏬</button>
       <select @change="setMode($event.target.value); $event.target.value=''" :title="t('mode_label')" class="tgrid-select shrink-0" :style="tileSelectWidth(live.meta && live.meta.mode ? live.meta.mode : '')">
         <template x-if="!live.meta || !live.meta.mode">
-          <option value="" disabled x-text="t('mode_label')"></option>
+          <option value="" disabled selected x-text="t('mode_label')"></option>
         </template>
         <template x-for="m in liveModeOptions()" :key="m">
           <option :value="m" :selected="live.meta && live.meta.mode === m" x-text="m"></option>
@@ -696,7 +692,7 @@
       </select>
       <select @change="setModel($event.target.value); $event.target.value=''" :title="t('model_label')" class="tgrid-select shrink-0" :style="tileSelectWidth(live.meta && live.meta.model ? live.meta.model : '')">
         <template x-if="!live.meta || !live.meta.model">
-          <option value="" disabled x-text="t('model_label')"></option>
+          <option value="" disabled selected x-text="t('model_label')"></option>
         </template>
         <template x-for="mo in liveModelOptions()" :key="mo">
           <option :value="mo" :selected="live.meta && live.meta.model === mo" x-text="mo"></option>
@@ -705,20 +701,7 @@
       <span class="flex-1"></span>
     </div>
 
-    <!-- Terminal tab: read-only, terminal-styled rendering of the same
-         transcript the Chat tab shows — plain HTML text, no raw tmux pane
-         capture, so it reflows to any width on its own (no resize needed). -->
-    <template x-if="live.view==='term'">
-      <div class="flex-1 overflow-y-auto min-h-0 tgrid-pane" x-ref="livePane"
-        style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
-        <div x-show="live.chatStatus" class="px-3 py-2 text-xs text-danger" x-text="live.chatStatus"></div>
-        <pre class="p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words" x-text="termText"></pre>
-      </div>
-    </template>
-
-    <!-- Chat tab -->
-    <template x-if="live.view==='chat'">
-      <div class="flex flex-col flex-1 min-h-0">
+    <div class="flex flex-col flex-1 min-h-0">
         <div class="flex-1 overflow-y-auto p-4 space-y-3" x-ref="liveChat" style="overscroll-behavior:contain;-webkit-overflow-scrolling:touch">
           <div x-show="live.chatStatus" class="text-xs text-danger px-1" x-text="live.chatStatus"></div>
           <div x-show="!live.meta || !live.meta.ready" class="text-sm text-fg-muted text-center py-10" x-text="t('chat_no_conv')"></div>
@@ -831,7 +814,6 @@
           </div>
         </div>
       </div>
-    </template>
   </div>
 </div>
 
@@ -1043,7 +1025,7 @@
             <select @change="setTileMode(name, $event.target.value); $event.target.value=''"
               :title="t('mode_label')" class="tgrid-select shrink-0" :style="tileSelectWidth(tileMetaMode(name))">
               <template x-if="!tileMetaMode(name)">
-                <option value="" disabled x-text="t('mode_label')"></option>
+                <option value="" disabled selected x-text="t('mode_label')"></option>
               </template>
               <template x-for="m in tileModeOptions(name)" :key="m">
                 <option :value="m" :selected="tileMetaMode(name) === m" x-text="m"></option>
@@ -1052,9 +1034,9 @@
             <select @change="setTileModel(name, $event.target.value); $event.target.value=''"
               :title="t('model_label')" class="tgrid-select shrink-0" :style="tileSelectWidth(tileMetaModel(name))">
               <template x-if="!tileMetaModel(name)">
-                <option value="" disabled x-text="t('model_label')"></option>
+                <option value="" disabled selected x-text="t('model_label')"></option>
               </template>
-              <template x-for="mo in live.models" :key="mo">
+              <template x-for="mo in tileModelOptions(name)" :key="mo">
                 <option :value="mo" :selected="tileMetaModel(name) === mo" x-text="mo"></option>
               </template>
             </select>
@@ -1149,6 +1131,8 @@
                 x-text="voice.recording && voice.target === name ? '⏺' : '🎤'"></button>
               <button x-show="canRewrite()" @click="runRewrite(name)" :disabled="!!voice.stage" :title="t('voice_rewrite')"
                 class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors disabled:opacity-50">✨</button>
+              <button x-show="grid.tiles[name].meta && grid.tiles[name].meta.is_alive" @click="reconnectTileRC(name)" :title="t('rc_reconnect_title')"
+                class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors">🔁</button>
               <button @click="sendTileKey(name, 'escape')" :title="t('chat_stop_title')"
                 class="shrink-0 px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors">⏹</button>
               <button @click="sendTileText(name)" :disabled="grid.tiles[name].sending" :title="t('chat_send')"

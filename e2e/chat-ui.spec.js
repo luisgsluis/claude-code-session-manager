@@ -125,8 +125,8 @@ function startMockServer() {
     page.on('pageerror', (e) => errors.push(String(e)));
 
     await page.goto(`http://127.0.0.1:${port}/`);
-    await page.waitForSelector('text=👁️', { timeout: 10000 });
-    await page.click('button[title]:has-text("👁️")');
+    await page.waitForSelector('text=💬', { timeout: 10000 });
+    await page.click('button[title]:has-text("💬")');
 
     // --- Model dropdown: 5 options ---
     const modelSelect = page.locator('select[title="Modelo"], select[title="Model"]').last();
@@ -208,8 +208,8 @@ test('chat box: Enter sends, Shift+Enter only inserts a newline', async ({ page 
     page.on('pageerror', (e) => errors.push(String(e)));
 
     await page.goto(`http://127.0.0.1:${port}/`);
-    await page.waitForSelector('text=👁️', { timeout: 10000 });
-    await page.click('button[title]:has-text("👁️")');
+    await page.waitForSelector('text=💬', { timeout: 10000 });
+    await page.click('button[title]:has-text("💬")');
     const input = page.locator('textarea[x-model="live.input"]');
     await expect(input).toBeVisible({ timeout: 10000 });
 
@@ -257,8 +257,8 @@ test('chat box: mode selector sends {mode} (not /mode as text)', async ({ page }
     page.on('pageerror', (e) => errors.push(String(e)));
 
     await page.goto(`http://127.0.0.1:${port}/`);
-    await page.waitForSelector('text=👁️', { timeout: 10000 });
-    await page.click('button[title]:has-text("👁️")');
+    await page.waitForSelector('text=💬', { timeout: 10000 });
+    await page.click('button[title]:has-text("💬")');
     const modeSelect = page.locator('select[title="Modo"], select[title="Mode"]').last();
     await expect(modeSelect).toBeVisible({ timeout: 10000 });
 
@@ -285,8 +285,8 @@ test('chat box: approval notice with Approve and Stop buttons', async ({ page })
     // The initial chat already arrives with waiting=approval (blocked pane).
     state.payload.waiting = 'approval';
     await page.goto(`http://127.0.0.1:${port}/`);
-    await page.waitForSelector('text=👁️', { timeout: 10000 });
-    await page.click('button[title]:has-text("👁️")');
+    await page.waitForSelector('text=💬', { timeout: 10000 });
+    await page.click('button[title]:has-text("💬")');
 
     // Notice visible
     const approveBtn = page.locator('button[title^="Aprobar el comando"], button[title^="Approve the command"]').last();
@@ -331,8 +331,8 @@ test('chat box: approval dialog shows what is being approved, and its options ar
       selected: 0,
     };
     await page.goto(`http://127.0.0.1:${port}/`);
-    await page.waitForSelector('text=👁️', { timeout: 10000 });
-    await page.click('button[title]:has-text("👁️")');
+    await page.waitForSelector('text=💬', { timeout: 10000 });
+    await page.click('button[title]:has-text("💬")');
 
     const question = page.getByText('¿Confías en los archivos de esta carpeta?');
     await expect(question).toBeVisible({ timeout: 10000 });
@@ -364,8 +364,8 @@ test('chat box: processing indicator appears while working and hides when idle',
     page.on('pageerror', (e) => errors.push(String(e)));
 
     await page.goto(`http://127.0.0.1:${port}/`);
-    await page.waitForSelector('text=👁️', { timeout: 10000 });
-    await page.click('button[title]:has-text("👁️")');
+    await page.waitForSelector('text=💬', { timeout: 10000 });
+    await page.click('button[title]:has-text("💬")');
     await page.waitForSelector('[x-ref="liveChat"]', { timeout: 10000 });
 
     const dots = page.locator('.thinking-dots');
@@ -433,8 +433,8 @@ test('chat box: choice picker option button posts its own index, not a blind Ent
       selected: 0,
     };
     await page.goto(`http://127.0.0.1:${port}/`);
-    await page.waitForSelector('text=👁️', { timeout: 10000 });
-    await page.click('button[title]:has-text("👁️")');
+    await page.waitForSelector('text=💬', { timeout: 10000 });
+    await page.click('button[title]:has-text("💬")');
 
     const question = page.getByText('¿Cuál es la mejor comida?');
     await expect(question).toBeVisible({ timeout: 10000 });
@@ -475,7 +475,7 @@ test('terminal grid: clicking a tile choice option posts its own index, not a bl
       selected: 0,
     };
     await page.goto(`http://127.0.0.1:${port}/`);
-    await page.waitForSelector('text=👁️', { timeout: 10000 });
+    await page.waitForSelector('text=💬', { timeout: 10000 });
 
     // Open the grid: the tile must render the choice panel from its meta.
     await page.getByRole('button', { name: /Modo terminal/ }).click();
@@ -515,7 +515,7 @@ test('terminal grid: a tile approval dialog shows its question and its options a
       selected: 0,
     };
     await page.goto(`http://127.0.0.1:${port}/`);
-    await page.waitForSelector('text=👁️', { timeout: 10000 });
+    await page.waitForSelector('text=💬', { timeout: 10000 });
 
     await page.getByRole('button', { name: /Modo terminal/ }).click();
     const tile = page.locator('.tgrid-tile');
@@ -557,7 +557,7 @@ test('terminal grid: a choice arriving on the tile chat stream (dead /api/events
     // No dialog present when the tile opens.
     state.payload.waiting = '';
     await page.goto(`http://127.0.0.1:${port}/`);
-    await page.waitForSelector('text=👁️', { timeout: 10000 });
+    await page.waitForSelector('text=💬', { timeout: 10000 });
     await page.getByRole('button', { name: /Modo terminal/ }).click();
     const tile = page.locator('.tgrid-tile');
     await expect(tile).toBeVisible({ timeout: 10000 });
@@ -598,7 +598,7 @@ test('terminal grid: a new message on the tile chat stream updates the historica
     page.on('pageerror', (e) => errors.push(String(e)));
 
     await page.goto(`http://127.0.0.1:${port}/`);
-    await page.waitForSelector('text=👁️', { timeout: 10000 });
+    await page.waitForSelector('text=💬', { timeout: 10000 });
     await page.getByRole('button', { name: /Modo terminal/ }).click();
     const tile = page.locator('.tgrid-tile');
     await expect(tile).toBeVisible({ timeout: 10000 });
