@@ -121,8 +121,14 @@ const server = http.createServer(async (req, res) => {
     // that a forced role does not leak the other roles' instructions and that
     // auto mode shows the model all of them. It rides in the prompt text
     // because an invented role id would be replaced by the server's fallback.
-    const hasDocs = system.includes('Rewrite it as a documentation request');
-    const hasDevops = system.includes('Rewrite it as an operations request');
+    //
+    // Sniff the block HEADINGS, not a sentence from inside them: System()
+    // emits "# Role: <id>" itself, so this survives any rewording of the
+    // meta-prompt, which sniffing its prose does not. (It once matched
+    // "Rewrite it as a documentation request" and broke on an edit to the
+    // prompt file that changed nothing about the assembly being tested.)
+    const hasDocs = system.includes('# Role: docs');
+    const hasDevops = system.includes('# Role: devops');
     let blocks = 'BLOQUES:ninguno';
     if (hasDocs && hasDevops) blocks = 'BLOQUES:todos';
     else if (hasDocs) blocks = 'BLOQUES:docs';

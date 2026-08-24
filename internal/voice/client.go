@@ -237,23 +237,31 @@ func (s *Service) Rewrite(text, role string, answers []Answer) (*RewriteResult, 
 			role, strings.Join(prompt.RoleIDs(), ", "))
 	}
 
-	system := prompt.System(role)
+	// These ride into System as "extras", which places them after the role
+	// blocks but before the meta-prompt's Closing section — the output
+	// contract has to stay the last thing the model reads. Vocabulary comes
+	// first of the three: it is reference data the "clean up the
+	// transcription" rules point at, while the other two modify how the
+	// clarification rules behave on this particular call, so they belong
+	// nearer the contract they constrain.
+	var extras []string
+	if v := strings.TrimSpace(cfg.STT.Vocabulary); v != "" {
+		extras = append(extras, "# Vocabulary\n\nThese are the correct spellings of terms this "+
+			"user dictates. Treat them as authoritative when a transcribed word is close "+
+			"to one of them:\n"+v)
+	}
 	if len(answers) > 0 {
-		system += "\n\n# Continuing clarification\n\n" +
-			"The user has answered your previous question(s), included in order below the " +
-			"request. Fold them into the rewrite and, only if something is STILL genuinely " +
-			"unclear, ask ONE more question — never repeat one already answered."
+		extras = append(extras, "# Continuing clarification\n\n"+
+			"The user has answered your previous question(s), included in order below the "+
+			"request. Fold them into the rewrite and, only if something is STILL genuinely "+
+			"unclear, ask ONE more question — never repeat one already answered.")
 	}
 	final := len(answers) >= maxClarifyRounds
 	if final {
-		system += "\n\nThis is the last round: you may not ask anything further. Return " +
-			`"question": null and give your best possible rewrite with what you have.`
+		extras = append(extras, "This is the last round: you may not ask anything further. Return "+
+			`"question": null and give your best possible rewrite with what you have.`)
 	}
-	if v := strings.TrimSpace(cfg.STT.Vocabulary); v != "" {
-		system += "\n\n# Vocabulary\n\nThese are the correct spellings of terms this " +
-			"user dictates. Treat them as authoritative when a transcribed word is close " +
-			"to one of them:\n" + v
-	}
+	system := prompt.System(role, extras...)
 
 	var user strings.Builder
 	user.WriteString(text)

@@ -29,6 +29,26 @@ Operate running systems.
 # Role: docs
 
 Write documentation.
+
+# Closing
+
+Reply with JSON.
+`
+
+// promptNoClosing is the same prompt without the optional "# Closing"
+// section: it must still parse and assemble, because every saved version
+// written before the section existed looks like this.
+const promptNoClosing = `---
+roles:
+  - {id: devops, es: DevOps, en: DevOps}
+---
+# Base
+
+Shared rules.
+
+# Role: devops
+
+Operate running systems.
 `
 
 // TestOriginalIsValid guards the file that ships with the binary. Without
@@ -51,6 +71,11 @@ func TestOriginalIsValid(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(p.Base), "genuinely unclear") {
 		t.Error("Base does not tell the model to disambiguate rather than gather more information")
+	}
+	// The shipped prompt must actually use the Closing section: the JSON
+	// contract restated after the role blocks is what the model reads last.
+	if !strings.Contains(p.Closing, `"role"`) || !strings.Contains(p.Closing, `"prompt"`) {
+		t.Error("the shipped meta-prompt does not restate the JSON contract in its Closing section")
 	}
 }
 
@@ -140,6 +165,66 @@ func TestSystemAssembly(t *testing.T) {
 	// system prompt with no role guidance at all.
 	if got := p.System("nonexistent"); !strings.Contains(got, "Operate running systems") {
 		t.Error("an unknown role should fall back to the full set")
+	}
+}
+
+// TestSystemClosingIsLast is the whole reason "# Closing" exists: the output
+// contract has to be the last thing the model reads, not something buried
+// behind several thousand characters of role instructions. Asserting it is
+// merely present would pass even if it were assembled in the middle.
+func TestSystemClosingIsLast(t *testing.T) {
+	p, err := ParsePrompt(validPrompt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Closing != "Reply with JSON." {
+		t.Fatalf("Closing = %q", p.Closing)
+	}
+	for _, role := range []string{AutoRole, "devops", "nonexistent"} {
+		got := p.System(role)
+		if !strings.HasSuffix(got, "\n\n# Closing\n\nReply with JSON.") {
+			t.Errorf("System(%q) does not end with the Closing section:\n%s", role, got)
+		}
+		if strings.Index(got, "# Closing") < strings.Index(got, "Operate running systems") {
+			t.Errorf("System(%q) put Closing before the role block", role)
+		}
+	}
+
+	// Per-call extras must land between the role blocks and Closing: the
+	// whole reason Closing exists is that the contract is read last, so an
+	// extra appended after it would put things back where they started.
+	got := p.System("devops", "# Vocabulary\n\nsonarr", "", "  ", "This is the last round.")
+	if !strings.HasSuffix(got, "\n\n# Closing\n\nReply with JSON.") {
+		t.Errorf("extras displaced the Closing section from the end:\n%s", got)
+	}
+	for _, want := range []string{"# Vocabulary", "sonarr", "This is the last round."} {
+		i := strings.Index(got, want)
+		if i < 0 {
+			t.Errorf("extra %q was dropped", want)
+			continue
+		}
+		if i < strings.Index(got, "Operate running systems") {
+			t.Errorf("extra %q was placed before the role block", want)
+		}
+		if i > strings.Index(got, "# Closing") {
+			t.Errorf("extra %q was placed after Closing", want)
+		}
+	}
+	// Blank extras must not leave stray separators behind.
+	if strings.Contains(got, "\n\n\n") {
+		t.Errorf("an empty extra left a blank run:\n%q", got)
+	}
+
+	// Optional: a prompt written before the section existed still assembles.
+	q, err := ParsePrompt(promptNoClosing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.Closing != "" {
+		t.Errorf("Closing = %q, want empty", q.Closing)
+	}
+	if got := q.System("devops"); strings.Contains(got, "# Closing") {
+		t.Errorf("a prompt with no Closing section grew one:\n%s", got)
 	}
 }
 

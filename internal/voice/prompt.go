@@ -47,12 +47,23 @@ type Role struct {
 }
 
 // Prompt is a parsed meta-prompt: the declared roles, the shared Base section,
-// and one block per role.
+// one block per role, and an optional Closing section.
+//
+// Closing exists because of where System() puts things. Base comes first and
+// the role blocks after it, so anything written at the end of Base is not
+// what the model reads last — several thousand characters of role
+// instructions are. The output contract and the pre-flight check belong at
+// the end, and belong in the meta-prompt file rather than hardcoded here:
+// the file is user-editable and versioned, so a custom version that changes
+// the output format has to be able to change its own closing reminder too.
+// It is optional: a prompt with no "# Closing" section assembles exactly as
+// it did before the section existed.
 type Prompt struct {
-	Roles  []Role
-	Base   string
-	Blocks map[string]string
-	Raw    string
+	Roles   []Role
+	Base    string
+	Blocks  map[string]string
+	Closing string
+	Raw     string
 }
 
 type promptFrontMatter struct {
@@ -61,7 +72,7 @@ type promptFrontMatter struct {
 
 var (
 	frontMatterRe = regexp.MustCompile(`(?s)\A---\r?\n(.*?)\r?\n---\r?\n?`)
-	sectionRe     = regexp.MustCompile(`(?m)^#[ \t]+(Base|Role:[ \t]*[A-Za-z0-9_-]+)[ \t]*$`)
+	sectionRe     = regexp.MustCompile(`(?m)^#[ \t]+(Base|Closing|Role:[ \t]*[A-Za-z0-9_-]+)[ \t]*$`)
 )
 
 // ParsePrompt reads a meta-prompt and checks it is internally consistent.
@@ -119,6 +130,16 @@ func ParsePrompt(raw string) (*Prompt, error) {
 			p.Base = content
 			continue
 		}
+		if strings.EqualFold(heading, "Closing") {
+			if p.Closing != "" {
+				return nil, fmt.Errorf("duplicate '# Closing' section")
+			}
+			if content == "" {
+				return nil, fmt.Errorf("the '# Closing' section is empty")
+			}
+			p.Closing = content
+			continue
+		}
 		id := strings.TrimSpace(strings.TrimPrefix(heading, "Role:"))
 		if _, dup := p.Blocks[id]; dup {
 			return nil, fmt.Errorf("duplicate '# Role: %s' section", id)
@@ -161,14 +182,28 @@ func (p *Prompt) RoleIDs() []string {
 	return ids
 }
 
-// System assembles the system prompt for one rewrite.
+// System assembles the system prompt for one rewrite: Base, then the role
+// block(s), then Closing.
 //
 // A forced role gets Base plus its own block, and nothing about the other
 // roles. AutoRole gets Base plus every block, because the model cannot choose
 // between roles it has not been shown — which is exactly why splitting the
 // meta-prompt into one file per role would have saved nothing in the mode that
 // is used by default.
-func (p *Prompt) System(role string) string {
+//
+// extras are the per-call sections Rewrite adds on top of the file: the
+// vocabulary list, and the clarification-round notes. They go after the role
+// blocks but BEFORE Closing, because Closing is the output contract and the
+// point of having it is that it is read last — appending anything after it,
+// least of all a vocabulary list that is user-configured and can be long,
+// would put the contract back in the middle where it started. Each extra is
+// expected to be a self-contained "# Heading\n\nbody" chunk; empty ones are
+// skipped.
+//
+// Closing therefore goes last of all, so the output contract and the
+// pre-flight check are the final thing the model reads rather than being
+// buried mid-prompt behind the role instructions.
+func (p *Prompt) System(role string, extras ...string) string {
 	var b strings.Builder
 	b.WriteString(p.Base)
 
@@ -187,9 +222,21 @@ func (p *Prompt) System(role string) string {
 		for _, r := range p.Roles {
 			writeBlock(r.ID)
 		}
-		return b.String()
+	} else {
+		writeBlock(role)
 	}
-	writeBlock(role)
+
+	for _, e := range extras {
+		if e = strings.TrimSpace(e); e != "" {
+			b.WriteString("\n\n")
+			b.WriteString(e)
+		}
+	}
+
+	if p.Closing != "" {
+		b.WriteString("\n\n# Closing\n\n")
+		b.WriteString(p.Closing)
+	}
 	return b.String()
 }
 
