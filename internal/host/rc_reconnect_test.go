@@ -505,3 +505,34 @@ func TestWaitRCBridgeSettledWaitsForIdle(t *testing.T) {
 		t.Errorf("settled = %q, want ok", got)
 	}
 }
+
+// TestWaitRCBridgeSettledDoesNotBurnBudgetOnManualDialog: a session that comes
+// up blocked on an interactive TUI dialog (trust prompt, command/file-edit
+// approval) never registers the bridge until a human answers it — that's a
+// manual wait, not a stuck bridge. waitRCBridgeSettled must not let that time
+// count against rcWaitSeconds: the pane here shows a blocking dialog for
+// longer than the (tiny) configured budget, and only registers the bridge
+// once it clears. Without paneWaitingDetail pushing the deadline forward
+// while blocked, this would time out well before the dialog ever clears.
+func TestWaitRCBridgeSettledDoesNotBurnBudgetOnManualDialog(t *testing.T) {
+	pid := spawnRcSession(t, "a1b2c3d4-1111-2222-3333-444455556667")
+	h := fakeHost(t, map[string]string{
+		"FAKE_TMUX_PANE_SESSION": "3",
+		"FAKE_TMUX_PANE_PID":     strconv.Itoa(pid),
+		"FAKE_TMUX_LINE":         "Do you trust the files in this folder?\n❯ 1. Yes\n  2. No\n",
+	})
+	h.rcWaitSeconds = 1 // smaller than the dialog's simulated duration below
+
+	go func() {
+		time.Sleep(1300 * time.Millisecond)
+		os.Setenv("FAKE_TMUX_LINE", "idle")
+		sdir := filepath.Join(h.home, ".claude", "sessions")
+		os.MkdirAll(sdir, 0700)
+		sf := filepath.Join(sdir, fmt.Sprintf("%d.json", pid))
+		os.WriteFile(sf, []byte(`{"status":"idle","bridgeSessionId":"sess"}`), 0600)
+	}()
+
+	if got := h.waitRCBridgeSettled("3"); got != "ok" {
+		t.Errorf("settled = %q, want ok (a blocking dialog must not consume the wait budget)", got)
+	}
+}

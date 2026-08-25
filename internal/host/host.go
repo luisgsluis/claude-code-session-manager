@@ -854,12 +854,25 @@ func (h *Host) sessionIdle(name string) bool {
 // idle before a switch to a staged (non-bootstrap) profile survives. The settle margin is
 // a short confirmation (rcSettleSeconds, 1s), not a fixed wait — the time to
 // reach idle is covered by rcWaitSeconds. Returns "ok" | "fail" | "timeout" | "dead".
+//
+// A session can come up blocked on an interactive TUI dialog (trust prompt,
+// command/file-edit approval, the setup wizard) instead of proceeding straight
+// to the bridge handshake — paneWaitingReason detects these. Left unhandled,
+// that manual wait burns the whole rcWaitSeconds budget just like a genuine
+// timeout, even though the session was never actually stuck: it's waiting on
+// the human, not on the bridge. So the deadline is pushed forward on every poll
+// while a dialog is open, and the real countdown only starts once it clears.
 func (h *Host) waitRCBridgeSettled(session string) string {
 	estado := "timeout"
 	deadline := time.Now().Add(time.Duration(h.rcWaitSeconds) * time.Second)
 	for time.Now().Before(deadline) {
 		if !h.sessionAlive(session) {
 			return "dead"
+		}
+		if reason, _, _ := h.paneWaitingDetail(session); reason != "" {
+			deadline = time.Now().Add(time.Duration(h.rcWaitSeconds) * time.Second)
+			time.Sleep(time.Duration(h.rcPollSeconds) * time.Second)
+			continue
 		}
 		switch h.rcStatusLive(session) {
 		case "rc_connected":
