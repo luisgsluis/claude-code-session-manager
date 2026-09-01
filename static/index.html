@@ -103,7 +103,7 @@
 
     <!-- New session with options (tmux name, Claude name, profile) -->
     <div class="relative" x-data="{ open: false }">
-      <button @click="open = !open" :disabled="actionLoading"
+      <button @click="open = !open; if (open) loadProjects()" :disabled="actionLoading"
         class="px-4 py-2 bg-bg-card border border-gray-700 hover:border-gray-600 rounded-xl text-sm font-medium transition-colors disabled:opacity-50">
         🎛️ <span x-text="t('new_advanced')"></span> ▾
       </button>
@@ -670,7 +670,11 @@
       <div class="flex items-center gap-3">
         <h3 class="font-semibold" x-text="t('live_title', [live.name])"></h3>
       </div>
-      <button @click="closeLive()" class="text-fg-muted hover:text-fg text-xl leading-none">&times;</button>
+      <div class="flex items-center gap-2">
+        <button @click="killSession(live.name)" :title="t('close_session')"
+          class="text-fg-muted hover:text-danger px-2 py-1 rounded hover:bg-bg-hover transition-colors">🗄️</button>
+        <button @click="closeLive()" class="text-fg-muted hover:text-fg text-xl leading-none">&times;</button>
+      </div>
     </div>
 
     <!-- Controls: scroll / mode / model / interrupt.
@@ -1016,9 +1020,10 @@
           <!-- Tile header: kept to this one row (mode/model included) so tiles
                never grow taller than the icon-button strip; a narrow tile
                scrolls this row horizontally instead of wrapping to a 2nd line.
-               tgrid-tile-header tightens gap/padding below 1024px (terminal-grid.css)
-               so the two scroll buttons + the rest still fit one mobile-width
-               tile without needing that scroll. -->
+               tgrid-tile-header tightens gap/padding and caps the name below
+               1024px (terminal-grid.css) so the scroll/output/minimize/archive
+               buttons + the rest still fit one mobile-width tile without that
+               scroll. -->
           <div class="tgrid-tile-header flex items-center gap-2 px-3 py-2 border-b border-gray-800 shrink-0 overflow-x-auto">
             <span class="w-2 h-2 rounded-full shrink-0" :class="tileRcConnected(name) ? 'bg-success' : 'bg-warn'"></span>
             <span class="tgrid-tile-name font-mono text-sm shrink-0" x-text="name" :title="name"></span>
@@ -1055,6 +1060,8 @@
               x-text="grid.zoomed === name ? '⧉' : '⛶'"></button>
             <button @click="minimizeTile(name)" :title="t('term_tile_minimize')"
               class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-fg text-xs transition-colors">–</button>
+            <button @click="killSession(name)" :title="t('close_session')"
+              class="px-2 py-1 rounded border border-gray-700 hover:bg-bg-hover text-fg-muted hover:text-danger text-xs transition-colors">🗄️</button>
           </div>
 
           <!-- Raw pane, ANSI-coloured. Same look as the single-session Terminal tab. -->

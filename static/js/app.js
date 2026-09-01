@@ -108,6 +108,7 @@ const I18N = {
     toast_session_created: 'Sesión {0} creada',
     toast_session_resumed: 'Sesión {0} retomada',
     toast_session_killed: 'Sesión {0} archivada',
+    toast_session_kill_err: 'No se pudo archivar la sesión {0}',
     toast_profile_applied: 'Perfil {0} aplicado',
     toast_profile_applied_relaunched: 'Perfil {0} aplicado; sesiones relanzadas para aplicar las nuevas credenciales: {1}',
     toast_attach_copied: 'Comando copiado: {0}',
@@ -413,6 +414,7 @@ const I18N = {
     toast_session_created: 'Session {0} created',
     toast_session_resumed: 'Session {0} resumed',
     toast_session_killed: 'Session {0} archived',
+    toast_session_kill_err: 'Could not archive session {0}',
     toast_profile_applied: 'Profile {0} applied',
     toast_profile_applied_relaunched: 'Profile {0} applied; sessions relaunched to pick up the new credentials: {1}',
     toast_attach_copied: 'Command copied: {0}',
@@ -682,7 +684,7 @@ function ccsmApp() {
     // is what this browser can actually do, which may be less (no HTTPS, no
     // MediaRecorder, no SpeechRecognition).
     voice: {
-      enabled: false, mode: 'whisper_fallback', effective: '', reason: '',
+      enabled: false, mode: 'whisper_fallback', effective: '', reason: '', loaded: false,
       rewriteEnabled: true, roles: [], defaultRole: 'auto', maxSendLen: 16000,
       providers: [], recording: false, stage: '', target: null,
       rec: null, chunks: [], stream: null, sr: null, srText: '',
@@ -993,6 +995,7 @@ function ccsmApp() {
       this.userLabel = username;
       this.loadAll();
       this.initNotify();
+      this.initVoice();
     },
 
     // Back from the code step to the password form (wrong account, or the
@@ -1139,7 +1142,16 @@ function ccsmApp() {
     async loadProjects() {
       try {
         const resp = await fetch('/api/projects');
-        if (resp.ok) this.projects = await resp.json();
+        if (resp.ok) {
+          this.projects = await resp.json();
+          // A project whose CLAUDE.md / dir was deleted since the last load is
+          // gone from the list; if it was the advanced-form selection, fall
+          // back to "principal" so creation can't 400 on an unknown project.
+          if (this.adv.project && this.adv.project !== 'principal' &&
+              !this.projects.some(p => p.name === this.adv.project)) {
+            this.adv.project = 'principal';
+          }
+        }
       } catch (e) { /* ignore */ }
     },
 
@@ -1181,6 +1193,11 @@ function ccsmApp() {
       this.live.meta = null;
       this.live.input = '';
       this.live.elapsed = '';
+      // A session created from the ⚡/🎛️ buttons opens this modal straight away,
+      // sometimes before initVoice()'s first /api/config has landed — without
+      // this the dictate/rewrite buttons stay hidden until the modal is
+      // reopened. Cheap, and a no-op once voice config has loaded.
+      if (!this.voice.loaded) this.initVoice();
       this.loadModels();
       this.startChatStream();
     },
@@ -1479,6 +1496,7 @@ function ccsmApp() {
       this.grid.open = true;
       this.grid.zoomed = null;
       this.grid.minimized = {};
+      if (!this.voice.loaded) this.initVoice();
       if (!this.live.models.length) this.loadModels();
       await this.loadSessions();
       this.syncGridTiles();
@@ -2406,13 +2424,22 @@ function ccsmApp() {
       this.actionLoading = false;
     },
 
+    // Archives a session. Accepts the session object (list view) or a bare
+    // name (chat modal / grid tile), so the same confirm + DELETE + reload
+    // path is shared by all three entry points. The backend DELETE already
+    // handles perfilSinRC staging.
     async killSession(s) {
-      if (!confirm(this.t('confirm_kill', [s.name]))) return;
+      const name = (s && typeof s === 'object') ? s.name : s;
+      if (!name || !confirm(this.t('confirm_kill', [name]))) return;
       try {
-        const resp = await fetch('/api/sessions/' + encodeURIComponent(s.name), { method: 'DELETE' });
+        const resp = await fetch('/api/sessions/' + encodeURIComponent(name), { method: 'DELETE' });
         if (resp.ok) {
-          this.toastMsg(this.t('toast_session_killed', [s.name]), 'success');
+          this.toastMsg(this.t('toast_session_killed', [name]), 'success');
+          if (this.live.open && this.live.name === name) this.closeLive();
           await this.loadSessions();
+        } else {
+          const d = await resp.json().catch(() => ({}));
+          this.toastMsg((d && d.error) || this.t('toast_session_kill_err', [name]), 'error');
         }
       } catch (e) {
         this.toastMsg(this.t('toast_error_conn', [e.message]), 'error');
@@ -2730,12 +2757,14 @@ function ccsmApp() {
         const resp = await fetch('/api/config');
         if (!resp.ok) return;
         const cfg = await resp.json();
+        this.voice.loaded = true;
         this.applyVoiceConfig(cfg.voice);
       } catch (e) { /* voice stays off; nothing else depends on it */ }
     },
 
     applyVoiceConfig(v) {
       if (!v) return;
+      this.voice.loaded = true;
       this.voice.enabled = !!v.enabled;
       this.voice.mode = (v.stt && v.stt.mode) || 'whisper_fallback';
       this.voice.rewriteEnabled = !!(v.rewrite && v.rewrite.enabled);

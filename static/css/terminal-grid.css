@@ -59,13 +59,13 @@
    breakpoint-gated view. */
 
 /* Same breakpoint, tile header: on a real phone-width tile the header row
-   (name + mode/model selects + scroll/output/minimize buttons — zoom is
-   hidden there entirely, see the x-show in index.html) measured wider than
+   (name + mode/model selects + scroll/output/minimize/archive buttons — zoom
+   is hidden there entirely, see the x-show in index.html) measured wider than
    the tile itself with the desktop gap/padding, which used to fall back to a
-   horizontal scroll within the row. Tightened spacing here instead, so it
-   fits without one. Desktop keeps the roomier default (Tailwind's
-   gap-2/px-2/tgrid-select width in index.html) since it has the width to
-   spare.
+   horizontal scroll within the row. Tightened spacing (and the name cap)
+   here instead, so it fits without one. Desktop keeps the roomier default
+   (Tailwind's gap-2/px-2/tgrid-select width in index.html) since it has the
+   width to spare.
    The name is capped and truncated rather than left free-width: with a
    fixed budget for everything else, a session name of any length can no
    longer be the thing that pushes minimize off the edge (a CI run caught
@@ -73,7 +73,7 @@
    for the extra length once actual button glyph rendering ate into it). */
 @media (max-width: 1023px) {
   .tgrid-tile-header { gap: 0.25rem; }
-  .tgrid-tile-header button { padding-left: 0.375rem; padding-right: 0.375rem; }
+  .tgrid-tile-header button { padding-left: 0.25rem; padding-right: 0.25rem; }
   /* !important: beats the inline width tileSelectWidth() sets for the desktop
      adaptive-width selects (an inline style otherwise outranks any stylesheet
      rule) — on a phone-width header the select must stay compact regardless
@@ -82,7 +82,7 @@
   .tgrid-tile-header .tgrid-select { width: 3.25rem !important; }
   .tgrid-tile-name {
     display: inline-block;
-    max-width: 4.5rem;
+    max-width: 3.5rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

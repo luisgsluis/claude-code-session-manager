@@ -84,6 +84,30 @@ test('terminal grid: tiles, minimize/restore, zoom/unzoom, send — no console e
   await expect(page.getByText('No hay sesiones activas')).toBeVisible();
 });
 
+test('terminal grid: a tile archives its session from its own header', async ({ page }) => {
+  page.on('dialog', (d) => d.accept());
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+
+  await createSession(page, 'grid-arch-a');
+  await createSession(page, 'grid-arch-b');
+
+  await page.getByRole('button', { name: /Modo terminal/ }).click();
+  await expect(page.locator('div[x-show="grid.open"]')).toBeVisible();
+
+  const tileA = page.locator('.tgrid-tile', { hasText: 'grid-arch-a' });
+  await expect(tileA).toBeVisible();
+
+  // The 🗄️ in the tile header archives the session; its tile disappears on
+  // the next sessions poll and the other tile is left alone.
+  await tileA.getByTitle('Archivar sesión').click();
+  await expect(page.locator('.tgrid-tile', { hasText: 'grid-arch-a' })).toHaveCount(0);
+  await expect(page.locator('.tgrid-tile', { hasText: 'grid-arch-b' })).toBeVisible();
+
+  await page.locator('div[x-show="grid.open"]').getByText('×', { exact: true }).click();
+  await page.locator('.group').filter({ hasText: 'sesión grid-arch-b' }).getByTitle('Archivar sesión').click();
+  await expect(page.getByText('No hay sesiones activas')).toBeVisible();
+});
+
 test('terminal grid: narrow viewport starts every tile minimized, one at a time', async ({ page }) => {
   page.on('dialog', (d) => d.accept());
   await page.setViewportSize({ width: 375, height: 700 });

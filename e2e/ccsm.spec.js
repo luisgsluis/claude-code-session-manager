@@ -76,3 +76,45 @@ test('advanced session with project: starts in the project and shows the badge',
   await card.getByTitle('Archivar sesión').click();
   await expect(page.getByText('No hay sesiones activas')).toBeVisible();
 });
+
+test('archive a session straight from the chat modal header', async ({ page }) => {
+  page.on('dialog', (d) => d.accept());
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+
+  await page.getByRole('button', { name: /Nueva sesión avanzada/ }).click();
+  await page.getByLabel('Nombre sesión tmux').fill('e2e-chatarch');
+  await page.getByRole('button', { name: 'Crear sesión' }).click();
+
+  const liveModal = page.locator('div[x-show="live.open"]');
+  await expect(liveModal).toBeVisible();
+
+  // The 🗄️ button in the modal header archives and closes the modal.
+  await liveModal.getByTitle('Archivar sesión').click();
+  await expect(liveModal).toBeHidden();
+  await expect(page.getByText('No hay sesiones activas')).toBeVisible();
+});
+
+test('advanced project dropdown re-reads the projects folder on each open', async ({ page }) => {
+  const fs = require('fs');
+  const path = require('path');
+  const projDir = path.join(__dirname, 'state', 'projects', 'ephemeral');
+
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await page.getByRole('button', { name: /Nueva sesión avanzada/ }).click();
+  const projSelect = page.getByLabel('Proyecto (CLAUDE.md)');
+  await expect(projSelect.locator('option', { hasText: 'ephemeral' })).toHaveCount(0);
+
+  // Create the project on disk while the app is running, then reopen.
+  fs.mkdirSync(projDir, { recursive: true });
+  fs.writeFileSync(path.join(projDir, 'claude.md'), '# ephemeral\n');
+  await page.mouse.click(5, 5); // click outside → dropdown closes (@click.outside)
+  await page.getByRole('button', { name: /Nueva sesión avanzada/ }).click();
+  await expect(projSelect.locator('option', { hasText: 'ephemeral' })).toHaveCount(1);
+
+  // Remove the CLAUDE.md and the dir; the option must be gone on the next open
+  // without any manual refresh.
+  fs.rmSync(projDir, { recursive: true, force: true });
+  await page.mouse.click(5, 5); // click outside → dropdown closes (@click.outside)
+  await page.getByRole('button', { name: /Nueva sesión avanzada/ }).click();
+  await expect(projSelect.locator('option', { hasText: 'ephemeral' })).toHaveCount(0);
+});

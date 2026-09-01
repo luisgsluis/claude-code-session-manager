@@ -35,6 +35,29 @@ test.describe('voice buttons', () => {
     await expect(page.locator('button[title*="Reescribir"]')).toBeVisible();
   });
 
+  // Regression: a session created before initVoice()'s first /api/config lands
+  // opened its chat with the voice buttons missing until the modal was
+  // reopened. openLive() now re-runs initVoice() when voice config is not yet
+  // loaded, so a slow /api/config no longer hides the buttons for good.
+  test('the buttons still appear when /api/config is slow on first load', async ({ page }) => {
+    let firstConfig = true;
+    let releaseFirst;
+    const firstDone = new Promise((r) => { releaseFirst = r; });
+    await page.route('**/api/config', async (route) => {
+      if (firstConfig) {
+        firstConfig = false;
+        await firstDone; // hold init()'s initVoice() call open
+      }
+      await route.continue();
+    });
+    await openChat(page);
+    // The first /api/config is still hanging: only openLive()'s own retry can
+    // have populated the voice config, so the buttons must be here already.
+    await expect(page.locator('button[title*="Dictar"]')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('button[title*="Reescribir"]')).toBeVisible();
+    releaseFirst();
+  });
+
   // The regression for the header that silently disabled everything: with
   // microphone=() the browser denies getUserMedia with no error and no prompt.
   test('the server allows the microphone for its own origin', async ({ page }) => {
