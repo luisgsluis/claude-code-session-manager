@@ -1026,7 +1026,7 @@ function ccsmApp() {
         this.loadProjects(),
       ]);
       if (this.pollInterval) clearInterval(this.pollInterval);
-      this.pollInterval = setInterval(() => this.loadSessions(), 30000);
+      this.pollInterval = setInterval(() => { this.loadSessions(); this.loadProjects(); }, 30000);
     },
 
     async reloadAll() {
@@ -1522,7 +1522,7 @@ function ccsmApp() {
       this.grid.zoomed = null;
       this.grid.minimized = {};
       if (this.pollInterval) clearInterval(this.pollInterval);
-      this.pollInterval = setInterval(() => this.loadSessions(), 30000);
+      this.pollInterval = setInterval(() => { this.loadSessions(); this.loadProjects(); }, 30000);
     },
 
     // syncGridTiles reconciles the tiles against the live session list: new
