@@ -1517,6 +1517,37 @@ func TestPaneWaitingReason(t *testing.T) {
 	if got := paneWaitingReason(setup); got != "setup" {
 		t.Errorf("paneWaitingReason(setup wizard) = %q, want setup", got)
 	}
+	// Folder-trust prompt, newer prose form: options carry the ❯ cursor but no
+	// number, so cursorNumberedRe misses them — must still be detected.
+	if got := paneWaitingReason(trustPromptPane(0)); got != "approval" {
+		t.Errorf("paneWaitingReason(trust prompt) = %q, want approval", got)
+	}
+	if got := paneWaitingReason(trustPromptPane(1)); got != "approval" {
+		t.Errorf("paneWaitingReason(trust prompt, cursor on Yes) = %q, want approval", got)
+	}
+	// A bare "❯ <text the user is typing>" input line on an otherwise idle REPL
+	// pane (mode badge still shown) must NOT read as a blocking dialog.
+	idleTyping := " ● conversation…\n\n ╰ output line\n ❯ yes please do that\n  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents"
+	if got := paneWaitingReason(idleTyping); got != "" {
+		t.Errorf("paneWaitingReason(idle pane, draft text) = %q, want empty", got)
+	}
+}
+
+// trustPromptPane is a fixture for Claude Code's newer folder-trust prompt
+// (numberless ❯-cursor options), cursor on option sel (0 = "No, exit").
+func trustPromptPane(sel int) string {
+	labels := []string{"No, exit", "Yes, I trust this folder"}
+	pane := " Accessing workspace:\n\n /home/admin/projects/tvh-recording\n\n" +
+		" Quick safety check: Is this a project you\n created or one you trust?\n\n" +
+		" Claude Code'll be able to read, edit, and\n execute files here.\n\n Security guide\n\n"
+	for i, l := range labels {
+		cursor := "   "
+		if i == sel {
+			cursor = " ❯ "
+		}
+		pane += cursor + l + "\n"
+	}
+	return pane
 }
 
 // TestPaneWaitingDetailID proves paneWaitingDetail's id — the identity the
@@ -1580,6 +1611,23 @@ func TestPaneWaitingDetailID(t *testing.T) {
 	if reason, _, id := parsePaneWaitingDetail("  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents"); reason != "" || id != "" {
 		t.Errorf("idle pane reason/id = %q/%q, want empty/empty", reason, id)
 	}
+
+	// Folder-trust prompt (newer prose form): its numberless options must be
+	// surfaced as a choice so the UI can offer "Yes, I trust this folder"
+	// instead of a bare approve button that confirms the default "No, exit".
+	reason, c, _ = parsePaneWaitingDetail(trustPromptPane(0))
+	if reason != "approval" || c == nil {
+		t.Fatalf("trust-prompt reason/choice = %q/%v, want approval/non-nil", reason, c)
+	}
+	if opts, _ := c["options"].([]string); len(opts) != 2 || opts[1] != "Yes, I trust this folder" {
+		t.Errorf("trust-prompt options = %v, want [No, exit; Yes, I trust this folder]", c["options"])
+	}
+	if c["selected"] != 0 {
+		t.Errorf("trust-prompt selected = %v, want 0 (❯ on 'No, exit')", c["selected"])
+	}
+	if reason, _, _ := parsePaneWaitingDetail(trustPromptPane(1)); reason != "approval" {
+		t.Errorf("trust-prompt (cursor on Yes) reason = %q, want approval", reason)
+	}
 }
 
 func TestPaneChoice(t *testing.T) {
@@ -1622,6 +1670,38 @@ func TestPaneChoice(t *testing.T) {
 	// No numbered options → not ok.
 	if _, _, _, ok := paneChoice("just text\nno options"); ok {
 		t.Error("paneChoice without options: ok=true, want false")
+	}
+
+	// Numberless picker (newer Claude Code): folder-trust prompt. Options carry
+	// the ❯ cursor but no "N." — the block is still parsed, adjacent prose
+	// ("Security guide", the wrapped question) stays out of it, and the vague
+	// last-line-above ("Security guide") is replaced with a real question.
+	q3, opts3, sel3, ok3 := paneChoice(trustPromptPane(1))
+	if !ok3 {
+		t.Fatal("paneChoice(trust prompt): ok=false, want true")
+	}
+	if len(opts3) != 2 || opts3[0] != "No, exit" || opts3[1] != "Yes, I trust this folder" {
+		t.Errorf("trust options = %v", opts3)
+	}
+	if sel3 != 1 {
+		t.Errorf("trust selected = %d, want 1 (❯ on 'Yes')", sel3)
+	}
+	if strings.Contains(q3, "guide") || q3 == "" {
+		t.Errorf("trust question = %q, want a real question", q3)
+	}
+
+	// Numberless picker, generic: an auto-mode style pick-one with a plain
+	// question line right above the options and a footer below.
+	auto := " Auto mode works better if you let me learn your environment.\n" +
+		" ❯ Yes, scan my setup\n" +
+		"   Not now\n" +
+		" Enter to confirm · Esc to skip"
+	qa, optsa, sela, oka := paneChoice(auto)
+	if !oka || len(optsa) != 2 || optsa[1] != "Not now" || sela != 0 {
+		t.Errorf("auto-mode paneChoice = %v sel=%d ok=%v", optsa, sela, oka)
+	}
+	if qa != "Auto mode works better if you let me learn your environment." {
+		t.Errorf("auto-mode question = %q", qa)
 	}
 }
 

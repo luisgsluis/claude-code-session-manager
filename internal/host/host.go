@@ -3488,15 +3488,27 @@ func paneWaitingReason(pane string) string {
 	if strings.Contains(pane, "to change usage") || strings.Contains(pane, "Set up auto mode for your environment") {
 		return "setup"
 	}
-	// Any other dialog rendering Claude Code's numbered-option picker with the
+	// Any other dialog rendering Claude Code's NUMBERED option picker with the
 	// "❯" cursor is a permission prompt — command execution, file edit, Fetch,
-	// WebSearch, a custom MCP tool, or any future tool that asks for input.
-	// The cursor glyph is unique to this TUI picker and never appears in
-	// generated prose, so matching on it — instead of each tool's question
-	// wording, which differs per tool and changes across Claude Code versions
-	// — detects any of them without hardcoding one per tool.
-	if cursorOptionRe.MatchString(pane) {
+	// WebSearch, a custom MCP tool, or any future tool that asks for input. The
+	// cursor+number shape is unique to this TUI picker and never appears in
+	// generated prose, so matching on it — instead of each tool's wording,
+	// which differs per tool and changes across versions — detects any of them
+	// without hardcoding one per tool.
+	if cursorNumberedRe.MatchString(pane) {
 		return "approval"
+	}
+	// Newer Claude Code dropped the "1." / "2." numbering on some pickers (the
+	// folder-trust prompt, the auto-mode "let me learn your environment"
+	// prompt): the options render as a bare "❯ <label>" block. A lone
+	// "❯ <text I'm typing>" input line has that shape too, so this only fires
+	// when paneChoice finds a real block (two or more sibling options) AND the
+	// live REPL footer — present on every idle/working pane, gone while a
+	// blocking dialog owns the screen — is absent.
+	if !runningFooterRe.MatchString(pane) {
+		if _, opts, _, ok := paneChoice(pane); ok && len(opts) >= 2 {
+			return "approval"
+		}
 	}
 	// Fallback for approval dialogs that, for whatever reason, don't parse as
 	// a numbered cursor list: the known command-permission wording and the
@@ -3511,59 +3523,106 @@ func paneWaitingReason(pane string) string {
 	return ""
 }
 
-// cursorOptionRe matches a numbered option line with the picker's cursor
-// ("❯ 1. Yes"), the generic signal that the pane holds an interactive
-// permission/choice dialog regardless of which tool or wording triggered it.
-var cursorOptionRe = regexp.MustCompile(`(?m)^\s*❯\s*\d+\.\s+\S`)
+// cursorOptionRe matches the picker's cursor line ("❯ 1. Yes", "❯ No, exit")
+// and captures its leading whitespace (group 1). (?m) so it serves both as a
+// whole-pane presence check and line by line in paneChoice.
+var cursorOptionRe = regexp.MustCompile(`(?m)^(\s*)❯ +\S`)
 
-// paneChoice extracts an AskUserQuestion option picker from the pane text:
-// the question line, the option labels in order, and the currently highlighted
-// index (the one prefixed with ❯). The picker renders as
+// cursorNumberedRe is cursorOptionRe restricted to a numbered option
+// ("❯ 1. …") — the unambiguous picker shape, safe to treat as a blocking
+// dialog on sight (paneWaitingReason) without any further corroboration.
+var cursorNumberedRe = regexp.MustCompile(`(?m)^\s*❯ +\d+\.\s+\S`)
+
+// runningFooterRe matches the live REPL's footer — the mode badge / interrupt
+// hint shown on every idle-or-working pane and replaced while a blocking
+// dialog owns the screen. Its presence is what tells a bare "❯ typed text"
+// input line apart from a numberless one-option picker.
+var runningFooterRe = regexp.MustCompile(`mode on|for shortcuts|esc to interrupt|shift\+tab to cycle`)
+
+// optionNumberRe strips a leading "1. " / "2. " ordinal from an option label
+// (older pickers number their options, newer ones don't).
+var optionNumberRe = regexp.MustCompile(`^\d+\.\s*`)
+
+// paneChoice extracts an option picker from the pane text: the question line,
+// the option labels in order, and the currently highlighted index (the ❯
+// line). Claude Code renders these as a contiguous block, one line per option,
+// the current one prefixed with "❯ " and the rest indented to the same column:
 //
 //	☐ <title>
 //	<question line>
-//	❯ 1. <option A>
+//	❯ 1. <option A>      ← older pickers number the options
 //	  2. <option B>
-//	  …
 //	Enter to select · ↑/↓ to navigate · n to add notes · Esc to cancel
 //
-// ok=false when no numbered option list is present.
+//	Security guide
+//
+//	❯ No, exit           ← newer pickers (folder-trust, auto-mode onboarding)
+//	  Yes, I trust this folder   drop the numbering entirely
+//
+// Either way the ❯ glyph anchors the block; sibling lines are those indented
+// to exactly the column the ❯ label starts at, which keeps adjacent prose out
+// of the option list. ok=false when no ❯-cursor option line is present.
 func paneChoice(pane string) (question string, options []string, selected int, ok bool) {
 	lines := strings.Split(pane, "\n")
-	firstOpt := -1
+	cursor, indent := -1, ""
 	for i, l := range lines {
-		if m := choiceOptionRe.FindStringSubmatch(l); m != nil {
-			firstOpt = i
+		if m := cursorOptionRe.FindStringSubmatch(l); m != nil {
+			cursor, indent = i, m[1]
 			break
 		}
 	}
-	if firstOpt < 0 {
+	if cursor < 0 {
 		return "", nil, 0, false
 	}
-	// Question = the last non-empty line above the first option.
-	for i := firstOpt - 1; i >= 0; i-- {
+	// A sibling option line sits at the same column the ❯ label does — the
+	// cursor's leading whitespace plus the two columns "❯ " occupies — and is
+	// neither blank nor a footer hint. Exact-indent matching is what stops an
+	// adjacent wrapped prose line from being read as an option.
+	sib := indent + "  "
+	isOpt := func(l string) bool {
+		t := strings.TrimSpace(l)
+		if t == "" || strings.Contains(l, " · ") { // blank line or the "x · y · z" footer
+			return false
+		}
+		return cursorOptionRe.MatchString(l) ||
+			(strings.HasPrefix(l, sib) && !strings.HasPrefix(t, "❯"))
+	}
+	start, end := cursor, cursor
+	for start-1 >= 0 && isOpt(lines[start-1]) {
+		start--
+	}
+	for end+1 < len(lines) && isOpt(lines[end+1]) {
+		end++
+	}
+	for i := start; i <= end; i++ {
+		l := strings.TrimSpace(lines[i])
+		cur := strings.HasPrefix(l, "❯")
+		l = strings.TrimSpace(strings.TrimPrefix(l, "❯"))
+		l = optionNumberRe.ReplaceAllString(l, "")
+		l = strings.TrimSpace(strings.TrimRight(l, "┌─│┐└┘ "))
+		if cur {
+			selected = len(options)
+		}
+		options = append(options, l)
+	}
+	// Question = the last non-empty, non-title line above the block.
+	for i := start - 1; i >= 0; i-- {
 		if t := strings.TrimSpace(lines[i]); t != "" && !strings.Contains(t, "☐") {
 			question = t
 			break
 		}
 	}
-	for _, l := range lines[firstOpt:] {
-		m := choiceOptionRe.FindStringSubmatch(l)
-		if m == nil {
-			continue
+	// The folder-trust prompt's block is preceded by a bare "Security guide"
+	// link, not a question — give it a real one so the UI isn't misleading.
+	if question == "" || question == "Security guide" {
+		for _, o := range options {
+			if o == "Yes, I trust this folder" {
+				question = "Trust this folder? Claude Code will be able to read, edit and execute files here."
+			}
 		}
-		if strings.TrimSpace(m[1]) == "❯" {
-			selected = len(options)
-		}
-		options = append(options, strings.TrimSpace(m[2]))
 	}
-	return question, options, selected, true
+	return question, options, selected, len(options) > 0
 }
-
-// choiceOptionRe matches a numbered option line, optionally with the ❯ cursor:
-// "❯ 1. Label" or "  2. Label". Group 1 is the cursor token ("" or "❯"),
-// group 2 the label (drops the number and any trailing panel box-drawing).
-var choiceOptionRe = regexp.MustCompile(`^\s*(❯)?\s*\d+\.\s+([^\n┌─│┐└┘]*)\s*$`)
 
 // modeWheel is the Shift+Tab cycle of Claude Code's live modes. Order verified
 // empirically on 2.1.227 (account without bypassPermissions): the badge cycles
