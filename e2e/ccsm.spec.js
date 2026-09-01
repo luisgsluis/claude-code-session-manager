@@ -98,23 +98,42 @@ test('advanced project dropdown re-reads the projects folder on each open', asyn
   const fs = require('fs');
   const path = require('path');
   const projDir = path.join(__dirname, 'state', 'projects', 'ephemeral');
+  fs.rmSync(projDir, { recursive: true, force: true }); // defensive: a leaked dir from a prior retry
 
-  await page.goto('/', { waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: /Nueva sesión avanzada/ }).click();
+  const toggle = page.getByRole('button', { name: /Nueva sesión avanzada/ });
   const projSelect = page.getByLabel('Proyecto (CLAUDE.md)');
-  await expect(projSelect.locator('option', { hasText: 'ephemeral' })).toHaveCount(0);
+  const ephemeralOpt = projSelect.locator('option', { hasText: 'ephemeral' });
 
-  // Create the project on disk while the app is running, then reopen.
-  fs.mkdirSync(projDir, { recursive: true });
-  fs.writeFileSync(path.join(projDir, 'claude.md'), '# ephemeral\n');
-  await page.mouse.click(5, 5); // click outside → dropdown closes (@click.outside)
-  await page.getByRole('button', { name: /Nueva sesión avanzada/ }).click();
-  await expect(projSelect.locator('option', { hasText: 'ephemeral' })).toHaveCount(1);
+  // Deterministic reopen: the <select> is only in the DOM tree visible while the
+  // dropdown is open (x-show on its container), and every open fires
+  // loadProjects(). Toggling by button state rather than an outside-click keeps
+  // this from racing on slower CI.
+  async function reopenDropdown() {
+    if (await projSelect.isVisible()) {
+      await toggle.click();
+      await expect(projSelect).toBeHidden();
+    }
+    await toggle.click();
+    await expect(projSelect).toBeVisible();
+  }
 
-  // Remove the CLAUDE.md and the dir; the option must be gone on the next open
-  // without any manual refresh.
-  fs.rmSync(projDir, { recursive: true, force: true });
-  await page.mouse.click(5, 5); // click outside → dropdown closes (@click.outside)
-  await page.getByRole('button', { name: /Nueva sesión avanzada/ }).click();
-  await expect(projSelect.locator('option', { hasText: 'ephemeral' })).toHaveCount(0);
+  try {
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await reopenDropdown();
+    await expect(ephemeralOpt).toHaveCount(0);
+
+    // Create the project on disk while the app is running, then reopen.
+    fs.mkdirSync(projDir, { recursive: true });
+    fs.writeFileSync(path.join(projDir, 'claude.md'), '# ephemeral\n');
+    await reopenDropdown();
+    await expect(ephemeralOpt).toHaveCount(1);
+
+    // Remove the CLAUDE.md and the dir; the option must be gone on the next open
+    // without any manual refresh.
+    fs.rmSync(projDir, { recursive: true, force: true });
+    await reopenDropdown();
+    await expect(ephemeralOpt).toHaveCount(0);
+  } finally {
+    fs.rmSync(projDir, { recursive: true, force: true });
+  }
 });
