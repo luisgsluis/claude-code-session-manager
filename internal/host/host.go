@@ -3488,6 +3488,21 @@ func paneWaitingReason(pane string) string {
 	if strings.Contains(pane, "to change usage") || strings.Contains(pane, "Set up auto mode for your environment") {
 		return "setup"
 	}
+	// The live REPL input box — a full-width rule, the "❯" prompt with its
+	// (possibly multi-line) draft, a closing rule, then the mode footer — is on
+	// screen ONLY when nothing is blocking the session: every dialog (approval,
+	// choice, folder-trust, auto-mode setup, rewind) replaces it. So while it
+	// is still there the session is idle or working, never waiting on a
+	// question — and neither its own "❯ <draft>" lines nor an earlier
+	// multi-line user turn left scrolled up in the transcript may be scanned as
+	// a picker. paneChoice would otherwise read a just-sent
+	// "❯ first line\n  second line\n  third line" message as a 3-option list,
+	// which is exactly the false "approval" seen after every multi-line (voice)
+	// message: the pane briefly shows the collapsed paste ("paste again to
+	// expand" footer) with the message text still in the scrollback above.
+	if hasREPLInputBox(pane) {
+		return ""
+	}
 	// Any other dialog rendering Claude Code's NUMBERED option picker with the
 	// "❯" cursor is a permission prompt — command execution, file edit, Fetch,
 	// WebSearch, a custom MCP tool, or any future tool that asks for input. The
@@ -3533,11 +3548,51 @@ var cursorOptionRe = regexp.MustCompile(`(?m)^(\s*)❯ +\S`)
 // dialog on sight (paneWaitingReason) without any further corroboration.
 var cursorNumberedRe = regexp.MustCompile(`(?m)^\s*❯ +\d+\.\s+\S`)
 
-// runningFooterRe matches the live REPL's footer — the mode badge / interrupt
-// hint shown on every idle-or-working pane and replaced while a blocking
-// dialog owns the screen. Its presence is what tells a bare "❯ typed text"
-// input line apart from a numberless one-option picker.
-var runningFooterRe = regexp.MustCompile(`mode on|for shortcuts|esc to interrupt|shift\+tab to cycle`)
+// runningFooterRe matches the live REPL's footer — the state line under the
+// input box on every idle-or-working pane, replaced while a blocking dialog
+// owns the screen. Its presence tells a bare "❯ typed text" input line apart
+// from a numberless one-option picker. Beyond the steady mode badge it also
+// covers the transient footers Claude Code shows while the box holds a draft:
+// "paste again to expand" right after a collapsed bracketed paste (the state a
+// just-sent multi-line message passes through), "ctrl+g to edit in <editor>"
+// for a multi-line draft, and "Esc again to clear". A dialog footer instead
+// reads "Enter to select" / "Esc to cancel" / "to navigate" / "to continue".
+var runningFooterRe = regexp.MustCompile(`mode on|for shortcuts|esc to interrupt|shift\+tab to cycle|for agents|paste again to expand|ctrl\+g to edit in|esc again to clear`)
+
+// ruleLineRe matches Claude Code 2.1.263's full-width box rule — the ── run
+// that frames the REPL input box, top and bottom. The top rule may carry the
+// session title as a suffix ("──…── my session ─"), so this anchors on the
+// leading run only.
+var ruleLineRe = regexp.MustCompile(`^─{20,}`)
+
+// hasREPLInputBox reports whether the pane still ends with Claude Code's live
+// input box: an opening rule, the "❯" prompt line (its draft may run to
+// several lines), a closing rule, then the REPL footer. Every blocking dialog
+// replaces this box wholesale, so its presence is a definitive "nothing is
+// waiting on the user" — see paneWaitingReason, which returns early on it so a
+// multi-line draft (or a multi-line message still in the scrollback) is never
+// misread as an option picker.
+func hasREPLInputBox(pane string) bool {
+	lines := strings.Split(pane, "\n")
+	last := len(lines) - 1
+	for last >= 0 && strings.TrimSpace(lines[last]) == "" {
+		last--
+	}
+	// Bottom line is the REPL footer; the line above it is the closing rule.
+	if last < 3 || !runningFooterRe.MatchString(lines[last]) || !ruleLineRe.MatchString(lines[last-1]) {
+		return false
+	}
+	// Within the lines above the closing rule: the "❯" prompt line with the
+	// opening rule directly above it. The draft between the rules is short in
+	// practice (Claude Code collapses anything past a few lines to a
+	// "[Pasted text +N lines]" chip), but allow generous slack.
+	for i := last - 2; i >= 1 && i >= last-20; i-- {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "❯") && ruleLineRe.MatchString(lines[i-1]) {
+			return true
+		}
+	}
+	return false
+}
 
 // optionNumberRe strips a leading "1. " / "2. " ordinal from an option label
 // (older pickers number their options, newer ones don't).

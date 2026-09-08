@@ -1531,6 +1531,73 @@ func TestPaneWaitingReason(t *testing.T) {
 	if got := paneWaitingReason(idleTyping); got != "" {
 		t.Errorf("paneWaitingReason(idle pane, draft text) = %q, want empty", got)
 	}
+
+	// Regression (Claude Code 2.1.263): a just-sent multi-line message renders
+	// in the pane as "❯ line one / ␣␣line two / ␣␣line three", and stays in the
+	// scrollback while the collapsed paste sits in the input box under a
+	// "paste again to expand" footer (no mode badge). paneChoice reads those
+	// lines as an option block, so paneWaitingReason must NOT reach it: the
+	// live input box is still on screen, which means nothing is blocking.
+	rule := strings.Repeat("─", 78)
+	titleRule := strings.Repeat("─", 62) + " prueba ─"
+	sentMultiline := "● LISTO\n\n✻ Baked for 7s · done 9:08\n\n" +
+		"❯ Tercera pregunta.\n  Mas lineas aqui.\n  Probando el fallo de nuevo.\n  Ultima linea.\n\n" +
+		titleRule + "\n❯ [Pasted text #1 +8 lines]\n" + rule + "\n  paste again to expand                    /rc"
+	if got := paneWaitingReason(sentMultiline); got != "" {
+		t.Errorf("paneWaitingReason(sent multi-line message, paste box) = %q, want empty", got)
+	}
+	// Same pane once the box settles back to the mode badge — still not a dialog.
+	settled := "● LISTO\n\n✻ Baked for 7s · done 9:08\n\n" +
+		"❯ Tercera pregunta.\n  Mas lineas aqui.\n  Probando el fallo de nuevo.\n  Ultima linea.\n\n" +
+		titleRule + "\n❯ \n" + rule + "\n  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents          /rc"
+	if got := paneWaitingReason(settled); got != "" {
+		t.Errorf("paneWaitingReason(sent multi-line message, idle) = %q, want empty", got)
+	}
+	// A real AskUserQuestion picker in the 2.1.263 layout (title checkbox,
+	// per-option description lines, an internal rule, "Chat about this") must
+	// still classify as "choice" — the input box is gone, replaced by the
+	// dialog.
+	askUser := " ☐ Color\n\n¿Prefieres el color azul o el rojo?\n\n" +
+		"❯ 1. Azul\n     Elegir el color azul.\n  2. Rojo\n     Elegir el color rojo.\n  3. Type something.\n" +
+		rule + "\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · Esc to cancel"
+	if got := paneWaitingReason(askUser); got != "choice" {
+		t.Errorf("paneWaitingReason(2.1.263 AskUserQuestion) = %q, want choice", got)
+	}
+	// A real command-approval dialog replaces the input box too (its own
+	// footer, no mode badge) — still "approval".
+	cmdApproval := " echo hola\n\n This command requires approval\n Do you want to proceed?\n" +
+		" ❯ 1. Yes\n   2. Yes, allow all `echo` commands\n   3. No\n Esc to cancel · Tab to amend"
+	if got := paneWaitingReason(cmdApproval); got != "approval" {
+		t.Errorf("paneWaitingReason(2.1.263 command approval) = %q, want approval", got)
+	}
+}
+
+func TestHasREPLInputBox(t *testing.T) {
+	rule := strings.Repeat("─", 78)
+	title := strings.Repeat("─", 62) + " my session ─"
+	yes := map[string]string{
+		"idle, empty box":       "some output\n\n" + rule + "\n❯ \n" + rule + "\n  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents",
+		"working, empty box":    "some output\n\n" + rule + "\n❯ \n" + rule + "\n  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents",
+		"collapsed paste":       "prev\n\n" + title + "\n❯ [Pasted text #2 +4 lines]\n" + rule + "\n  paste again to expand                    /rc",
+		"multi-line draft":      "prev\n\n" + rule + "\n❯ line one of my draft\n  line two of my draft\n" + rule + "\n                    ctrl+g to edit in Vim",
+		"draft + scrollback msg": "❯ old message line one\n  old message line two\n\n● reply\n\n" + rule + "\n❯ \n" + rule + "\n  ⏵⏵ manual mode on (shift+tab to cycle)",
+	}
+	for name, pane := range yes {
+		if !hasREPLInputBox(pane) {
+			t.Errorf("hasREPLInputBox(%s) = false, want true", name)
+		}
+	}
+	no := map[string]string{
+		"AskUserQuestion":  " ☐ Q\n\nquestion?\n\n❯ 1. A\n  2. B\n" + rule + "\n  3. Chat about this\n\nEnter to select · ↑/↓ to navigate · Esc to cancel",
+		"command approval": " cmd\n This command requires approval\n ❯ 1. Yes\n   2. No\n Esc to cancel · Tab to amend",
+		"trust prompt":     trustPromptPane(0),
+		"plain output":     "just some\ntranscript text\nwith no input box",
+	}
+	for name, pane := range no {
+		if hasREPLInputBox(pane) {
+			t.Errorf("hasREPLInputBox(%s) = true, want false", name)
+		}
+	}
 }
 
 // trustPromptPane is a fixture for Claude Code's newer folder-trust prompt
