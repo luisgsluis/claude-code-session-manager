@@ -14,6 +14,10 @@ CCSM follows a defense-in-depth model. Compromising any single layer should not 
 
 ### 2. Authentication
 
+Two modes, `auth` in `config.yaml`. Everything below this paragraph is the default, `builtin`.
+
+**`auth: proxy`** hands authentication to the reverse proxy in front (forward auth to Authelia/Tinyauth/Authentik, basic auth, SSO). CCSM then serves a request only when its **immediate peer** is in `trusted_proxies` — `X-Forwarded-For` does not count, since it is what that peer claims — and refuses everything else with `403`, whatever headers it carries. The user is taken from `proxy_user_header` (`Remote-User` by default), only from a trusted peer, sanitised (printable ASCII, no spaces, ≤64 chars) and used for the audit log; a trusted request without it is recorded as `[proxy]`. Login and logout answer `ok` without issuing a cookie, the TOTP step and user management answer `404`, and the UI hides logout, users and LAN settings. What this mode relies on, and CCSM cannot check: that the port is reachable **only** by the proxy (and by local clients you trust as much), and that the proxy deletes any client-supplied user header before setting its own.
+
 - **Login form**: username + bcrypt-hashed password
 - **Session cookie**: HMAC-SHA256(token, secret) plus a random nonce, HttpOnly, SameSite=Lax, `Secure` when the request reached CCSM over TLS (directly or via a reverse proxy's `X-Forwarded-Proto`), 24h TTL
 - **`session_secret` is required**: `Config.Validate()` refuses to start if it's empty or under 16 characters — an empty secret would make the HMAC key public knowledge, letting anyone forge a session cookie

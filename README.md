@@ -369,7 +369,9 @@ All settings can be set in `config.yaml` or overridden via environment variables
 | YAML key | Env var | Default | Description |
 |----------|---------|---------|-------------|
 | `port` | `CCSM_PORT` | `8080` | HTTP listen port |
-| `session_secret` | `CCSM_SESSION_SECRET` | — | HMAC secret for session cookies |
+| `session_secret` | `CCSM_SESSION_SECRET` | — | HMAC secret for session cookies (not needed with `auth: proxy`) |
+| `auth` | — | `builtin` | `builtin`: CCSM's own login, 2FA and LAN bypass. `proxy`: the reverse proxy in front authenticates (forward auth, basic auth, SSO) and CCSM only serves requests whose immediate peer is in `trusted_proxies`; users, `lan_subnets` and `session_secret` are then unused — see [Security Model](#security-model) |
+| `proxy_user_header` | — | `Remote-User` | `auth: proxy` only: header the proxy sets with the logged-in user, used for the audit log. A trusted request without it is recorded as `[proxy]` |
 | `lan_subnets` | `CCSM_LAN_SUBNETS` | — | CIDRs that bypass login (comma-separated in env) |
 | `trusted_proxies` | — | — | CIDRs of reverse proxies whose `X-Forwarded-For` is believed. Required behind a proxy, or every client looks like the proxy — see [Security Model](#security-model) |
 | `users[].username` | — | — | Login username |

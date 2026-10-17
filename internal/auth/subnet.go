@@ -80,3 +80,25 @@ func inSubnets(remoteAddr string, subnets []string) bool {
 	}
 	return false
 }
+
+// FromTrustedProxy reports whether the request's immediate peer is one of the
+// trusted proxies — the X-Forwarded-For chain does not count, it is what the
+// peer says, and only the peer is known.
+func FromTrustedProxy(r *http.Request, trusted []string) bool {
+	return inSubnets(r.RemoteAddr, trusted)
+}
+
+// SanitizeUser keeps a proxy-supplied username fit for the audit log and the
+// UI: printable ASCII without spaces, capped in length. Anything else yields "".
+func SanitizeUser(u string) string {
+	u = strings.TrimSpace(u)
+	if u == "" || len(u) > 64 {
+		return ""
+	}
+	for _, c := range u {
+		if c <= ' ' || c > '~' {
+			return ""
+		}
+	}
+	return u
+}

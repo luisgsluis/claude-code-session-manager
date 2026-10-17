@@ -42,6 +42,14 @@ lan_subnets:
 trusted_proxies:
   - "172.24.0.1/32"
 
+# Who authenticates. "builtin" (default): the login, 2FA and LAN bypass of this
+# file. "proxy": the reverse proxy in front does it (Authelia, Tinyauth, basic
+# auth…) and CCSM serves only requests whose immediate peer is in
+# trusted_proxies — so publish the port to nothing else. The proxy must strip
+# any client-sent proxy_user_header before setting its own.
+# auth: proxy
+# proxy_user_header: Remote-User
+
 # User accounts (password hash generated with: ccsm --hash-password).
 # 2FA is opt-in per user and enrolled from the UI (☰ menu → users → 🔐): that flow
 # writes `totp_secret` here once a code from the authenticator app confirms it. Empty or

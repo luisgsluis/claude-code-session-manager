@@ -20,6 +20,14 @@ type Config struct {
 	TrustedProxies []string `yaml:"trusted_proxies"` // reverse proxies whose X-Forwarded-For we trust
 	Users          []User   `yaml:"users"`
 
+	// Auth picks who authenticates users. AuthBuiltin (the default): CCSM's own
+	// login, optional TOTP and LAN bypass. AuthProxy: the reverse proxy in front
+	// does it (forward auth, basic auth, SSO…) and CCSM only accepts requests
+	// whose immediate peer is in TrustedProxies, taking the username from
+	// ProxyUserHeader. Users, LAN subnets and the session secret are then unused.
+	Auth            string `yaml:"auth,omitempty"`
+	ProxyUserHeader string `yaml:"proxy_user_header,omitempty"` // AuthProxy only; default "Remote-User"
+
 	// Agent connection
 	AgentSocket    string `yaml:"agent_socket"`
 	AgentSecret    string `yaml:"agent_secret"`
@@ -174,6 +182,29 @@ type User struct {
 	TOTPSecret   string `yaml:"totp_secret,omitempty"`
 }
 
+// Auth modes, see Config.Auth.
+const (
+	AuthBuiltin = "builtin"
+	AuthProxy   = "proxy"
+)
+
+// DefaultProxyUserHeader is what Authelia, Tinyauth and Authentik set on a
+// successful forward auth.
+const DefaultProxyUserHeader = "Remote-User"
+
+// ProxyAuth reports whether authentication is delegated to the reverse proxy.
+// An empty Auth is AuthBuiltin; it is not normalized into the struct so that
+// rewriting config.yaml does not add the key to every existing install.
+func (c *Config) ProxyAuth() bool { return c.Auth == AuthProxy }
+
+// UserHeader is the request header that carries the proxy-authenticated user.
+func (c *Config) UserHeader() string {
+	if c.ProxyUserHeader != "" {
+		return c.ProxyUserHeader
+	}
+	return DefaultProxyUserHeader
+}
+
 // Validate checks the Config for invalid values. Returns nil if valid,
 // or an error describing the first problem found.
 func (c *Config) Validate() error {
@@ -189,8 +220,24 @@ func (c *Config) Validate() error {
 	if c.Rc.SettleSeconds < 0 || c.Rc.SettleSeconds > 60 {
 		return fmt.Errorf("rc.settle_seconds must be 0-60, got %d", c.Rc.SettleSeconds)
 	}
-	if len(c.SessionSecret) < 16 {
-		return fmt.Errorf("session_secret must be set (min 16 chars) — generate one with 'ccsm --generate-secret'")
+	switch c.Auth {
+	case "", AuthBuiltin:
+		if len(c.SessionSecret) < 16 {
+			return fmt.Errorf("session_secret must be set (min 16 chars) — generate one with 'ccsm --generate-secret'")
+		}
+	case AuthProxy:
+		// Without a trusted proxy nothing could ever reach CCSM; worse, an empty
+		// list must never be read as "trust everyone".
+		if len(c.TrustedProxies) == 0 {
+			return fmt.Errorf("auth: proxy needs trusted_proxies (the proxy that authenticates)")
+		}
+	default:
+		return fmt.Errorf("auth must be %q or %q, got %q", AuthBuiltin, AuthProxy, c.Auth)
+	}
+	for _, s := range c.TrustedProxies {
+		if _, _, err := net.ParseCIDR(s); err != nil {
+			return fmt.Errorf("invalid trusted_proxies CIDR: %s", s)
+		}
 	}
 	if c.AgentSocket != "" && len(c.AgentSecret) < 16 {
 		return fmt.Errorf("agent_secret must be set (min 16 chars) when agent_socket is set — generate one with 'ccsm --generate-agent-secret'")

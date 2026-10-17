@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **`auth: proxy` — delegate authentication to the reverse proxy.** For a CCSM that sits behind
+  an authenticating proxy (Authelia, Tinyauth, basic auth, an SSO shared with other services),
+  its own login, 2FA and user management can now be switched off instead of stacked on top. In
+  this mode CCSM serves only requests whose immediate peer is in `trusted_proxies` (anything
+  else gets `403`), records the user the proxy passes in `proxy_user_header` (`Remote-User` by
+  default), and the UI drops logout, users and LAN settings. `builtin` stays the default and is
+  unchanged. See `docs/security.md`.
+
 ## [3.1.3] — 2026-08-21
 
 ### Changed

@@ -215,13 +215,13 @@ func (s *Server) registerRoutes() {
 	// handled by separate endpoints.
 	s.mux.HandleFunc("GET /api/config", s.auth(s.handleConfig))
 	s.mux.HandleFunc("PATCH /api/config", s.auth(s.handlePatchConfig))
-	s.mux.HandleFunc("GET /api/config/users", s.auth(s.handleListUsers))
-	s.mux.HandleFunc("POST /api/config/users", s.auth(s.handleAddUser))
-	s.mux.HandleFunc("DELETE /api/config/users/{username}", s.auth(s.handleDeleteUser))
-	s.mux.HandleFunc("POST /api/config/users/{username}/password", s.auth(s.handleChangePassword))
-	s.mux.HandleFunc("POST /api/config/users/{username}/totp", s.auth(s.handleTOTPEnrollStart))
-	s.mux.HandleFunc("PUT /api/config/users/{username}/totp", s.auth(s.handleTOTPEnrollConfirm))
-	s.mux.HandleFunc("DELETE /api/config/users/{username}/totp", s.auth(s.handleTOTPDisable))
+	s.mux.HandleFunc("GET /api/config/users", s.auth(s.builtinOnly(s.handleListUsers)))
+	s.mux.HandleFunc("POST /api/config/users", s.auth(s.builtinOnly(s.handleAddUser)))
+	s.mux.HandleFunc("DELETE /api/config/users/{username}", s.auth(s.builtinOnly(s.handleDeleteUser)))
+	s.mux.HandleFunc("POST /api/config/users/{username}/password", s.auth(s.builtinOnly(s.handleChangePassword)))
+	s.mux.HandleFunc("POST /api/config/users/{username}/totp", s.auth(s.builtinOnly(s.handleTOTPEnrollStart)))
+	s.mux.HandleFunc("PUT /api/config/users/{username}/totp", s.auth(s.builtinOnly(s.handleTOTPEnrollConfirm)))
+	s.mux.HandleFunc("DELETE /api/config/users/{username}/totp", s.auth(s.builtinOnly(s.handleTOTPDisable)))
 
 	// Settings content (protected): raw settings.json for profile viewer
 	s.mux.HandleFunc("GET /api/settings", s.auth(s.handleGetSettings))
@@ -276,6 +276,17 @@ type loginRequest struct {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	// Behind an authenticating proxy there is nothing to log into: a request
+	// that got here through the proxy is already in. Answering ok keeps clients
+	// that log in first (ccsm-telegram) working unchanged.
+	if s.proxyAuth() {
+		if _, ok := s.proxyUser(r); !ok {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": errNotViaProxy})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "proxy_auth": true})
+		return
+	}
 	if s.isLANRequest(r) {
 		token, _ := s.sessions.CreateSession("[lan]", true)
 		auth.SetCookie(w, token, isHTTPS(r))
@@ -338,6 +349,10 @@ type totpRequest struct {
 // session issued by handleLogin into a full one. Public like /login — the
 // pending cookie is what identifies the caller.
 func (s *Server) handleTOTP(w http.ResponseWriter, r *http.Request) {
+	if s.proxyAuth() {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": errProxyManaged})
+		return
+	}
 	ip := s.clientIP(r)
 
 	sess := s.sessions.GetSession(auth.GetToken(r))
@@ -433,6 +448,11 @@ func (s *Server) auditLogIP(action, user, detail, ip string) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	// The session lives in the proxy; logging out is done there.
+	if s.proxyAuth() {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "proxy_auth": true})
+		return
+	}
 	user := ""
 	if token := auth.GetToken(r); token != "" {
 		if sess := s.sessions.GetSession(token); sess != nil {
@@ -446,6 +466,15 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	if s.proxyAuth() {
+		user, ok := s.proxyUser(r)
+		if !ok {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"authenticated": false, "proxy_auth": true})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"authenticated": true, "username": user, "proxy_auth": true})
+		return
+	}
 	token := auth.GetToken(r)
 	if token == "" {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"authenticated": false})
@@ -481,8 +510,69 @@ func (s *Server) isLANRequest(r *http.Request) bool {
 	return auth.IsLAN(auth.ClientIP(r, s.cfg.TrustedProxies), s.cfg.LANSubnets)
 }
 
+// Errors of the proxy auth mode.
+const (
+	errNotViaProxy  = "requests must come through the authenticating proxy"
+	errProxyManaged = "authentication is managed by the reverse proxy"
+)
+
+// authMode is the auth mode for the UI, with the empty default spelled out.
+func authMode(c *config.Config) string {
+	if c.ProxyAuth() {
+		return config.AuthProxy
+	}
+	return config.AuthBuiltin
+}
+
+func (s *Server) proxyAuth() bool {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return s.cfg.ProxyAuth()
+}
+
+// proxyUser is the identity of a request in proxy auth mode. Only a request
+// whose immediate peer is a trusted proxy counts: that peer already
+// authenticated it. Anything else — a client that reached the port directly —
+// is refused, header or not, so the header cannot be forged from outside. A
+// trusted request without the header is still let in (a local client such as
+// a bot on the same host, or a proxy that does not pass the user on) and is
+// recorded as "[proxy]".
+func (s *Server) proxyUser(r *http.Request) (string, bool) {
+	s.cfgMu.RLock()
+	trusted, header := s.cfg.TrustedProxies, s.cfg.UserHeader()
+	s.cfgMu.RUnlock()
+	if !auth.FromTrustedProxy(r, trusted) {
+		return "", false
+	}
+	if u := auth.SanitizeUser(r.Header.Get(header)); u != "" {
+		return u, true
+	}
+	return "[proxy]", true
+}
+
+// builtinOnly guards the routes that manage CCSM's own users: with the proxy in
+// charge they would edit accounts nothing reads.
+func (s *Server) builtinOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.proxyAuth() {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": errProxyManaged})
+			return
+		}
+		next(w, r)
+	}
+}
+
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if s.proxyAuth() {
+			user, ok := s.proxyUser(r)
+			if !ok {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": errNotViaProxy})
+				return
+			}
+			next(w, handlers.WithUser(r, user))
+			return
+		}
 		if s.isLANRequest(r) {
 			next(w, handlers.WithUser(r, "[lan]"))
 			return
@@ -530,6 +620,7 @@ type configInfo struct {
 	AgentSocket    string            `json:"agent_socket"`
 	HostAttachAddr string            `json:"host_attach_addr"`
 	LANSubnets     []string          `json:"lan_subnets"`
+	Auth           string            `json:"auth"` // "builtin" or "proxy": the UI hides users and LAN then
 	Users          []userInfo        `json:"users"`
 	Paths          map[string]string `json:"paths"`
 	RC             map[string]any    `json:"rc"`
@@ -605,6 +696,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		AgentSocket:    s.cfg.AgentSocket,
 		HostAttachAddr: s.cfg.HostAttachAddr,
 		LANSubnets:     s.cfg.LANSubnets,
+		Auth:           authMode(s.cfg),
 		Users:          users,
 		Paths: map[string]string{
 			"conversations": s.cfg.ConversationsPath,

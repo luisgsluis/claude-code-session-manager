@@ -89,7 +89,7 @@
         </div>
       </div>
 
-      <button @click="logout" class="text-sm text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors" x-text="t('logout')"></button>
+      <button x-show="!proxyAuth" @click="logout" class="text-sm text-fg-muted hover:text-fg px-2 py-1 rounded hover:bg-bg-hover transition-colors" x-text="t('logout')"></button>
     </div>
   </div>
 
@@ -485,8 +485,8 @@
     </div>
     </template>
 
-    <!-- Users section -->
-    <div class="mb-5">
+    <!-- Users section (hidden when the reverse proxy authenticates) -->
+    <div class="mb-5" x-show="!settings.proxyAuth">
       <h4 class="text-xs font-semibold uppercase tracking-wider text-accent mb-2" x-text="t('cfg_users')"></h4>
       <div class="bg-bg rounded-xl border border-gray-800 divide-y divide-gray-800">
         <template x-for="u in settings.users" :key="u.username">

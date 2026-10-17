@@ -93,6 +93,8 @@ const I18N = {
     cfg_paths: 'Rutas',
     cfg_security: 'Seguridad',
     cfg_lan: 'redes LAN',
+    cfg_auth: 'autenticación',
+    cfg_auth_proxy: 'la hace el proxy inverso',
     cfg_socket: 'socket agente',
     cfg_users: 'usuarios',
     cfg_rc: 'Bootstrap RC',
@@ -399,6 +401,8 @@ const I18N = {
     cfg_paths: 'Paths',
     cfg_security: 'Security',
     cfg_lan: 'LAN nets',
+    cfg_auth: 'authentication',
+    cfg_auth_proxy: 'done by the reverse proxy',
     cfg_socket: 'agent socket',
     cfg_users: 'users',
     cfg_rc: 'RC bootstrap',
@@ -645,6 +649,9 @@ function ccsmApp() {
     // Auth state
     authenticated: false,
     lanBypass: false,
+    // Auth delegated to the reverse proxy (config auth: proxy): no login, no
+    // logout, no user management here.
+    proxyAuth: false,
     userLabel: '',
     showLogin: true,
     loginUser: '',
@@ -674,7 +681,7 @@ function ccsmApp() {
     adv: { tmux: '', claude: '', profile: '', project: 'principal' },
     projects: [],
     preview: { open: false, messages: [], date: '', origin: '', project: '', id: '', title: '', is_alive: false, tags: '', notes: '', saving: false },
-    settings: { open: false, loading: false, groups: [], editing: null, editValue: '', users: [] },
+    settings: { open: false, loading: false, groups: [], editing: null, editValue: '', users: [], proxyAuth: false },
     userModal: { open: false, mode: 'add', username: '', password: '', error: '' },
     totpModal: { open: false, username: '', secret: '', uri: '', qr: '', code: '', error: '', busy: false },
     audit: { open: false, loading: false, q: '', entries: [] },
@@ -906,7 +913,9 @@ function ccsmApp() {
         const data = await resp.json();
         this.authenticated = data.authenticated;
         this.lanBypass = data.lan_bypass || false;
+        this.proxyAuth = data.proxy_auth || false;
         this.userLabel = data.username || '';
+        if (this.proxyAuth) return;
 
         // A reload with a half-finished 2FA login resumes at the code step:
         // the password was already accepted, asking for it again is noise.
@@ -2058,6 +2067,7 @@ function ccsmApp() {
     buildConfigGroups(cfg) {
       const t = (k) => this.t(k);
       this.settings.users = cfg.users || [];
+      this.settings.proxyAuth = cfg.auth === 'proxy';
       return [
         {
           title: t('cfg_deploy'),
@@ -2081,7 +2091,9 @@ function ccsmApp() {
         {
           title: t('cfg_security'),
           rows: [
-            { k: t('cfg_lan'), v: (cfg.lan_subnets || []).join(', ') || '—', editable: true, field: 'lan_subnets', type: 'csv', raw: cfg.lan_subnets },
+            ...(cfg.auth === 'proxy'
+              ? [{ k: t('cfg_auth'), v: t('cfg_auth_proxy'), editable: false }]
+              : [{ k: t('cfg_lan'), v: (cfg.lan_subnets || []).join(', ') || '—', editable: true, field: 'lan_subnets', type: 'csv', raw: cfg.lan_subnets }]),
             { k: t('cfg_socket'), v: cfg.agent_socket || t('cfg_direct'), editable: false },
           ],
         },

@@ -41,6 +41,9 @@ CLAUDE.md
 e2e/state-auth/
 e2e/ccsm-e2e-auth
 e2e/config-auth.yaml
+e2e/state-proxy/
+e2e/ccsm-e2e-proxy
+e2e/config-proxy.yaml
 
 # stray playwright output when run from repo root
 /test-results/

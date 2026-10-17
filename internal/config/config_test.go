@@ -391,3 +391,37 @@ func TestEnvOverridesYAML(t *testing.T) {
 		t.Errorf("env should override yaml, got %d", cfg.Port)
 	}
 }
+
+func TestValidateAuthMode(t *testing.T) {
+	base := func() *Config {
+		c := Defaults()
+		c.SessionSecret = "0123456789abcdef"
+		c.AgentSocket = ""
+		return c
+	}
+	if err := base().Validate(); err != nil {
+		t.Fatalf("default (empty auth) should validate: %v", err)
+	}
+	c := base()
+	c.Auth = "bogus"
+	if c.Validate() == nil {
+		t.Error("unknown auth mode accepted")
+	}
+	c = base()
+	c.Auth = AuthProxy
+	if c.Validate() == nil {
+		t.Error("proxy mode without trusted_proxies accepted")
+	}
+	c.TrustedProxies = []string{"172.24.0.1/32"}
+	c.SessionSecret = ""
+	if err := c.Validate(); err != nil {
+		t.Errorf("proxy mode should not need session_secret: %v", err)
+	}
+	c.TrustedProxies = []string{"not-a-cidr"}
+	if c.Validate() == nil {
+		t.Error("bad trusted_proxies CIDR accepted")
+	}
+	if got := base().UserHeader(); got != DefaultProxyUserHeader {
+		t.Errorf("UserHeader default = %q", got)
+	}
+}

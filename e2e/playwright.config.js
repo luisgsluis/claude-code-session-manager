@@ -5,6 +5,8 @@ const PORT = 8799;
 // Second server (auth.spec.js): no LAN bypass and a user with 2FA, so the
 // login form is actually reachable. The main one bypasses login on purpose.
 const AUTH_PORT = 8798;
+// Third server (proxy-auth.spec.js): auth: proxy, loopback as the trusted proxy.
+const PROXY_PORT = 8796;
 
 module.exports = defineConfig({
   testDir: '.',
@@ -59,6 +61,13 @@ module.exports = defineConfig({
       command: 'bash e2e/run-e2e-auth.sh',
       cwd: path.join(__dirname, '..'),
       url: `http://127.0.0.1:${AUTH_PORT}/api/health`,
+      reuseExistingServer: false,
+      timeout: 90000,
+    },
+    {
+      command: 'bash e2e/run-e2e-proxy.sh',
+      cwd: path.join(__dirname, '..'),
+      url: `http://127.0.0.1:${PROXY_PORT}/api/health`,
       reuseExistingServer: false,
       timeout: 90000,
     },
