@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Bypass-permissions sessions were never seen as ready.** The badge renders "bypass permissions
+  on" (spaced) and only the config key was recognized, so every text send to such a session
+  waited out the whole ready timeout and then typed blind — on a slow boot, before the TUI read
+  Enter, leaving the message unsent in the input box — and the mode showed as unknown.
+- **The background `/rename` of a named session waits for the session to be idle**, instead of
+  being typed mid-turn, where it was queued and merged with the next message.
+
 ### Added
 - **`auth: proxy` — delegate authentication to the reverse proxy.** For a CCSM that sits behind
   an authenticating proxy (Authelia, Tinyauth, basic auth, an SSO shared with other services),

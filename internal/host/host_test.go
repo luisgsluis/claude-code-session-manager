@@ -1428,6 +1428,7 @@ func TestModeFromBadge(t *testing.T) {
 		{"plan", "  ⏸ plan mode on (shift+tab to cycle) · ← for agents", "plan"},
 		{"auto", "  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents", "auto"},
 		{"bypassPermissions", "  ⏵⏵ bypassPermissions mode on (shift+tab to cycle) · ← for agents", "bypassPermissions"},
+		{"bypass permissions con espacio (Claude Code actual)", "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents", "bypassPermissions"},
 		{"approval dialog (no mode)", " Esc to cancel · Tab to amend · ctrl+e to explain", ""},
 		{"empty line", "", ""},
 	}
@@ -1576,10 +1577,10 @@ func TestHasREPLInputBox(t *testing.T) {
 	rule := strings.Repeat("─", 78)
 	title := strings.Repeat("─", 62) + " my session ─"
 	yes := map[string]string{
-		"idle, empty box":       "some output\n\n" + rule + "\n❯ \n" + rule + "\n  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents",
-		"working, empty box":    "some output\n\n" + rule + "\n❯ \n" + rule + "\n  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents",
-		"collapsed paste":       "prev\n\n" + title + "\n❯ [Pasted text #2 +4 lines]\n" + rule + "\n  paste again to expand                    /rc",
-		"multi-line draft":      "prev\n\n" + rule + "\n❯ line one of my draft\n  line two of my draft\n" + rule + "\n                    ctrl+g to edit in Vim",
+		"idle, empty box":        "some output\n\n" + rule + "\n❯ \n" + rule + "\n  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents",
+		"working, empty box":     "some output\n\n" + rule + "\n❯ \n" + rule + "\n  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents",
+		"collapsed paste":        "prev\n\n" + title + "\n❯ [Pasted text #2 +4 lines]\n" + rule + "\n  paste again to expand                    /rc",
+		"multi-line draft":       "prev\n\n" + rule + "\n❯ line one of my draft\n  line two of my draft\n" + rule + "\n                    ctrl+g to edit in Vim",
 		"draft + scrollback msg": "❯ old message line one\n  old message line two\n\n● reply\n\n" + rule + "\n❯ \n" + rule + "\n  ⏵⏵ manual mode on (shift+tab to cycle)",
 	}
 	for name, pane := range yes {

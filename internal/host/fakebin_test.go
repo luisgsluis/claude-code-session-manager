@@ -23,6 +23,8 @@ case "$1" in
     for a in "$@"; do
       [ "$a" = "-S" ] && { printf '%s' "$FAKE_TMUX_HIST"; exit 0; }
     done
+    # Pane whose content a test changes over time (renameWhenIdle tests).
+    [ -n "$FAKE_TMUX_PANE_FILE" ] && { cat "$FAKE_TMUX_PANE_FILE"; exit 0; }
     # Stateful mode wheel (discoverModeWheel tests): capture-pane returns the
     # footer for the mode whose index is stored in FAKE_TMUX_MODE_STATE. The
     # footer is idle (… ← for agents) so paneWorking reads false and no dialog

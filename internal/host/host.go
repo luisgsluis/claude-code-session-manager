@@ -3119,6 +3119,15 @@ func parsePaneWaitingDetail(pane string) (reason string, choice map[string]any, 
 // renders "accept edits" with a space (⏵⏵ accept edits on), not the config
 // key acceptEdits — map it back here so callers compare against one spelling.
 func modeFromBadge(line string) string {
+	// The bypass badge renders spaced too ("⏵⏵ bypass permissions on"), not the
+	// config key. Unrecognized, a bypass session never looked text-safe:
+	// ensureTextReady waited out its whole timeout on every send and then typed
+	// blind, which on a slow boot lands before the TUI reads Enter (the message
+	// stays unsent in the input box), and renameClaudeAfterReady typed /rename
+	// over whatever was in flight.
+	if strings.Contains(line, "bypass permissions") {
+		return "bypassPermissions"
+	}
 	for _, m := range []string{"insert", "accept edits", "edit", "manual", "plan", "auto", "bypassPermissions", "budget", "normal"} {
 		if strings.Contains(line, m) {
 			if m == "accept edits" {
@@ -4236,21 +4245,10 @@ func (h *Host) sendKeys(session, literal string) error {
 	return h.pressEnter(session)
 }
 
-// renameReadyTimeout bounds renameClaudeAfterReady's ensureTextReady wait.
-// Deliberately much shorter than the production paneReadyTimeout (10s): this
-// runs in the background with nobody synchronously waiting on it, so tying
-// up its session's sendLock — and repeatedly polling the pane — for the full
-// 10s on every named session creation is wasteful, especially stacked across
-// several sessions created close together. The badge this waits for appears
-// within a second or two in the common case (see ensurePaneReady's own
-// docstring); past this shorter bound the /rename is best-effort skipped
-// rather than fired blind, same fail-open spirit as the rest of this file.
-const renameReadyTimeout = 3 * time.Second
-
 // renameClaudeAfterReady runs in the background right after a named session
-// is created (see claudeNew), so its /rename can land while the user is
-// already typing their first message — locked/gated the same as claudeRename
-// for that reason.
+// is created (see claudeNew): it waits for the RC bridge, then for the session
+// to be idle (renameWhenIdle), since the user's first message may already be
+// in flight.
 func (h *Host) renameClaudeAfterReady(session, title string, waitRC bool) {
 	deadline := time.Now().Add(time.Duration(h.rcWaitSeconds) * time.Second)
 	for {
@@ -4266,18 +4264,56 @@ func (h *Host) renameClaudeAfterReady(session, title string, waitRC bool) {
 			}
 		}
 		if !waitRC {
-			mu := h.sessionSendLock(session)
-			mu.Lock()
-			defer mu.Unlock()
-			if h.ensureTextReadyWithin(session, renameReadyTimeout) == nil {
-				h.sendKeys(session, "/rename "+title)
-			}
+			h.renameWhenIdle(session, title)
 			return
 		}
 		if time.Now().After(deadline) {
 			return
 		}
 		time.Sleep(time.Duration(h.rcPollSeconds) * time.Second)
+	}
+}
+
+// renameIdleTimeout bounds how long renameClaudeAfterReady waits for the
+// session to stop generating before typing /rename. Typed mid-turn, /rename is
+// queued as a message and merges with whatever the user sends next (seen in
+// production: the first prompt, "/rename <title>" and the second prompt
+// arrived as one user message). The first turn of a session can be long, and
+// nobody waits on this goroutine, so the bound is generous; past it the title
+// is skipped rather than typed into a busy session.
+const renameIdleTimeout = 10 * time.Minute
+
+// renameWhenIdle types /rename once the pane is text-safe (badge, no dialog)
+// and not generating. Polls without the send lock, so a user message is never
+// held up by it; re-checks under the lock right before typing.
+func (h *Host) renameWhenIdle(session, title string) {
+	deadline := time.Now().Add(renameIdleTimeout)
+	poll := time.Duration(h.rcPollSeconds) * time.Second
+	if poll <= 0 {
+		poll = time.Second
+	}
+	idle := func() bool {
+		_, working := h.paneStatusWord(session)
+		return !working && h.paneTextSafe(session)
+	}
+	for {
+		if !h.sessionAlive(session) {
+			return
+		}
+		if idle() {
+			mu := h.sessionSendLock(session)
+			mu.Lock()
+			if idle() {
+				h.sendKeys(session, "/rename "+title)
+				mu.Unlock()
+				return
+			}
+			mu.Unlock()
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(poll)
 	}
 }
 
