@@ -2222,7 +2222,101 @@ func (h *Host) newSession(extraArgs, name, cwd string) (string, error) {
 		return "", fmt.Errorf("tmux new-session: %w", err)
 	}
 
-	return strings.TrimSpace(string(out)), nil
+	session := strings.TrimSpace(string(out))
+	if err := h.checkStartup(session); err != nil {
+		return "", err
+	}
+	return session, nil
+}
+
+// startupBlockers are boot-time screens that need the human and that CCSM must
+// never answer on their behalf: an expired/missing login, first-run onboarding.
+// Matched on the pane text; the generic dialogs (approval, choice, setup) are
+// caught by paneWaitingReason.
+var startupBlockers = []string{
+	"Select login method",
+	"Please run /login",
+	"Invalid API key",
+	"OAuth token has expired",
+	"Choose the text style",
+	"Press Enter to continue",
+}
+
+// checkStartup watches a freshly launched session until its REPL is up, so a
+// dialog never leaves it parked silently (text sends would fail with "waiting
+// on a approval dialog" and a Remote Control bridge would never register).
+//   - Folder trust ("Is this a project you trust?") is answered: a dir Claude
+//     has never opened has no entry in ~/.claude.json and trust isn't inherited
+//     from home. Safe because cwd only ever comes from projectCwd (a dir under
+//     the owner's home), never from request input.
+//   - Any other blocking dialog (permission, choice, setup wizard, login,
+//     onboarding) is not accepted: the session is killed and the dialog text is
+//     returned as the error, instead of leaving a hung session behind.
+//
+// Polls until the REPL input box shows up or paneReadyTimeout elapses (a slow
+// boot with no dialog fails open, as before). A dialog must be seen on two
+// consecutive polls to count, so a transient frame can't kill a good session.
+func (h *Host) checkStartup(session string) error {
+	deadline := time.Now().Add(h.paneReadyTimeout)
+	prev, answered := false, false
+	for {
+		out, err := exec.Command(h.tmuxBinary, "capture-pane", "-p", "-t", h.paneTarget(session)).Output()
+		if err != nil {
+			return nil
+		}
+		pane := stripANSI(string(out))
+		if hasREPLInputBox(pane) {
+			return nil
+		}
+		if strings.Contains(pane, "Yes, I trust this folder") {
+			// Answer once; a repaint still showing the dialog must not get a second Down+Enter.
+			for _, k := range []string{"down", "enter"} {
+				if answered {
+					break
+				}
+				if exec.Command(h.tmuxBinary, "send-keys", "-t", h.paneTarget(session), tmuxKeyMap[k]).Run() != nil {
+					return nil
+				}
+				time.Sleep(modePressDelay)
+			}
+			prev, answered = false, true
+			if !time.Now().Before(deadline) {
+				return nil
+			}
+			time.Sleep(paneReadyPoll)
+			continue
+		}
+		blocked := paneWaitingReason(pane) != ""
+		for _, m := range startupBlockers {
+			if strings.Contains(pane, m) {
+				blocked = true
+			}
+		}
+		if blocked && prev {
+			exec.Command(h.tmuxBinary, "kill-session", "-t", "="+session).Run()
+			return errBad("session %s blocked at startup by a dialog that needs the user (session closed): %s", session, dialogExcerpt(pane))
+		}
+		prev = blocked
+		if !time.Now().Before(deadline) {
+			return nil
+		}
+		time.Sleep(paneReadyPoll)
+	}
+}
+
+// dialogExcerpt flattens a pane to its non-empty lines, capped for an error message.
+func dialogExcerpt(pane string) string {
+	var lines []string
+	for _, l := range strings.Split(pane, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			lines = append(lines, l)
+		}
+	}
+	t := strings.Join(lines, " | ")
+	if r := []rune(t); len(r) > 600 {
+		t = string(r[:600]) + "…"
+	}
+	return t
 }
 
 // sessionPane returns the visible content of a tmux session's pane plus its
