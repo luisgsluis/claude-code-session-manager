@@ -41,8 +41,11 @@ case "$cmd" in
   capture-pane)
     name="$(flagval -t "$@")"
     if [ -f "$STATE/$name" ]; then
+      # Paints Claude Code's REPL input box so newSession's startup check sees a
+      # booted session at once instead of waiting out paneReadyTimeout.
       # Marks rc_connected: rcStatus detects the "/rc" substring on the last line.
-      echo "pane-of-$name /rc"
+      rule="────────────────────────────────────────"
+      printf 'pane-of-%s\n%s\n❯ \n%s\n? for shortcuts /rc\n' "$name" "$rule" "$rule"
       exit 0
     fi
     exit 1
