@@ -1,4 +1,5 @@
 const { defineConfig } = require('@playwright/test');
+const fs = require('fs');
 const path = require('path');
 
 const PORT = 8799;
@@ -7,6 +8,10 @@ const PORT = 8799;
 const AUTH_PORT = 8798;
 // Third server (proxy-auth.spec.js): auth: proxy, loopback as the trusted proxy.
 const PROXY_PORT = 8796;
+
+// On the rb we use the system Chromium, the only browser installed there. In CI
+// it isn't there, so Playwright falls back to the one from `playwright install`.
+const CHROMIUM = fs.existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined;
 
 module.exports = defineConfig({
   testDir: '.',
@@ -23,6 +28,7 @@ module.exports = defineConfig({
     // mic tests could only check that a button exists.
     permissions: ['microphone'],
     launchOptions: {
+      executablePath: CHROMIUM,
       args: [
         '--use-fake-device-for-media-stream',
         '--use-fake-ui-for-media-stream',
