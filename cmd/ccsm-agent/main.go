@@ -69,6 +69,8 @@ func main() {
 		RcWaitSeconds:   *rcWait,
 		RcPollSeconds:   *rcPoll,
 		RcSettleSeconds: *rcSettle,
+		// CCSM_NO_SYSTEMD=1 in a container without systemd (the cluster's admin pod): tmux is started directly.
+		NoSystemd: os.Getenv("CCSM_NO_SYSTEMD") == "1",
 	})
 
 	if err := ensureSingle(*socket); err != nil {

@@ -26,12 +26,16 @@ import (
 
 // Options configures a Host executor.
 type Options struct {
-	ProfilesPath     string
-	SettingsPath     string
-	ConvPath         string
-	ClaudeBinary     string
-	TmuxBinary       string
+	ProfilesPath string
+	SettingsPath string
+	ConvPath     string
+	ClaudeBinary string
+	TmuxBinary   string
+	// SystemdRunBinary launches the tmux server in its own systemd user scope. NoSystemd skips it and runs tmux
+	// directly: inside a container (the cluster's admin pod) there is no systemd, and the container's own memory
+	// limit already plays the role of the scope.
 	SystemdRunBinary string
+	NoSystemd        bool
 	BashBinary       string
 	RcBootstrap      string
 	RcWaitSeconds    int
@@ -49,6 +53,7 @@ type Host struct {
 	claudeBinary     string
 	tmuxBinary       string
 	systemdRunBinary string
+	noSystemd        bool
 	bashBinary       string
 	rcBootstrap      string
 	rcWaitSeconds    int
@@ -175,6 +180,7 @@ func New(o Options) *Host {
 		claudeBinary:     def(o.ClaudeBinary, o.Home+"/.local/bin/claude"),
 		tmuxBinary:       def(o.TmuxBinary, "/usr/bin/tmux"),
 		systemdRunBinary: def(o.SystemdRunBinary, "/usr/bin/systemd-run"),
+		noSystemd:        o.NoSystemd,
 		bashBinary:       def(o.BashBinary, "/usr/bin/bash"),
 		rcBootstrap:      def(o.RcBootstrap, "estandar"),
 		rcWaitSeconds:    o.RcWaitSeconds,
@@ -2217,7 +2223,11 @@ func (h *Host) newSession(extraArgs, name, cwd string) (string, error) {
 		"--slice=ccsm-sessions.slice",
 		h.tmuxBinary,
 	}, args...)
-	out, err := exec.Command(h.systemdRunBinary, runArgs...).Output()
+	launch := exec.Command(h.systemdRunBinary, runArgs...)
+	if h.noSystemd {
+		launch = exec.Command(h.tmuxBinary, args...)
+	}
+	out, err := launch.Output()
 	if err != nil {
 		return "", fmt.Errorf("tmux new-session: %w", err)
 	}

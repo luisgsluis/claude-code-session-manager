@@ -1093,3 +1093,22 @@ func TestOriginFor(t *testing.T) {
 		t.Error("unknown → ?")
 	}
 }
+
+// With NoSystemd the session is created by running tmux directly: systemd-run must not be called (in the admin pod
+// there is no systemd). The stub systemd-run fails, so going through it would make newSession fail.
+func TestNewSessionNoSystemd(t *testing.T) {
+	h := fakeHost(t, nil)
+	h.systemdRunBinary = "/nonexistent/systemd-run"
+	h.noSystemd = true
+	name, err := h.newSession("nosystemd", "", "")
+	if err != nil {
+		t.Fatalf("newSession without systemd: %v", err)
+	}
+	if name == "" {
+		t.Fatal("empty session name")
+	}
+	h.noSystemd = false
+	if _, err := h.newSession("consystemd", "", ""); err == nil {
+		t.Fatal("with systemd and a missing systemd-run, newSession should fail")
+	}
+}
