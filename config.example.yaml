@@ -67,7 +67,7 @@ agent_socket: "/run/ccsm/agent.sock"
 agent_secret: ""
 
 # Shown in the UI as "attach" command for each session
-host_attach_addr: "admin@192.168.1.175"
+host_attach_addr: "admin@rb.lan"
 
 # --- Package mode (agent_socket: "") ---
 # Paths for conversations, profiles and settings.json. "auto" resolves to a FIXED
