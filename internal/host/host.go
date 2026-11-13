@@ -2224,7 +2224,8 @@ func (h *Host) newSession(extraArgs, name, cwd string) (string, error) {
 		h.tmuxBinary,
 	}, args...)
 	launch := exec.Command(h.systemdRunBinary, runArgs...)
-	if h.noSystemd {
+	// Sin systemd de usuario (contenedor, o CCSM_NO_SYSTEMD=1) tmux se lanza directo: si no, ninguna sesión arranca.
+	if h.noSystemd || !systemdUserBus(h.systemdRunBinary) {
 		launch = exec.Command(h.tmuxBinary, args...)
 	}
 	out, err := launch.Output()
@@ -2237,6 +2238,19 @@ func (h *Host) newSession(extraArgs, name, cwd string) (string, error) {
 		return "", err
 	}
 	return session, nil
+}
+
+// systemdUserBus: systemd-run existe y hay bus de usuario que le atienda (en el pod admin está el binario pero no systemd).
+func systemdUserBus(bin string) bool {
+	if _, err := os.Stat(bin); err != nil {
+		return false
+	}
+	dir := os.Getenv("XDG_RUNTIME_DIR")
+	if dir == "" {
+		dir = "/run/user/" + strconv.Itoa(os.Getuid())
+	}
+	_, err := os.Stat(filepath.Join(dir, "bus"))
+	return err == nil
 }
 
 // startupBlockers are boot-time screens that need the human and that CCSM must

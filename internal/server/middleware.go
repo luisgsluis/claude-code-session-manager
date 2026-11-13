@@ -3,6 +3,8 @@ package server
 import (
 	"log"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -22,6 +24,39 @@ func withSecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// withCrossSiteGuard rejects state-changing requests that a browser sends on
+// behalf of another site. The LAN bypass authenticates by IP, not by cookie, so
+// any page open in a LAN browser could otherwise POST (text/plain, no preflight)
+// to /api/sessions/{name}/send. Non-browser clients send neither header and pass.
+func withCrossSiteGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && crossSite(r) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":"cross-site request refused"}`))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// crossSite: Sec-Fetch-Site when the browser sends it; otherwise an Origin
+// whose host is not the one the request was made to.
+func crossSite(r *http.Request) bool {
+	if sfs := r.Header.Get("Sec-Fetch-Site"); sfs != "" {
+		return sfs != "same-origin" && sfs != "none"
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return false
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return true // "null" (sandboxed iframe, file://) or garbage
+	}
+	return !strings.EqualFold(u.Host, r.Host)
 }
 
 // withLogging logs each request with method, path, status, and duration.

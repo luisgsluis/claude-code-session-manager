@@ -1107,8 +1107,40 @@ func TestNewSessionNoSystemd(t *testing.T) {
 	if name == "" {
 		t.Fatal("empty session name")
 	}
+	// Without NoSystemd but with no systemd-run (or no user bus) it falls back to tmux directly too: before, every
+	// session failed to start in a container that ran ccsm in package mode.
 	h.noSystemd = false
-	if _, err := h.newSession("consystemd", "", ""); err == nil {
-		t.Fatal("with systemd and a missing systemd-run, newSession should fail")
+	if _, err := h.newSession("sinbinario", "", ""); err != nil {
+		t.Fatalf("missing systemd-run should fall back to tmux: %v", err)
 	}
+}
+
+// systemd-run is used only when there is a user bus to talk to; the pod admin has the binary but no systemd.
+func TestNewSessionSystemdBus(t *testing.T) {
+	h := fakeHost(t, nil)
+	marca := filepath.Join(t.TempDir(), "llamado")
+	h.systemdRunBinary = writeTestExe(t, "systemd-run", "#!/bin/sh\necho x > "+marca+"\n"+strings.TrimPrefix(fakeSystemdRun, "#!/bin/sh\n"))
+	run := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", run)
+	if _, err := h.newSession("sinbus", "", ""); err != nil {
+		t.Fatalf("no bus: %v", err)
+	}
+	if _, err := os.Stat(marca); err == nil {
+		t.Fatal("systemd-run was called without a user bus")
+	}
+	os.WriteFile(filepath.Join(run, "bus"), nil, 0600)
+	if _, err := h.newSession("conbus", "", ""); err != nil {
+		t.Fatalf("with bus: %v", err)
+	}
+	if _, err := os.Stat(marca); err != nil {
+		t.Fatal("systemd-run not used although there is a user bus")
+	}
+}
+
+func writeTestExe(t *testing.T, name, body string) string {
+	p := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(p, []byte(body), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

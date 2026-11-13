@@ -148,7 +148,7 @@ func New(cfg *config.Config, staticPath, configPath string) *Server {
 	s.registerRoutes()
 	s.http = &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
-		Handler:      withLogging(withSecurityHeaders(s.mux)),
+		Handler:      withLogging(withSecurityHeaders(withCrossSiteGuard(s.mux))),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 120 * time.Second, // session-rc can run two RC bootstraps (staging + auto-recover resume)
 		IdleTimeout:  120 * time.Second,
